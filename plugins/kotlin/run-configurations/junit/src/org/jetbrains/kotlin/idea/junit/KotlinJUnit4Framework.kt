@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.junit
 
 import com.intellij.execution.junit.JUnit4Framework
@@ -15,6 +15,7 @@ import com.intellij.util.ThreeState.*
 import com.siyeh.ig.junit.JUnitCommonClassNames
 import org.jetbrains.kotlin.asJava.elements.KtLightElement
 import org.jetbrains.kotlin.idea.KotlinLanguage
+import org.jetbrains.kotlin.idea.base.plugin.KotlinPluginModeProvider
 import org.jetbrains.kotlin.idea.testIntegration.framework.AbstractKotlinPsiBasedTestFramework
 import org.jetbrains.kotlin.idea.testIntegration.framework.KotlinPsiBasedTestFramework
 import org.jetbrains.kotlin.idea.testIntegration.framework.KotlinPsiBasedTestFramework.Companion.asKtClassOrObject
@@ -23,7 +24,6 @@ import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.getParentOfType
 import org.jetbrains.kotlin.psi.psiUtil.isPrivate
-import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 
 class KotlinJUnit4Framework: JUnit4Framework(), KotlinPsiBasedTestFramework {
     private val psiBasedDelegate = object : AbstractKotlinPsiBasedTestFramework() {
@@ -38,6 +38,10 @@ class KotlinJUnit4Framework: JUnit4Framework(), KotlinPsiBasedTestFramework {
             return CachedValuesManager.getCachedValue(declaration) {
                 CachedValueProvider.Result.create(checkJUnit4TestClass(declaration), OuterModelsModificationTrackerManager.getTracker(declaration.project))
             }
+        }
+
+        public override fun isFrameworkAvailable(element: KtElement): Boolean {
+            return super.isFrameworkAvailable(element) || isFrameworkAvailable(element, KotlinPsiBasedTestFramework.KOTLIN_TEST_TEST, false)
         }
 
         fun isPotentialTestClass(element: PsiElement): Boolean {
@@ -80,7 +84,7 @@ class KotlinJUnit4Framework: JUnit4Framework(), KotlinPsiBasedTestFramework {
             }
 
         private fun checkJUnit4PotentialTestClass(declaration: KtClassOrObject): ThreeState =
-            if (!isFrameworkAvailable(declaration) && !isFrameworkAvailable(declaration, KotlinPsiBasedTestFramework.KOTLIN_TEST_TEST, false)) {
+            if (!isFrameworkAvailable(declaration)) {
                 NO
             } else {
                 checkIsJUnit4LikeTestClass(declaration, true)
@@ -91,7 +95,7 @@ class KotlinJUnit4Framework: JUnit4Framework(), KotlinPsiBasedTestFramework {
                 UNSURE
             } else if (declaration.isPrivate()) {
                 NO
-            } else if (declaration.safeAs<KtClass>()?.isInner() == true) {
+            } else if ((declaration as? KtClass)?.isInner() == true) {
                 NO
             } else if (declaration.isTopLevel() && isAnnotated(declaration, JUnitUtil.RUN_WITH)) {
                 YES
@@ -167,19 +171,46 @@ class KotlinJUnit4Framework: JUnit4Framework(), KotlinPsiBasedTestFramework {
         psiBasedDelegate.isIgnoredMethod(declaration)
 
     override fun getSetUpMethodFileTemplateDescriptor(): FileTemplateDescriptor? {
-        return FileTemplateDescriptor("Kotlin JUnit4 SetUp Function.kt")
+        return if (KotlinPluginModeProvider.isK1Mode()) {
+            super.getSetUpMethodFileTemplateDescriptor()
+        } else {
+            FileTemplateDescriptor("Kotlin JUnit4 SetUp Function.kt")
+        }
     }
 
     override fun getTearDownMethodFileTemplateDescriptor(): FileTemplateDescriptor? {
-        return FileTemplateDescriptor("Kotlin JUnit4 TearDown Function.kt")
+        return if (KotlinPluginModeProvider.isK1Mode()) {
+            super.getTearDownMethodFileTemplateDescriptor()
+        } else {
+            FileTemplateDescriptor("Kotlin JUnit4 TearDown Function.kt")
+        }
     }
 
     override fun getTestMethodFileTemplateDescriptor(): FileTemplateDescriptor {
-        return FileTemplateDescriptor("Kotlin JUnit4 Test Function.kt")
+        return if (KotlinPluginModeProvider.isK1Mode()) {
+            super.getTestMethodFileTemplateDescriptor()
+        } else {
+            FileTemplateDescriptor("Kotlin JUnit4 Test Function.kt")
+        }
     }
 
     override fun getParametersMethodFileTemplateDescriptor(): FileTemplateDescriptor? {
-        return FileTemplateDescriptor("Kotlin JUnit4 Parameters Function.kt")
+        return if (KotlinPluginModeProvider.isK1Mode()) {
+            super.getParametersMethodFileTemplateDescriptor()
+        } else {
+            FileTemplateDescriptor("Kotlin JUnit4 Parameters Function.kt")
+        }
+    }
+
+    override fun getTestClassFileTemplateDescriptor(): FileTemplateDescriptor? =
+        if (KotlinPluginModeProvider.isK1Mode()) {
+            super.getTestClassFileTemplateDescriptor()
+        } else {
+            FileTemplateDescriptor("Kotlin JUnit4 Test Class.kt")
+        }
+
+    override fun isFrameworkAvailable(clazz: PsiElement): Boolean {
+        return super.isFrameworkAvailable(clazz) || clazz is KtClass && psiBasedDelegate.isFrameworkAvailable(clazz)
     }
 }
 

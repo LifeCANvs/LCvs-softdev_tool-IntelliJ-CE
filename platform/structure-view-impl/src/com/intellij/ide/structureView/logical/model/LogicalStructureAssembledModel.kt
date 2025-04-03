@@ -1,15 +1,15 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.structureView.logical.model
 
-import com.intellij.ide.structureView.logical.ContainerElementsProvider
-import com.intellij.ide.structureView.logical.ConvertElementsProvider
-import com.intellij.ide.structureView.logical.LogicalStructureElementsProvider
-import com.intellij.ide.structureView.logical.PropertyElementProvider
+import com.intellij.ide.structureView.logical.*
 import com.intellij.openapi.project.Project
+import com.intellij.util.containers.ContainerUtil
+import org.jetbrains.annotations.ApiStatus
 
 /**
  * Utility class which helps to build full logical model for some element
  */
+@ApiStatus.Experimental
 class LogicalStructureAssembledModel<T> private constructor(
   val project: Project,
   val model: T,
@@ -23,28 +23,37 @@ class LogicalStructureAssembledModel<T> private constructor(
   }
 
   fun getChildren(): List<LogicalStructureAssembledModel<*>> {
-    return LogicalStructureElementsProvider.getProviders(model!!)
-      .filter { it !is ConvertElementsProvider }
-      .flatMap { it.getElements(model) }
-      //.flatMap { ConvertElementsProvider.convert(it) }
+    val result = LogicalStructureElementsProvider.getProviders(model!!)
+      .flatMap { provider ->
+        if (provider is ContainerElementsProvider || provider is PropertyElementProvider) {
+          listOf(ProvidedLogicalContainer(provider) { provider.getElements(model) })
+        }
+        else {
+          provider.getElements(model)
+        }
+      }
       .map { LogicalStructureAssembledModel(project, it, this) }
       .toList()
+    if (model is LogicalContainer<*>) {
+      return ContainerUtil.concat(
+        model.getElements().map { LogicalStructureAssembledModel(project, it, parent) },
+        result
+      )
+    }
+    return result
   }
 
-  /**
-   * The grouping element in each pair - Any - can be any object, for which a PresentationProvider is registered
-   */
-  fun getChildrenGrouped(): List<Pair<Any, () -> List<LogicalStructureAssembledModel<*>>>> {
-    return LogicalStructureElementsProvider.getProviders(model!!)
-      .mapNotNull { provider ->
-        if (provider !is ContainerElementsProvider && provider !is PropertyElementProvider) return@mapNotNull null
-        val children = {
-          provider.getElements(model)
-            .map { LogicalStructureAssembledModel(project, it, this) }
-        }
-        Pair(provider, children)
-      }
-      .toList()
+  internal fun hasSameModelParent(): Boolean {
+    var parentTmp = parent
+    while (parentTmp != null) {
+      val first = parentTmp.model
+      val second = model
+      if (first is ExtendedLogicalObject && first.isTheSameParent(second)
+          || second is ExtendedLogicalObject && second.isTheSameParent(first)
+          || first == second) return true
+      parentTmp = parentTmp.parent
+    }
+    return false
   }
 
   override fun equals(other: Any?): Boolean {

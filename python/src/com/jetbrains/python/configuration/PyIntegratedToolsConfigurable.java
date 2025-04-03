@@ -42,7 +42,7 @@ import com.jetbrains.python.packaging.PyPackageRequirementsSettings;
 import com.jetbrains.python.packaging.PyPackageUtil;
 import com.jetbrains.python.packaging.PyRequirementsKt;
 import com.jetbrains.python.sdk.PythonSdkUtil;
-import com.jetbrains.python.sdk.pipenv.PipenvKt;
+import com.jetbrains.python.sdk.pipenv.PipenvCommandExecutorKt;
 import com.jetbrains.python.testing.PyAbstractTestFactory;
 import com.jetbrains.python.testing.settings.PyTestRunConfigurationRenderer;
 import com.jetbrains.python.testing.settings.PyTestRunConfigurationsModel;
@@ -53,9 +53,9 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
-import java.io.File;
-import java.util.List;
+import java.nio.file.Path;
 import java.util.*;
+import java.util.List;
 
 public class PyIntegratedToolsConfigurable implements SearchableConfigurable {
   private JPanel myMainPanel;
@@ -78,8 +78,7 @@ public class PyIntegratedToolsConfigurable implements SearchableConfigurable {
   private JPanel myTestsPanel;
   private TextFieldWithBrowseButton myPipEnvPathField;
   private JPanel myPipEnvPanel;
-  @NotNull
-  private final Collection<@NotNull DialogPanel> myCustomizePanels = PyIntegratedToolsTestPanelCustomizer.Companion.createPanels();
+  private final @NotNull Collection<@NotNull DialogPanel> myCustomizePanels = PyIntegratedToolsTestPanelCustomizer.Companion.createPanels();
 
 
   public PyIntegratedToolsConfigurable() {
@@ -95,7 +94,7 @@ public class PyIntegratedToolsConfigurable implements SearchableConfigurable {
     myProject = project;
     myDocumentationSettings = PyDocumentationSettings.getInstance(myModule);
     myPackagingSettings = PyPackageRequirementsSettings.getInstance(module);
-    myDocstringFormatComboBox.setModel(new CollectionComboBoxModel<>(Arrays.asList(DocStringFormat.values()),
+    myDocstringFormatComboBox.setModel(new CollectionComboBoxModel<>(new ArrayList<>(Arrays.asList(DocStringFormat.values())),
                                                                      myDocumentationSettings.getFormat()));
     myDocstringFormatComboBox.setRenderer(SimpleListCellRenderer.create("", DocStringFormat::getName));
 
@@ -226,7 +225,7 @@ public class PyIntegratedToolsConfigurable implements SearchableConfigurable {
     if (!getRequirementsPath().equals(myRequirementsPathField.getText())) {
       return true;
     }
-    if (!myPipEnvPathField.getText().equals(StringUtil.notNullize(PipenvKt.getPipEnvPath(PropertiesComponent.getInstance())))) {
+    if (!myPipEnvPathField.getText().equals(StringUtil.notNullize(PipenvCommandExecutorKt.getPipEnvPath(PropertiesComponent.getInstance())))) {
       return true;
     }
     return ContainerUtil.exists(myCustomizePanels, panel -> panel.isModified());
@@ -260,7 +259,7 @@ public class PyIntegratedToolsConfigurable implements SearchableConfigurable {
     myPackagingSettings.setRequirementsPath(myRequirementsPathField.getText());
 
     DaemonCodeAnalyzer.getInstance(myProject).restart();
-    PipenvKt.setPipEnvPath(PropertiesComponent.getInstance(), StringUtil.nullize(myPipEnvPathField.getText()));
+    PipenvCommandExecutorKt.setPipEnvPath(PropertiesComponent.getInstance(), StringUtil.nullize(myPipEnvPathField.getText()));
 
     for (@NotNull DialogPanel panel : myCustomizePanels) {
       panel.apply();
@@ -296,14 +295,14 @@ public class PyIntegratedToolsConfigurable implements SearchableConfigurable {
     // TODO: Move pipenv settings into a separate configurable
     final JBTextField pipEnvText = ObjectUtils.tryCast(myPipEnvPathField.getTextField(), JBTextField.class);
     if (pipEnvText != null) {
-      final String savedPath = PipenvKt.getPipEnvPath(PropertiesComponent.getInstance());
+      final String savedPath = PipenvCommandExecutorKt.getPipEnvPath(PropertiesComponent.getInstance());
       if (savedPath != null) {
         pipEnvText.setText(savedPath);
       }
       else {
-        final File executable = PipenvKt.detectPipEnvExecutable();
+        final Path executable = PipenvCommandExecutorKt.detectPipEnvExecutableOrNull();
         if (executable != null) {
-          pipEnvText.getEmptyText().setText(PyBundle.message("configurable.pipenv.auto.detected", executable.getAbsolutePath()));
+          pipEnvText.getEmptyText().setText(PyBundle.message("configurable.pipenv.auto.detected", executable.toString()));
         }
       }
     }

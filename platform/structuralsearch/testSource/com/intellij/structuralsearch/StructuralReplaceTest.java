@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.structuralsearch;
 
 import com.intellij.ide.highlighter.JavaFileType;
@@ -529,6 +529,16 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
       }""";
 
     assertEquals("No errors in pattern", expected, replace(in, what, by));
+  }
+
+  public void testReplaceRecordComponents() {
+    String in1 = """
+      record Bar(String field, int i){}
+      """;
+    String ex1 = """
+      record Bar(String field, int i) {} // comment
+      """;
+    assertEquals(ex1, replace(in1, "record '_Record('_Type '_component* ) {}", "record $Record$($Type$ $component$) {} // comment"));
   }
 
   public void testReplaceParameter() {
@@ -3244,6 +3254,27 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
                    }
                    """,
                  replace(in3, "new int[] {'_a*}", "new long[] {$a$}"));
+
+    String in4 = """
+      class X {
+        void x(int... ss) {}
+
+        void y() {
+          x(1, 2);\s
+        }
+      }
+      """;
+    assertEquals("Should keep commas 3",
+                 """
+                   class X {
+                     void x(int... ss) {}
+                   
+                     void y() {
+                       x(new int[] {1, 2});\s
+                     }
+                   }
+                   """,
+                 replace(in4, "x('_arg*)", "x(new int[] {$arg$})"));
   }
 
   public void testMethodCall() {

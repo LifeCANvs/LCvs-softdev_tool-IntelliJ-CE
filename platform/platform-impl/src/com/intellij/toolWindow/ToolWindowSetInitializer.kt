@@ -28,6 +28,7 @@ import com.intellij.openapi.wm.impl.WindowInfoImpl
 import com.intellij.platform.diagnostic.telemetry.impl.span
 import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.*
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.NonNls
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicReference
@@ -42,6 +43,7 @@ private inline fun Logger.debug(project: Project, lazyMessage: (project: String)
   }
 }
 
+@ApiStatus.Internal
 class ToolWindowSetInitializer(private val project: Project, private val manager: ToolWindowManagerImpl) {
   @Volatile
   private var isInitialized = false
@@ -180,6 +182,15 @@ class ToolWindowSetInitializer(private val project: Project, private val manager
       val actionManager = serviceAsync<ActionManager>()
       for (result in entries) {
         ActivateToolWindowAction.Manager.ensureToolWindowActionRegistered(result.entry.toolWindow, actionManager)
+      }
+    }
+
+    // Ensure that the shortcuts of the actions registered above are included in tooltips.
+    span("stripeButton.updatePresentation executing$suffix") {
+      withContext(Dispatchers.EDT) {
+        for (result in entries) {
+          result.entry.stripeButton?.updatePresentation()
+        }
       }
     }
 

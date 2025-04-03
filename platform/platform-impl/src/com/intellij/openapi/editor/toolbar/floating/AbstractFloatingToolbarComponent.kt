@@ -8,7 +8,6 @@ import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.impl.ActionToolbarImpl
 import com.intellij.openapi.actionSystem.toolbarLayout.ToolbarLayoutStrategy
-import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import org.jetbrains.annotations.ApiStatus
 import java.awt.*
@@ -17,61 +16,35 @@ import javax.swing.JComponent
 private val BACKGROUND = JBColor.namedColor("Toolbar.Floating.background", JBColor(0xEDEDED, 0x454A4D))
 
 @ApiStatus.NonExtendable
-abstract class AbstractFloatingToolbarComponent : ActionToolbarImpl, FloatingToolbarComponent, Disposable.Default {
-  private val _parentDisposable: Disposable?
-  private val parentDisposable: Disposable
-    get() = _parentDisposable ?: this
+abstract class AbstractFloatingToolbarComponent(
+  actionGroup: ActionGroup,
+  ownerComponent: JComponent,
+  parentDisposable: Disposable,
+) : ActionToolbarImpl(ActionPlaces.CONTEXT_TOOLBAR, actionGroup, true),
+    FloatingToolbarComponent {
 
   private val transparentComponent = ToolbarTransparentComponent()
   private val componentAnimator = TransparentComponentAnimator(transparentComponent, parentDisposable)
 
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated("Use constructor with parentDisposable")
-  constructor(
-    actionGroup: ActionGroup
-  ) : super(ActionPlaces.CONTEXT_TOOLBAR, actionGroup, true) {
-    this._parentDisposable = null
-  }
+  override var backgroundAlpha: Float = BACKGROUND_ALPHA
 
-  constructor(
-    actionGroup: ActionGroup,
-    parentDisposable: Disposable
-  ) : super(ActionPlaces.CONTEXT_TOOLBAR, actionGroup, true) {
-    this._parentDisposable = parentDisposable
-  }
+  override var showingTime: Int by componentAnimator::showingTime
 
-  @ApiStatus.Internal
-  var backgroundAlpha: Float = BACKGROUND_ALPHA
+  override var hidingTime: Int by componentAnimator::hidingTime
 
-  @get:ApiStatus.Internal
-  @set:ApiStatus.Internal
-  var showingTime: Int by componentAnimator::showingTime
+  override var retentionTime: Int by componentAnimator::retentionTime
 
-  @get:ApiStatus.Internal
-  @set:ApiStatus.Internal
-  var hidingTime: Int by componentAnimator::hidingTime
+  override var autoHideable: Boolean by componentAnimator::autoHideable
 
-  protected abstract val autoHideable: Boolean
+  protected open fun isComponentOnHold(): Boolean = false
 
-  protected abstract fun isComponentOnHold(): Boolean
-
-  protected abstract fun installMouseMotionWatcher()
-
-  protected fun init(targetComponent: JComponent) {
-    setTargetComponent(targetComponent)
+  init {
+    targetComponent = ownerComponent
     minimumButtonSize = Dimension(22, 22)
     setSkipWindowAdjustments(true)
     isReservePlaceAutoPopupIcon = false
     isOpaque = false
     layoutStrategy = ToolbarLayoutStrategy.NOWRAP_STRATEGY
-
-    transparentComponent.hideComponent()
-
-    installMouseMotionWatcher()
-
-    if (_parentDisposable != null) {
-      Disposer.register(_parentDisposable, this)
-    }
   }
 
   override fun addNotify() {
@@ -138,9 +111,6 @@ abstract class AbstractFloatingToolbarComponent : ActionToolbarImpl, FloatingToo
       this.opacity = opacity
     }
 
-    override val autoHideable: Boolean
-      get() = toolbar.autoHideable
-
     override fun isComponentOnHold(): Boolean = toolbar.isComponentOnHold()
 
     override fun showComponent() {
@@ -149,6 +119,7 @@ abstract class AbstractFloatingToolbarComponent : ActionToolbarImpl, FloatingToo
     }
 
     override fun hideComponent() {
+      if (!isVisible) return
       isVisible = false
       toolbar.updateActionsImmediately(false)
     }

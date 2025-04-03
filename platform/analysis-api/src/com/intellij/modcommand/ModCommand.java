@@ -34,8 +34,8 @@ import java.util.function.Function;
  */
 public sealed interface ModCommand
   permits ModChooseAction, ModChooseMember, ModCompositeCommand, ModCopyToClipboard, ModCreateFile, ModDeleteFile, ModDisplayMessage,
-          ModHighlight, ModNavigate, ModNothing, ModOpenUrl, ModShowConflicts, ModStartRename, ModStartTemplate, ModUpdateFileText,
-          ModUpdateReferences, ModUpdateSystemOptions {
+          ModEditOptions, ModHighlight, ModMoveFile, ModNavigate, ModNothing, ModOpenUrl, ModShowConflicts, ModStartRename,
+          ModStartTemplate, ModUpdateFileText, ModUpdateReferences, ModUpdateSystemOptions {
 
   /**
    * @return true if the command does nothing
@@ -254,7 +254,7 @@ public sealed interface ModCommand
    */
   static @NotNull <T extends PsiElement> ModCommandAction psiBasedStep(
     @NotNull T element,
-    @NotNull @IntentionName final String title,
+    final @NotNull @IntentionName String title,
     @NotNull Function<@NotNull T, @NotNull ModCommand> function,
     @NotNull Function<@NotNull T, @NotNull TextRange> range) {
     return new PsiBasedModCommandAction<T>(element) {
@@ -287,7 +287,7 @@ public sealed interface ModCommand
    */
   static @NotNull <T extends PsiElement> ModCommandAction psiUpdateStep(
     @NotNull T element,
-    @NotNull @IntentionName final String title,
+    final @NotNull @IntentionName String title,
     @NotNull BiConsumer<@NotNull T, @NotNull ModPsiUpdater> action,
     @NotNull Function<@NotNull T, @NotNull TextRange> range) {
     return new PsiUpdateModCommandAction<T>(element) {
@@ -324,7 +324,7 @@ public sealed interface ModCommand
    */
   static @NotNull <T extends PsiElement> ModCommandAction psiUpdateStep(
     @NotNull T element,
-    @NotNull @IntentionName final String title,
+    final @NotNull @IntentionName String title,
     @NotNull BiConsumer<@NotNull T, @NotNull ModPsiUpdater> action) {
     return psiUpdateStep(element, title, action, PsiElement::getTextRange);
   }
@@ -347,6 +347,9 @@ public sealed interface ModCommand
       if (sub instanceof ModDeleteFile deleteFile && deleteFile.file().equals(virtualFile)) {
         // Navigation is useless: we are removing the target file
         return command;
+      }
+      if (sub instanceof ModMoveFile moveFile && moveFile.file().equals(virtualFile)) {
+        virtualFile = moveFile.targetFile();
       }
       if (!(sub instanceof ModNavigate)) {
         finalCommand = finalCommand.andThen(sub);
@@ -424,4 +427,16 @@ public sealed interface ModCommand
                                           @NotNull ModCommandAction @NotNull ... actions) {
     return new ModChooseAction(title, List.of(actions));
   }
+
+  /**
+   * Creates a command to move a file to a specified directory
+   * 
+   * @param file file to move
+   * @param target target directory
+   * @return a command that moves the file to a specified directory
+   */
+  static @NotNull ModCommand moveFile(@NotNull VirtualFile file, @NotNull VirtualFile target) {
+    return new ModMoveFile(file, new FutureVirtualFile(target, file.getName(), file.getFileType()));
+  }
+
 }

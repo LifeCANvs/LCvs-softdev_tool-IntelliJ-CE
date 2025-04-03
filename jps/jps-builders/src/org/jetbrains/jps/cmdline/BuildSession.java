@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.jps.cmdline;
 
 import com.intellij.openapi.diagnostic.Logger;
@@ -15,7 +15,10 @@ import com.intellij.util.concurrency.SequentialTaskExecutor;
 import com.intellij.util.io.DataOutputStream;
 import com.intellij.util.io.StorageLockContext;
 import io.netty.channel.Channel;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.Nls;
+import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.jps.api.*;
 import org.jetbrains.jps.builders.*;
 import org.jetbrains.jps.builders.java.JavaModuleBuildTargetType;
@@ -26,6 +29,7 @@ import org.jetbrains.jps.incremental.TargetTypeRegistry;
 import org.jetbrains.jps.incremental.Utils;
 import org.jetbrains.jps.incremental.fs.BuildFSState;
 import org.jetbrains.jps.incremental.messages.*;
+import org.jetbrains.jps.incremental.storage.BuildDataManager;
 import org.jetbrains.jps.incremental.storage.ProjectStamps;
 import org.jetbrains.jps.incremental.storage.StampsStorage;
 import org.jetbrains.jps.model.module.JpsModule;
@@ -377,7 +381,9 @@ final class BuildSession implements Runnable, CanceledStatus {
         }
       }
       myProjectDescriptor = pd;
-      if (myCacheLoadManager != null) myCacheLoadManager.updateBuildStatistic(myProjectDescriptor);
+      if (myCacheLoadManager != null) {
+        myCacheLoadManager.updateBuildStatistic(myProjectDescriptor);
+      }
 
       myLastEventOrdinal.set(myInitialFSDelta != null? myInitialFSDelta.getOrdinal() : 0L);
 
@@ -457,7 +463,9 @@ final class BuildSession implements Runnable, CanceledStatus {
     });
   }
 
-  private static void applyFSEvent(ProjectDescriptor pd, @Nullable CmdlineRemoteProto.Message.ControllerMessage.FSEvent event, final boolean saveEventStamp) throws IOException {
+  private static void applyFSEvent(@NotNull ProjectDescriptor projectDescriptor,
+                                   @Nullable CmdlineRemoteProto.Message.ControllerMessage.FSEvent event,
+                                   boolean saveEventStamp) throws IOException {
     if (event == null) {
       return;
     }
@@ -466,21 +474,22 @@ final class BuildSession implements Runnable, CanceledStatus {
       LOG.debug("applyFSEvent ordinal=" + event.getOrdinal());
     }
 
-    final BuildRootIndex buildRootIndex = pd.getBuildRootIndex();
-    final StampsStorage<? extends StampsStorage.Stamp> stampStorage = pd.getProjectStamps().getStampStorage();
+    final BuildRootIndex buildRootIndex = projectDescriptor.getBuildRootIndex();
+    BuildDataManager dataManager = projectDescriptor.dataManager;
     for (String deleted : event.getDeletedPathsList()) {
-      final File file = new File(deleted);
-      Collection<BuildRootDescriptor> descriptor = buildRootIndex.findAllParentDescriptors(file, null, null);
+      Path file = Path.of(deleted);
+      Collection<BuildRootDescriptor> descriptor = buildRootIndex.findAllParentDescriptors(file.toFile(), null, null);
       if (!descriptor.isEmpty()) {
         if (LOG.isDebugEnabled()) {
-          LOG.debug("Applying deleted path from fs event: " + file.getPath());
+          LOG.debug("Applying deleted path from fs event: " + file);
         }
         for (BuildRootDescriptor rootDescriptor : descriptor) {
-          pd.fsState.registerDeleted(null, rootDescriptor.getTarget(), file, stampStorage);
+          StampsStorage<?> stampStorage = dataManager.getFileStampStorage(rootDescriptor.getTarget());
+          projectDescriptor.fsState.registerDeleted(null, rootDescriptor.getTarget(), file, stampStorage);
         }
       }
       else if (LOG.isDebugEnabled()) {
-        LOG.debug("Skipping deleted path: " + file.getPath());
+        LOG.debug("Skipping deleted path: " + file);
       }
     }
 
@@ -505,12 +514,13 @@ final class BuildSession implements Runnable, CanceledStatus {
           LOG.debug("Applying dirty path from fs event: " + file);
         }
         for (BuildRootDescriptor descriptor : descriptors) {
-          StampsStorage.Stamp stamp = stampStorage.getPreviousStamp(file, descriptor.getTarget());
-          if (stamp == null || stampStorage.isDirtyStamp(stamp, file)) {
-            pd.fsState.markDirty(null, file.toFile(), descriptor, stampStorage, saveEventStamp);
+          StampsStorage<?> stampStorage = dataManager.getFileStampStorage(descriptor.getTarget());
+          Object currentUpToDateStamp = stampStorage == null? null : stampStorage.getCurrentStampIfUpToDate(file, descriptor.getTarget(), null);
+          if (currentUpToDateStamp == null) {
+            projectDescriptor.fsState.markDirty(null, file, descriptor, stampStorage, saveEventStamp);
           }
           else if (LOG.isDebugEnabled()) {
-            LOG.debug(descriptor.getTarget() + ": Path considered up-to-date: " + file + "; stamp= " + stamp);
+            LOG.debug(descriptor.getTarget() + ": Path considered up-to-date: " + file + "; stamp= " + currentUpToDateStamp);
           }
         }
       }

@@ -5,12 +5,13 @@ import com.intellij.junit.testFramework.JUnitMalformedDeclarationInspectionTestB
 import com.intellij.jvm.analysis.testFramework.JvmLanguage
 import org.jetbrains.kotlin.idea.test.ConfigLibraryUtil
 import org.jetbrains.kotlin.idea.test.ExpectedPluginModeProvider
+import org.jetbrains.kotlin.idea.test.setUpWithKotlinPlugin
 
 abstract class KotlinJUnitMalformedDeclarationInspectionTestBase(
   junit5Version: String
 ) : JUnitMalformedDeclarationInspectionTestBase(junit5Version), ExpectedPluginModeProvider {
   override fun setUp() {
-    super.setUp()
+    setUpWithKotlinPlugin(testRootDisposable) { super.setUp() }
     ConfigLibraryUtil.configureKotlinRuntime(myFixture.module)
   }
 }
@@ -921,6 +922,36 @@ abstract class KotlinJUnitMalformedDeclarationInspectionTestLatest : KotlinJUnit
           @org.junit.jupiter.api.BeforeAll
           fun beforeAll(foo: String) { println(foo) }
         }
+      }
+    """.trimIndent())
+  }
+  fun `test non-malformed with multiple extensions inside extensions annotation`() {
+    myFixture.testHighlighting(
+      JvmLanguage.KOTLIN, """
+      class TestNonParameterResolver : org.junit.jupiter.api.extension.Extension { }
+      
+      class TestParameterResolver : org.junit.jupiter.api.extension.ParameterResolver {
+        override fun supportsParameter(
+          parameterContext: org.junit.jupiter.api.extension.ParameterContext, 
+          extensionContext: org.junit.jupiter.api.extension.ExtensionContext
+        ): Boolean = true
+    
+        override fun resolveParameter(
+          parameterContext: org.junit.jupiter.api.extension.ParameterContext, 
+          extensionContext: org.junit.jupiter.api.extension.ExtensionContext
+        ): Any = ""
+      }
+      
+      @org.junit.jupiter.api.extension.Extensions(
+          org.junit.jupiter.api.extension.ExtendWith(TestNonParameterResolver::class),
+          org.junit.jupiter.api.extension.ExtendWith(TestParameterResolver::class)
+      )
+      class ParameterResolver {
+          companion object {
+              @JvmStatic
+              @org.junit.jupiter.api.BeforeAll
+              fun beforeAll(foo: String) { println(foo) }
+          }
       }
     """.trimIndent())
   }

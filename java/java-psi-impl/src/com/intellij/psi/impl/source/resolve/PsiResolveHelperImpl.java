@@ -24,8 +24,6 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.function.Predicate;
-
 public class PsiResolveHelperImpl implements PsiResolveHelper {
   private static final Logger LOG = Logger.getInstance(PsiResolveHelperImpl.class);
   private final PsiManager myManager;
@@ -127,7 +125,7 @@ public class PsiResolveHelperImpl implements PsiResolveHelper {
     PsiClass containingClass = member.getContainingClass();
     boolean accessible = JavaResolveUtil.isAccessible(member, containingClass, modifierList, place, accessObjectClass, currentFileResolveScope);
     if (accessible && member instanceof PsiClass && !(member instanceof PsiTypeParameter)) {
-      accessible = isAccessible(moduleSystem -> moduleSystem.isAccessible(((PsiClass)member), place));
+      accessible = JavaModuleGraphHelper.getInstance().isAccessible(((PsiClass)member), place);
     }
     if (fromImplicitClassOutsideThisClass(member, place)) {
       return false;
@@ -144,11 +142,11 @@ public class PsiResolveHelperImpl implements PsiResolveHelper {
    * @return true if the member is not from an implicit class or if place and member are both in the same implicit class, false otherwise.
    */
   private static boolean fromImplicitClassOutsideThisClass(@NotNull PsiMember member, @NotNull PsiElement place) {
-    PsiImplicitClass implicitClass = PsiTreeUtil.getParentOfType(member, PsiImplicitClass.class);
+    PsiImplicitClass implicitClass = PsiTreeUtil.getContextOfType(member, PsiImplicitClass.class);
     if (implicitClass == null) {
       return false;
     }
-    PsiImplicitClass placeImplicitClass = PsiTreeUtil.getParentOfType(place, PsiImplicitClass.class);
+    PsiImplicitClass placeImplicitClass = PsiTreeUtil.getContextOfType(place, PsiImplicitClass.class);
     if (placeImplicitClass == null) {
       return true;
     }
@@ -158,16 +156,7 @@ public class PsiResolveHelperImpl implements PsiResolveHelper {
 
   @Override
   public boolean isAccessible(@NotNull PsiPackage pkg, @NotNull PsiElement place) {
-    return isAccessible(moduleSystem -> moduleSystem.isAccessible(pkg.getQualifiedName(), null, place));
-  }
-
-  private static boolean isAccessible(Predicate<? super JavaModuleSystem> predicate) {
-    for (JavaModuleSystem t : JavaModuleSystem.EP_NAME.getExtensionList()) {
-      if (!predicate.test(t)) {
-        return false;
-      }
-    }
-    return true;
+    return JavaModuleGraphHelper.getInstance().isAccessible(pkg.getQualifiedName(), null, place);
   }
 
   @Override

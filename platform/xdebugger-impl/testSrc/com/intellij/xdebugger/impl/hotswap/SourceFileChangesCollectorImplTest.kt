@@ -1,21 +1,15 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.hotswap
 
-import com.intellij.history.ActivityId
-import com.intellij.history.FileRevisionTimestampComparator
-import com.intellij.history.Label
-import com.intellij.history.LocalHistory
-import com.intellij.history.LocalHistoryAction
+import com.intellij.history.*
 import com.intellij.openapi.command.writeCommandAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.NlsContexts
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.util.coroutines.childScope
 import com.intellij.testFramework.LightPlatformCodeInsightTestCase
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
@@ -92,7 +86,7 @@ class SourceFileChangesCollectorImplTest : LightPlatformCodeInsightTestCase() {
     val disposable = Disposer.newDisposable(testRootDisposable)
     doTest { scope, document ->
       scope.withCollector { collector, channel ->
-        (collector as SourceFileChangesCollectorImpl).customLocalHistory = MockLocalHistory(document.text.toByteArray())
+        SourceFileChangesCollectorImpl.customLocalHistory = MockLocalHistory(document.text.toByteArray())
         assertNull(channel.tryReceive().getOrNull())
 
         writeCommandAction(project, "Replace first line") { document.replaceString(0, 4, "string") }
@@ -113,14 +107,9 @@ private inline fun CoroutineScope.withCollector(
   action: (SourceFileChangesCollector<VirtualFile>, channel: ReceiveChannel<Response>) -> Unit,
 ) {
   val channel = Channel<Response>()
-  val collectorScope = childScope("Collector")
-  try {
-    val collector = SourceFileChangesCollectorImpl(collectorScope, MockListener(this, channel), *filters)
-    action(collector, channel)
-  }
-  finally {
-    collectorScope.cancel()
-  }
+  val collector = SourceFileChangesCollectorImpl(this, MockListener(this, channel), *filters)
+  action(collector, channel)
+  Disposer.dispose(collector)
 }
 
 private enum class Response {
@@ -142,6 +131,8 @@ private class MockListener(private val scope: CoroutineScope, private val channe
 }
 
 private class MockLocalHistory(val bytes: ByteArray) : LocalHistory() {
+  override val isEnabled: Boolean = true
+
   override fun getByteContent(file: VirtualFile, condition: FileRevisionTimestampComparator): ByteArray? = bytes
   override fun startAction(name: @NlsContexts.Label String?, activityId: ActivityId?): LocalHistoryAction = LocalHistoryAction.NULL
   override fun putEventLabel(project: Project, name: String, activityId: ActivityId): Label = Label.NULL_INSTANCE

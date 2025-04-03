@@ -21,9 +21,9 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.pointers.VirtualFilePointerManager
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.util.PlatformUtils
 import com.intellij.util.SlowOperations
 import com.intellij.util.concurrency.ThreadingAssertions
-import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import org.jdom.Element
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.VisibleForTesting
@@ -62,7 +62,6 @@ class EditorHistoryManager internal constructor(private val project: Project) : 
     private val LOG = logger<EditorHistoryManager>()
 
     @JvmStatic
-    @RequiresBlockingContext
     fun getInstance(project: Project): EditorHistoryManager = project.service()
   }
 
@@ -313,6 +312,11 @@ class EditorHistoryManager internal constructor(private val project: Project) : 
       fileToElement.remove(file)
       // the last is the winner
       fileToElement.put(file, e)
+    }
+
+    if (PlatformUtils.isJetBrainsClient()) {
+      // JetBrains Client doesn't have local files, so there is no need to load a history here
+      return
     }
 
     val list = fileToElement.values.mapNotNull { element ->

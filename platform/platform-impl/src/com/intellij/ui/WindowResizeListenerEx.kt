@@ -2,10 +2,11 @@
 package com.intellij.ui
 
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.util.SystemInfoRt
+import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.wm.IdeGlassPane
 import com.intellij.openapi.wm.impl.IdeGlassPaneImpl
-import com.intellij.util.ui.MacUIUtil
+import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CoroutineScope
 import org.jetbrains.annotations.ApiStatus
 import java.awt.Component
@@ -17,6 +18,9 @@ import javax.swing.JComponent
 @ApiStatus.Internal
 class WindowResizeListenerEx(private val glassPane: IdeGlassPane, content: Component, border: Insets, corner: Icon?) :
   WindowResizeListener(content, border, corner) {
+
+  constructor(glassPane: IdeGlassPane, content: Component, movable: Boolean) : this(glassPane, content, defaultBorder(movable), null)
+
   private val resizeListeners = mutableListOf<Runnable>()
 
   private var cursor: Cursor? = null
@@ -34,15 +38,6 @@ class WindowResizeListenerEx(private val glassPane: IdeGlassPane, content: Compo
     // Therefore, this call must be outside the if statement above.
     // No performance penalty for this, because there's another equality check inside.
     super.setCursor(content, cursor)
-    // macOS sometimes ignores [NSCursor set] for no reason.
-    // Force it by calling the native method every time.
-    // It may fail once, but it'll work on the next try, or the next one, or the next one...
-    // It works, but with a performance penalty, so we're only doing it for resize cursors,
-    // which are important to get right, otherwise the user has no visual clue that resizing
-    // is even possible (IJPL-43686).
-    if (SystemInfoRt.isMac && cursor.isResizeCursor()) {
-      MacUIUtil.nativeSetBuiltInCursor(cursor.type)
-    }
   }
 
   override fun notifyResized() {
@@ -69,15 +64,22 @@ class WindowResizeListenerEx(private val glassPane: IdeGlassPane, content: Compo
   }
 }
 
-private fun Cursor.isResizeCursor(): Boolean = type in RESIZE_CURSOR_TYPES
+private fun defaultBorder(movable: Boolean): Insets {
+  val zone = defaultZone()
+  return if (movable) {
+    JBUI.insets(zone)
+  }
+  else {
+    JBUI.insets(0, 0, zone, zone)
+  }
+}
 
-private val RESIZE_CURSOR_TYPES: Set<Int> = setOf(
-  Cursor.NW_RESIZE_CURSOR,
-  Cursor.SW_RESIZE_CURSOR,
-  Cursor.NE_RESIZE_CURSOR,
-  Cursor.SE_RESIZE_CURSOR,
-  Cursor.N_RESIZE_CURSOR,
-  Cursor.S_RESIZE_CURSOR,
-  Cursor.W_RESIZE_CURSOR,
-  Cursor.E_RESIZE_CURSOR,
-)
+private fun defaultZone(): Int = if (SystemInfo.isMac) {
+  Registry.intValue("popup.resize.zone.macos", 8) // for some reason, small values on macOS make it really uncomfortable
+}
+else if (SystemInfo.isWindows) {
+  Registry.intValue("popup.resize.zone.windows", 4)
+}
+else {
+  Registry.intValue("popup.resize.zone.linux", 4)
+}

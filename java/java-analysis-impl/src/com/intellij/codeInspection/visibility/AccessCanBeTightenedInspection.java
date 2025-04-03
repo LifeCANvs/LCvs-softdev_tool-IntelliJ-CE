@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection.visibility;
 
 import com.intellij.codeInsight.daemon.impl.UnusedSymbolUtil;
@@ -47,20 +47,17 @@ public class AccessCanBeTightenedInspection extends AbstractBaseJavaLocalInspect
   }
 
   @Override
-  @NotNull
-  public String getGroupDisplayName() {
+  public @NotNull String getGroupDisplayName() {
     return InspectionsBundle.message("group.names.visibility.issues");
   }
 
   @Override
-  @NotNull
-  public String getShortName() {
+  public @NotNull String getShortName() {
     return VisibilityInspection.SHORT_NAME;
   }
 
-  @NotNull
   @Override
-  public PsiElementVisitor buildVisitor(@NotNull final ProblemsHolder holder, final boolean isOnTheFly) {
+  public @NotNull PsiElementVisitor buildVisitor(final @NotNull ProblemsHolder holder, final boolean isOnTheFly) {
     return new MyVisitor(holder);
   }
 
@@ -89,7 +86,7 @@ public class AccessCanBeTightenedInspection extends AbstractBaseJavaLocalInspect
       checkMember(field);
     }
 
-    private void checkMember(@NotNull final PsiMember member) {
+    private void checkMember(final @NotNull PsiMember member) {
       if (!myVisibilityInspection.SUGGEST_FOR_CONSTANTS && isConstantField(member)) {
         return;
       }
@@ -177,7 +174,14 @@ public class AccessCanBeTightenedInspection extends AbstractBaseJavaLocalInspect
         if (memberClass.isRecord() && ((PsiMethod)member).isConstructor()) {
           final PsiModifierList modifierList = memberClass.getModifierList();
           assert modifierList != null; // anonymous records don't exist
-          return PsiUtil.getAccessLevel(modifierList);
+          int level = PsiUtil.getAccessLevel(modifierList);
+          if (level == PsiUtil.ACCESS_LEVEL_PRIVATE && !myVisibilityInspection.SUGGEST_PRIVATE_FOR_INNERS) {
+            level = PsiUtil.ACCESS_LEVEL_PACKAGE_LOCAL;
+          }
+          if (level == PsiUtil.ACCESS_LEVEL_PACKAGE_LOCAL && !myVisibilityInspection.SUGGEST_PACKAGE_LOCAL_FOR_MEMBERS) {
+            level = PsiUtil.ACCESS_LEVEL_PUBLIC;
+          }
+          return level;
         }
         // If class will be subclassed by some framework then it could apply some specific requirements for methods visibility
         // so we just skip it here (IDEA-182709, IDEA-160602)
@@ -349,8 +353,7 @@ public class AccessCanBeTightenedInspection extends AbstractBaseJavaLocalInspect
     }
   }
 
-  @Nullable
-  private static PsiPackage getPackage(@NotNull PsiElement element) {
+  private static @Nullable PsiPackage getPackage(@NotNull PsiElement element) {
     PsiFile file = element.getContainingFile();
     PsiDirectory directory = file == null ? null : file.getContainingDirectory();
     return directory == null ? null : JavaDirectoryService.getInstance().getPackage(directory);

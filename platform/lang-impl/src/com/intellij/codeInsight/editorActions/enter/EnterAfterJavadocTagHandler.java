@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.editorActions.enter;
 
 import com.intellij.codeInsight.CodeInsightSettings;
@@ -13,13 +13,15 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.util.text.CharArrayUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.HashSet;
 import java.util.Set;
 
-public final class EnterAfterJavadocTagHandler extends EnterHandlerDelegateAdapter {
+@ApiStatus.Internal
+public final class EnterAfterJavadocTagHandler implements EnterHandlerDelegate {
 
   private static final Context NOT_MATCHED_CONTEXT = new Context();
 
@@ -173,8 +175,8 @@ public final class EnterAfterJavadocTagHandler extends EnterHandlerDelegateAdapt
     return new Context(text, startTagEndOffset, endTagStartOffset, startTag, offset);
   }
 
-  static final class Context {
-
+  @ApiStatus.Internal
+  public static final class Context {
     public final int startTagEndOffset;
     public final int endTagStartOffset;
     public final @Nullable String startTag;

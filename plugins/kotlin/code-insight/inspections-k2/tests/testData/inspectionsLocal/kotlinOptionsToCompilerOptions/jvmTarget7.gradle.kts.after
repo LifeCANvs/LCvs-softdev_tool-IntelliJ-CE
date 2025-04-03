@@ -1,4 +1,6 @@
 // FIX: Replace 'kotlinOptions' with 'compilerOptions'
+// DISABLE_K2_ERRORS
+// TODO: KTIJ-32773
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
@@ -24,5 +26,5 @@ tasks.test {
 val compileKotlin: KotlinCompile by tasks
 compileKotlin.compilerOptions {
     // We don't support the target 1.7 and thus don't convert it
-    jvmTarget.set(JvmTarget.fromString("1.7"))
+    jvmTarget.set(JvmTarget.fromTarget("1.7"))
 }

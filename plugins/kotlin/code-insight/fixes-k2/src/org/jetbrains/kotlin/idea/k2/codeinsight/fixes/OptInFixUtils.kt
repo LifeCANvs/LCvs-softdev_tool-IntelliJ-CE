@@ -16,6 +16,8 @@ internal object OptInFixUtils {
     fun optInMarkerClassId(diagnostic: KaFirDiagnostic<PsiElement>): ClassId? = when (diagnostic) {
         is KaFirDiagnostic.OptInUsage -> diagnostic.optInMarkerClassId
         is KaFirDiagnostic.OptInUsageError -> diagnostic.optInMarkerClassId
+        is KaFirDiagnostic.OptInToInheritance -> diagnostic.optInMarkerClassId
+        is KaFirDiagnostic.OptInToInheritanceError -> diagnostic.optInMarkerClassId
         is KaFirDiagnostic.OptInOverride -> diagnostic.optInMarkerClassId
         is KaFirDiagnostic.OptInOverrideError -> diagnostic.optInMarkerClassId
         else -> null
@@ -37,6 +39,7 @@ internal object OptInFixUtils {
     @OptIn(KaExperimentalApi::class)
     fun annotationIsVisible(annotation: KaNamedClassSymbol, from: KtElement): Boolean {
         val file = from.containingKtFile.symbol
-        return isVisible(annotation, file, receiverExpression = null, from)
+        val visibilityChecker = createUseSiteVisibilityChecker(file, receiverExpression = null, from)
+        return visibilityChecker.isVisible(annotation)
     }
 }

@@ -30,20 +30,19 @@ import com.intellij.util.Consumer;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.JBInsets;
 import org.jdom.Element;
-import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import javax.swing.*;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 import java.awt.*;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 
 import static com.intellij.application.options.colors.ColorAndFontOptions.selectOrEditColor;
 import static com.intellij.codeInsight.daemon.impl.SeverityRegistrar.SeverityBasedTextAttributes;
 
+@ApiStatus.Internal
 public final class SeverityEditorDialog extends DialogWrapper {
   private static final Logger LOG = Logger.getInstance(SeverityEditorDialog.class);
 
@@ -269,7 +268,7 @@ public final class SeverityEditorDialog extends DialogWrapper {
     myOptionsList.setSelectedValue(preselection, true);
   }
 
-  private Collection<SeverityBasedTextAttributes> getApplicableSeverities() {
+  private @Unmodifiable Collection<SeverityBasedTextAttributes> getApplicableSeverities() {
     return ContainerUtil.filter(SeverityUtil.getRegisteredHighlightingInfoTypes(mySeverityRegistrar), t -> t.getType().isApplicableToInspections());
   }
 

@@ -1,6 +1,8 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl.compiled;
 
+import com.intellij.psi.impl.cache.ExplicitTypeAnnotationContainer;
+import com.intellij.psi.impl.cache.TypeAnnotationContainer;
 import com.intellij.psi.impl.cache.TypeInfo;
 import com.intellij.psi.impl.cache.TypeInfo.TypeKind;
 import com.intellij.psi.impl.java.stubs.JavaStubElementTypes;
@@ -10,6 +12,7 @@ import com.intellij.psi.impl.java.stubs.impl.PsiClassReferenceListStubImpl;
 import com.intellij.psi.impl.java.stubs.impl.PsiTypeParameterStubImpl;
 import com.intellij.psi.stubs.StubElement;
 import com.intellij.util.Function;
+import com.intellij.util.ObjectUtils;
 import com.intellij.util.SmartList;
 import com.intellij.util.cls.ClsFormatException;
 import org.jetbrains.annotations.NotNull;
@@ -26,7 +29,7 @@ public final class SignatureParsing {
   private SignatureParsing() { }
 
   /**
-   * A function to map JVM class names to {@link com.intellij.psi.impl.cache.TypeInfo.RefTypeInfo}.
+   * A function to map JVM class names to {@link TypeInfo.RefTypeInfo}.
    * Normally, this function should take into account probable inner classes. This is done by {@link FirstPassData} implementation.
    * If inner classes information is unavailable, use {@link StubBuildingVisitor#GUESSING_PROVIDER} for heuristic-based mapping
    */
@@ -119,7 +122,7 @@ public final class SignatureParsing {
     void fillInTypeParameterList(StubElement<?> parent) {
       List<TypeParameterDeclaration> declarations = this.myDeclarations;
       if (declarations.isEmpty()) return;
-      PsiTypeParameterListStub listStub = parent.findChildStubByType(JavaStubElementTypes.TYPE_PARAMETER_LIST);
+      PsiTypeParameterListStub listStub = ObjectUtils.tryCast(parent.findChildStubByElementType(JavaStubElementTypes.TYPE_PARAMETER_LIST), PsiTypeParameterListStub.class);
       if (listStub == null) return;
       for (TypeParameterDeclaration parameter : declarations) {
         parameter.createTypeParameter(listStub);
@@ -138,7 +141,10 @@ public final class SignatureParsing {
 
     private void createTypeParameter(PsiTypeParameterListStub listStub) {
       PsiTypeParameterStub stub = new PsiTypeParameterStubImpl(listStub, this.myTypeParameter.text());
-      myTypeParameter.getTypeAnnotations().createAnnotationStubs(stub);
+      TypeAnnotationContainer annotations = myTypeParameter.getTypeAnnotations();
+      if (annotations instanceof ExplicitTypeAnnotationContainer) {
+        ((ExplicitTypeAnnotationContainer)annotations).createAnnotationStubs(stub);
+      }
       TypeInfo[] info = this.myBounds;
       if (info.length > 0 && info[0] == null) {
         info = Arrays.copyOfRange(info, 1, info.length);

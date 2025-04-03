@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.find.impl;
 
 import com.intellij.CommonBundle;
@@ -62,8 +62,8 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.GlobalSearchScopeUtil;
 import com.intellij.reference.SoftReference;
-import com.intellij.ui.AnimatedIcon;
 import com.intellij.ui.*;
+import com.intellij.ui.AnimatedIcon;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.ui.components.*;
 import com.intellij.ui.dsl.gridLayout.builders.RowBuilder;
@@ -102,9 +102,9 @@ import java.awt.event.*;
 import java.io.File;
 import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
+import java.util.*;
 import java.util.List;
 import java.util.Vector;
-import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -300,7 +300,7 @@ public final class FindPopupPanel extends JBPanel<FindPopupPanel> implements Fin
       IdeGlassPaneEx glass = (IdeGlassPaneEx)myDialog.getRootPane().getGlassPane();
       boolean toolkitCannotResizeUndecorated = !StartupUiUtil.isWaylandToolkit();
       if (toolkitCannotResizeUndecorated) {
-        new WindowResizeListenerEx(glass, root, JBUI.insets(4), null)
+        new WindowResizeListenerEx(glass, root, true)
           .install(myDisposable);
       }
 
@@ -675,17 +675,23 @@ public final class FindPopupPanel extends JBPanel<FindPopupPanel> implements Fin
 
       String selectedFile = file;
 
-      UsageAdaptersKt.getUsageInfo(adapters, myProject).thenAccept(selectedUsages -> {
-        ReadAction.nonBlocking(() -> UsagePreviewPanel.isOneAndOnlyOnePsiFileInUsages(selectedUsages))
-          .finishOnUiThread(ModalityState.nonModal(), isOneAndOnlyOnePsiFileInUsages -> {
+      UsageAdaptersKt.getUsageInfoAsFuture(adapters, myProject).thenAccept(selectedUsages -> {
+        record UsagesFileInfo(boolean isOneAndOnlyOnePsiFileInUsages, @Nullable VirtualFile virtualFile) {
+        }
+        ReadAction.nonBlocking(() -> new UsagesFileInfo(
+            UsagePreviewPanel.isOneAndOnlyOnePsiFileInUsages(selectedUsages),
+            selectedFile != null ? VfsUtil.findFileByIoFile(new File(selectedFile), true) : null
+          ))
+          .finishOnUiThread(ModalityState.nonModal(), usagesFileInfo -> {
             myReplaceSelectedButton.setText(FindBundle.message("find.popup.replace.selected.button", selectedUsages.size()));
             FindInProjectUtil.setupViewPresentation(myUsageViewPresentation, myHelper.getModel().clone());
             myUsagePreviewPanel.updateLayout(myProject, selectedUsages);
             myUsagePreviewTitle.clear();
-            if (isOneAndOnlyOnePsiFileInUsages && selectedFile != null) {
+            if (usagesFileInfo.isOneAndOnlyOnePsiFileInUsages && selectedFile != null) {
               myUsagePreviewTitle.append(PathUtil.getFileName(selectedFile), SimpleTextAttributes.REGULAR_ATTRIBUTES);
-              VirtualFile virtualFile = VfsUtil.findFileByIoFile(new File(selectedFile), true);
-              String locationPath = virtualFile == null ? null : getPresentablePath(myProject, virtualFile.getParent(), 120);
+              String locationPath = usagesFileInfo.virtualFile == null ? null
+                                                                       : getPresentablePath(myProject,
+                                                                                            usagesFileInfo.virtualFile.getParent(), 120);
               if (locationPath != null) {
                 myUsagePreviewTitle.append(spaceAndThinSpace() + locationPath,
                                            new SimpleTextAttributes(STYLE_PLAIN, UIUtil.getContextHelpForeground()));
@@ -1061,16 +1067,9 @@ public final class FindPopupPanel extends JBPanel<FindPopupPanel> implements Fin
 
   private void updateScopeDetailsPanel() {
     ((CardLayout)myScopeDetailsPanel.getLayout()).show(myScopeDetailsPanel, mySelectedScope.name);
-    Component firstFocusableComponent = focusableComponents(myScopeDetailsPanel).find(
-      c -> c.isFocusable() && c.isEnabled() && c.isShowing()
-    );
     myScopeDetailsPanel.revalidate();
     myScopeDetailsPanel.repaint();
-    if (firstFocusableComponent != null) {
-      ApplicationManager.getApplication().invokeLater(
-        () -> IdeFocusManager.getInstance(myProject).requestFocus(firstFocusableComponent, true));
-    }
-    if (firstFocusableComponent == null && !mySearchComponent.isFocusOwner() && !myReplaceComponent.isFocusOwner()) {
+    if (!mySearchComponent.isFocusOwner() && !myReplaceComponent.isFocusOwner()) {
       ApplicationManager.getApplication().invokeLater(
         () -> IdeFocusManager.getInstance(myProject).requestFocus(mySearchComponent, true));
     }
@@ -1260,7 +1259,8 @@ public final class FindPopupPanel extends JBPanel<FindPopupPanel> implements Fin
 
       @Override
       public void onCancel() {
-        if (isShowing() && progressIndicatorWhenSearchStarted == myResultsPreviewSearchProgress) {
+        if (isShowing() && progressIndicatorWhenSearchStarted == myResultsPreviewSearchProgress &&
+            !progressIndicatorWhenSearchStarted.isCanceled()) {
           scheduleResultsUpdate();
         }
       }
@@ -1452,6 +1452,7 @@ public final class FindPopupPanel extends JBPanel<FindPopupPanel> implements Fin
       //noinspection HardCodedStringLiteral
       showEmptyText(message);
       header.loadingIcon.setIcon(EmptyIcon.ICON_16);
+      myHelper.onSearchStop();
     });
   }
 
@@ -1505,8 +1506,7 @@ public final class FindPopupPanel extends JBPanel<FindPopupPanel> implements Fin
           RegExReplacementBuilder.validate(pattern, getStringToReplace());
         }
         catch (IllegalArgumentException e) {
-          return new ValidationInfo(FindBundle.message("find.replace.invalid.replacement.string", e.getMessage()),
-                                    myReplaceComponent);
+          return new ValidationInfo(FindBundle.message("find.replace.invalid.replacement.string", e.getMessage()), myReplaceComponent);
         }
       }
     }

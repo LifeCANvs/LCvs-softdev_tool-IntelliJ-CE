@@ -2,6 +2,7 @@
 
 package com.intellij.ide.actions;
 
+import com.intellij.ide.structureView.logical.PhysicalAndLogicalStructureViewBuilder;
 import com.intellij.ide.structureView.StructureView;
 import com.intellij.ide.structureView.StructureViewBuilder;
 import com.intellij.ide.structureView.StructureViewModel;
@@ -69,16 +70,16 @@ public final class ViewStructureAction extends DumbAwareAction {
     project.getMessageBus().syncPublisher(FileStructurePopupListener.TOPIC).stateChanged(true);
     StructureView structureView;
     StructureViewModel treeModel;
-    if (builder instanceof TreeBasedStructureViewBuilder) {
+    if (builder instanceof PhysicalAndLogicalStructureViewBuilder compositeBuilder) {
+      structureView = compositeBuilder.createPhysicalStructureView(fileEditor, project);
+      treeModel = createStructureViewModel(project, fileEditor, structureView);
+    }
+    else if (builder instanceof TreeBasedStructureViewBuilder) {
       structureView = null;
       treeModel = ((TreeBasedStructureViewBuilder)builder).createStructureViewModel(EditorUtil.getEditorEx(fileEditor));
     }
     else {
       structureView = builder.createStructureView(fileEditor, project);
-      // TODO StructureTW: make logical structure to work correctly with FilteringTree
-      if (structureView instanceof StructureViewComposite viewComposite && viewComposite.getStructureViews().length == 2) {
-        structureView = viewComposite.getStructureViews()[1].structureView;
-      }
       treeModel = createStructureViewModel(project, fileEditor, structureView);
     }
     if (treeModel instanceof PlaceHolder) {

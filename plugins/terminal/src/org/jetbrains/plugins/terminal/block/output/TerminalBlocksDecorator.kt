@@ -23,6 +23,7 @@ import org.jetbrains.plugins.terminal.block.output.TerminalSelectionModel.Termin
 import org.jetbrains.plugins.terminal.block.ui.GradientTextureCache
 import org.jetbrains.plugins.terminal.block.ui.TerminalUi
 import org.jetbrains.plugins.terminal.block.ui.TerminalUiUtils.getAwtForegroundByIndex
+import org.jetbrains.plugins.terminal.block.ui.VerticalSpaceInlayRenderer
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Rectangle
@@ -51,7 +52,7 @@ internal class TerminalBlocksDecorator(
                                            HighlighterTargetArea.LINES_IN_RANGE).apply {
       isGreedyToLeft = true
       isGreedyToRight = true
-      customRenderer = TerminalRightAreaRenderer()
+      setCustomRenderer(TerminalRightAreaRenderer())
     }
 
     outputModel.addListener(object : TerminalOutputModelListener {
@@ -132,15 +133,15 @@ internal class TerminalBlocksDecorator(
     }
 
     // add additional empty space on top of the block if it is the first block
-    val topRenderer = EmptyWidthInlayRenderer {
-      val additionalInset = if (outputModel.blocks[0] === block) TerminalUi.blocksGap else 0
+    val topRenderer = VerticalSpaceInlayRenderer {
+      val additionalInset = if (outputModel.blocks[0] === block) 0 else 1
       TerminalUi.blockTopInset + additionalInset
     }
     val topInlay = editor.inlayModel.addBlockElement(block.startOffset, false, true, 1, topRenderer)!!
-    val bottomRenderer = EmptyWidthInlayRenderer(TerminalUi.blockBottomInset + TerminalUi.blocksGap)
+    val bottomRenderer = VerticalSpaceInlayRenderer(TerminalUi.blockBottomInset + TerminalUi.blocksGap)
     val bottomInlay = editor.inlayModel.addBlockElement(block.endOffset, true, false, 0, bottomRenderer)!!
     val commandToOutputInlay = if (block.withCommand) {
-      val renderer = EmptyWidthInlayRenderer(TerminalUi.commandToOutputInset)
+      val renderer = VerticalSpaceInlayRenderer(TerminalUi.commandToOutputInset)
       editor.inlayModel.addBlockElement(block.outputStartOffset, false, false, 0, renderer)!!
     }
     else null
@@ -215,8 +216,8 @@ internal class TerminalBlocksDecorator(
   private fun setDecorationState(block: CommandBlock, state: BlockDecorationState) {
     val decoration = decorations[block] ?: error("No decoration for block, installDecoration should be called first")
     with(decoration) {
-      backgroundHighlighter.customRenderer = state.backgroundRenderer
-      cornersHighlighter.customRenderer = state.cornersRenderer
+      backgroundHighlighter.setCustomRenderer(state.backgroundRenderer)
+      cornersHighlighter.setCustomRenderer(state.cornersRenderer)
       cornersHighlighter.lineMarkerRenderer = state.leftAreaRenderer
     }
 
@@ -273,15 +274,6 @@ internal class TerminalBlocksDecorator(
     }
   }
 
-  /** Inlay to just create the space between lines */
-  private class EmptyWidthInlayRenderer(private val heightSupplier: () -> Int) : EditorCustomElementRenderer {
-    constructor(height: Int) : this({ height })
-
-    override fun calcWidthInPixels(inlay: Inlay<*>): Int = 0
-
-    override fun calcHeightInPixels(inlay: Inlay<*>): Int = JBUI.scale(heightSupplier())
-  }
-
   /**
    * By default, the selection is painted for the whole width of the editor.
    * This renderer overrides the background between blocks' right corner and terminal right corner,
@@ -293,7 +285,7 @@ internal class TerminalBlocksDecorator(
       val width = JBUI.scale(TerminalUi.cornerToBlockInset)
       val oldColor = g.color
       try {
-        g.color = editor.colorsScheme.getColor(BlockTerminalColors.DEFAULT_BACKGROUND)
+        g.color = TerminalUi.defaultBackground(editor)
         g.fillRect(visibleArea.width - width, visibleArea.y, width, visibleArea.height)
       }
       finally {

@@ -2,13 +2,9 @@
 package org.jetbrains.kotlin.idea.k2.debugger.test.cases
 
 import com.intellij.openapi.project.Project
-import org.jetbrains.kotlin.analyzer.AnalysisResult
 import org.jetbrains.kotlin.config.JvmClosureGenerationScheme
 import org.jetbrains.kotlin.config.JvmTarget
-import org.jetbrains.kotlin.config.LanguageVersionSettings
 import org.jetbrains.kotlin.idea.debugger.test.*
-import org.jetbrains.kotlin.idea.k2.debugger.test.withTestServicesNeededForCodeCompilation
-import org.jetbrains.kotlin.psi.KtFile
 
 abstract class AbstractK2IdeK2MultiplatformCodeKotlinEvaluateExpressionTest: AbstractIrKotlinEvaluateExpressionInMppTest() {
     override val compileWithK2: Boolean = true
@@ -29,10 +25,4 @@ private class K2MppDebuggerCompilerFacility(
     files: List<TestFileWithModule>,
     jvmTarget: JvmTarget,
     compileConfig: TestCompileConfiguration,
-) : MppDebuggerCompilerFacility(project, files, jvmTarget, compileConfig) {
-    override fun analyzeSources(ktFiles: List<KtFile>): Pair<LanguageVersionSettings, AnalysisResult> {
-        return withTestServicesNeededForCodeCompilation(project) {
-            super.analyzeSources(ktFiles)
-        }
-    }
-}
+) : MppDebuggerCompilerFacility(project, files, jvmTarget, compileConfig)

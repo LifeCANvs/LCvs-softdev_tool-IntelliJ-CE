@@ -279,17 +279,22 @@ public final class CollectionFactory {
 
   public static @NotNull Set<String> createFilePathLinkedSet() {
     return SystemInfoRt.isFileSystemCaseSensitive
-           ? new ObjectLinkedOpenHashSet<>()
+           ? new LinkedHashSet<>()
            : new ObjectLinkedOpenCustomHashSet<>(FastUtilHashingStrategies.getCaseInsensitiveStringStrategy());
+  }
+
+  public static @NotNull Set<String> createFilePathLinkedSet(@NotNull Set<String> source) {
+    return SystemInfoRt.isFileSystemCaseSensitive
+           ? new LinkedHashSet<>(source)
+           : new ObjectLinkedOpenCustomHashSet<>(source, FastUtilHashingStrategies.getCaseInsensitiveStringStrategy());
   }
 
   /**
    * Create a linked map with key hash strategy according to file system path case sensitivity.
    */
   public static @NotNull <V> Map<String, V> createFilePathLinkedMap() {
-    //noinspection SSBasedInspection
     return SystemInfoRt.isFileSystemCaseSensitive
-           ? new Object2ObjectLinkedOpenHashMap<>()
+           ? new LinkedHashMap<>()
            : new Object2ObjectLinkedOpenCustomHashMap<>(FastUtilHashingStrategies.getCaseInsensitiveStringStrategy());
   }
 
@@ -384,6 +389,23 @@ public final class CollectionFactory {
   @Contract(value = "_ -> new", pure = true)
   static @NotNull <K,V> Map<@NotNull K,V> createSoftMap(@NotNull HashingStrategy<? super K> strategy) {
     return new SoftHashMap<>(strategy);
+  }
+
+  /**
+   * Create {@link Map} with soft-referenced keys and hard-referenced values.
+   * When the key get garbage-collected, the {@code evictionListener} is (eventually) invoked with this map and the corresponding value
+   */
+  @Contract(value = "_ -> new", pure = true)
+  public static @NotNull <K,V> Map<@NotNull K,V> createSoftMap(@Nullable BiConsumer<? super @NotNull Map<K, V>, ? super V> evictionListener) {
+    return createSoftMap(HashingStrategy.canonical(), evictionListener);
+  }
+  /**
+   * Create {@link Map} with soft-referenced keys and hard-referenced values, with a custom hashing strategy.
+   * When the key get garbage-collected, the {@code evictionListener} is (eventually) invoked with this map and the corresponding value
+   */
+  @Contract(value = "_,_ -> new", pure = true)
+  public static @NotNull <K,V> Map<@NotNull K,V> createSoftMap(@NotNull HashingStrategy<? super K> hashingStrategy, @Nullable BiConsumer<? super @NotNull Map<K, V>, ? super V> evictionListener) {
+    return new SoftHashMap<>(10, hashingStrategy, evictionListener);
   }
 
   @Contract(value = " -> new", pure = true)

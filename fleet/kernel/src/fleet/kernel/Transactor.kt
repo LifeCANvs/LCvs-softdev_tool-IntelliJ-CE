@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package fleet.kernel
 
 import com.jetbrains.rhizomedb.*
@@ -6,14 +6,18 @@ import com.jetbrains.rhizomedb.impl.*
 import fleet.kernel.rebase.OfferContributorEntity
 import fleet.kernel.rebase.RemoteKernelConnectionEntity
 import fleet.kernel.rebase.WorkspaceClockEntity
+import fleet.multiplatform.shims.DispatcherPriority
+import fleet.multiplatform.shims.newSingleThreadCoroutineDispatcher
+import fleet.reporting.shared.runtime.currentSpan
+import fleet.reporting.shared.tracing.completeWithResult
 import fleet.rpc.client.RpcClientDisconnectedException
+import fleet.tracing.*
 import fleet.tracing.runtime.Span
-import fleet.tracing.runtime.currentSpan
-import fleet.tracing.span
-import fleet.tracing.spannedScope
+import fleet.tracing.runtime.SpanInfo
+import fleet.reporting.shared.tracing.span
+import fleet.reporting.shared.tracing.spannedScope
 import fleet.util.*
 import fleet.util.async.catching
-import fleet.util.async.coroutineNameAppended
 import fleet.util.async.use
 import fleet.util.channels.channels
 import fleet.util.channels.consumeEach
@@ -26,7 +30,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.builtins.serializer
-import java.util.concurrent.Executors
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -81,23 +84,42 @@ interface Transactor : CoroutineContext.Element {
   }
 }
 
+internal suspend fun waitForDbSourceToCatchUpWithTimestamp(timestamp: Long) {
+  val dbContext = DbContext.threadBound
+  if (dbContext.poison == null) {
+    if (dbContext.impl.timestamp < timestamp) {
+      val dbAfterTimestamp = currentCoroutineContext().dbSource.flow.first { db ->
+        db.timestamp >= timestamp
+      }
+      yield()
+      if (DbContext.threadBound.poison == null) {
+        DbContext.threadBound.set(dbAfterTimestamp)
+      }
+    }
+  }
+}
+
 /**
  * "Synchronous" version of [Transactor.changeAsync] carried out in [saga]
  * resulting [Change.dbAfter] will be bound to [coroutineContext] after the function returns
  * @return the result of [f]
  * */
 suspend fun <T> change(f: ChangeScope.() -> T): T {
-  val context = currentCoroutineContext()
-  val kernel = context.transactor
-  val interceptor = context[ChangeInterceptor] ?: ChangeInterceptor.Identity
+  val currentCoroutineContext = currentCoroutineContext()
+  val kernel = currentCoroutineContext.transactor
+  val interceptor = currentCoroutineContext[ChangeInterceptor] ?: ChangeInterceptor.Identity
   var res: T? = null
-  // TODO: check required condition after the change too?
-  val change = interceptor.change({ res = f() }) { changeFn ->
+  var timestamp = -1L
+  interceptor.change(
+    {
+      res = f()
+      timestamp = currentTimestamp()
+    }
+  ) { changeFn ->
     kernel.changeSuspend(changeFn)
   }
-  val result = res as T
-  DbContext.threadBound.set(change.dbAfter)
-  return result
+  waitForDbSourceToCatchUpWithTimestamp(timestamp + 1)
+  return res as T
 }
 
 
@@ -118,13 +140,13 @@ suspend fun transactor(): Transactor {
  *
  */
 @Deprecated("use Kernel.log")
-suspend fun Transactor.subscribe(capacity: Int = Channel.RENDEZVOUS, body: Subscriber) {
+suspend fun <T> Transactor.subscribe(capacity: Int = Channel.RENDEZVOUS, body: Subscriber<T>): T =
   coroutineScope {
     val (send, receive) = channels<Change>(capacity)
     // trick: use channel in place of deferred, cause the latter one would hold the firstDB for the lifetime of the entire subscription
     val firstDB = Channel<DB>(1)
-    launch(start = CoroutineStart.UNDISPATCHED,
-           context = Dispatchers.Unconfined) {
+    val job = launch(start = CoroutineStart.UNDISPATCHED,
+                     context = Dispatchers.Unconfined) {
       log.collect { e ->
         when (e) {
           is SubscriptionEvent.First -> {
@@ -138,23 +160,28 @@ suspend fun Transactor.subscribe(capacity: Int = Channel.RENDEZVOUS, body: Subsc
           }
         }
       }
-    }.apply {
-      invokeOnCompletion { x ->
-        val e = RuntimeException("subscription terminated, is subscription being consumed out of scope?", x)
-        firstDB.close(e)
-        send.close(e)
+    }
+
+    try {
+      coroutineScope {
+        body.run { subscribed(firstDB.receive(), receive) }
       }
-    }.use {
-      body.run { subscribed(firstDB.receive(), receive) }
+    }
+    finally {
+      withContext(NonCancellable) {
+        job.cancelAndJoin()
+      }
+      val e = RuntimeException("subscription terminated, is subscription being consumed out of scope?")
+      firstDB.close(e)
+      send.close(e)
     }
   }
-}
 
-fun interface Subscriber {
+fun interface Subscriber<T> {
   /**
    * Changes in the [changes] channel are guaranteed to be sequential, starting from the change applied to [initial].
    * */
-  suspend fun CoroutineScope.subscribed(initial: DB, changes: ReceiveChannel<Change>)
+  suspend fun CoroutineScope.subscribed(initial: DB, changes: ReceiveChannel<Change>): T
 }
 
 val Transactor.lastKnownDb: DB get() = dbState.value
@@ -187,23 +214,56 @@ interface KernelMetaKey<V : Any> : Key<V, Transactor>
 private const val ChangesBufferSize: Int = 1000
 private const val DispatchBufferSize: Int = 1000
 
-const val SharedPart: Part = 2 // replicated between all the clients and workspace using RemoteKernel interface
-const val FrontendPart: Part = 3 // frontend
-const val WorkspacePart: Part = 4 // workspace
-const val CommonPart: Part = 1 // shared between frontend and workspace kernel views when running in short-circuited mode
+/**
+ * Database's partition, which is replicated between all the clients and workspace using [fleet.kernel.rebase.RemoteKernel] interface.
+ *
+ * Entities created in a shared block are going to be in this partition:
+ * ```kotlin
+ * change {
+ *   shared {
+ *      // this one will be put in SharedPart
+ *      SomeEntity.new {
+ *         // ...
+ *      }
+ *   }
+ * }
+ * ```
+ */
+const val SharedPart: Part = 2
+
+/**
+ * Database's partition, which is used by frontend's entities. They are not replicated between workspace or other clients.
+ */
+const val FrontendPart: Part = 3
+
+/**
+ * Database's partition, which is used by workspace's entities. They are not replicated to the frontends.
+ */
+const val WorkspacePart: Part = 4
+
+/**
+ * Database's partition, which is replicated between a local frontend and workspace (called workspace kernel view).
+ * This partition is used in the local Fleet's mode where frontend and workspace live in the same process (called short-circuited mode).
+ *
+ * This partition is not replicated to other clients.
+ */
+const val CommonPart: Part = 1
 
 class DispatchChannelOverflowException : RuntimeException("dispatch channel is overflown")
 
 class ChangeInterceptor(
   val debugName: String,
-  val change: suspend (
-    changeFn: ChangeScope.() -> Unit,
-    next: suspend (ChangeScope.() -> Unit) -> Change,
-  ) -> Change,
+  val change: suspend (changeFn: ChangeScope.() -> Unit, next: suspend (ChangeScope.() -> Unit) -> Change) -> Change,
 ) : CoroutineContext.Element {
   companion object : CoroutineContext.Key<ChangeInterceptor> {
     val Identity: ChangeInterceptor = ChangeInterceptor("identity") { changeFn, next ->
-      next(changeFn)
+      next(changeFn).also {
+        /**
+         * because [fleet.kernel.rete.ReteSpinChangeInterceptor] wants to be in control of the threadBound context
+         * setting the database becomes a responsibility of the interceptor
+         * */
+        DbContext.threadBound.set(it.dbAfter)
+      }
     }
   }
 
@@ -252,12 +312,11 @@ sealed interface SubscriptionEvent {
  * [middleware] is applied to every change fn synchronously, being able to supply meta to the change, or alter the behavior of fn in other ways
  * Consider adding KernelMiddleware if additional routine has to be performed on every [Transactor.changeAsync]
  */
-suspend fun withTransactor(
-  entityClasses: List<EntityTypeDefinition>,
+suspend fun <T> withTransactor(
   middleware: TransactorMiddleware = TransactorMiddleware.Identity,
   defaultPart: Int = CommonPart,
-  body: suspend CoroutineScope.(Transactor) -> Unit,
-): Unit =
+  body: suspend CoroutineScope.(Transactor) -> T,
+): T =
   spannedScope("withKernel") {
     val kernelId: UID = UID.random()
     val initialDb = span("emptyDB") { DB.empty() }
@@ -274,16 +333,11 @@ suspend fun withTransactor(
               // repeat some code from loadPluginLayer
               context.run {
                 registerMixin(Durable)
-                registerRectractionRelations()
+                registerRetractionRelations()
                 register(SagaScopeEntity)
                 register(OfferContributorEntity)
                 register(RemoteKernelConnectionEntity)
                 register(WorkspaceClockEntity)
-                entityClasses.map { def -> def to addEntityClass(def) }.forEach { (def, entityTypeEID) ->
-                  if (def.kClass.isShared()) {
-                    initAttributes(entityTypeEID)
-                  }
-                }
               }
             }
           }
@@ -297,13 +351,6 @@ suspend fun withTransactor(
     val sharedFlow = MutableSharedFlow<TransactorEvent>(replay = 1,
                                                         extraBufferCapacity = ChangesBufferSize,
                                                         onBufferOverflow = BufferOverflow.DROP_OLDEST)
-
-    val changesThread = Executors.newSingleThreadExecutor { runnable ->
-      Thread(runnable, "Kernel event loop thread ${kernelId}").apply {
-        isDaemon = true
-        priority = Thread.MAX_PRIORITY
-      }
-    }
 
     val dbState = object : StateFlow<DB> {
       override val replayCache: List<DB>
@@ -348,17 +395,30 @@ suspend fun withTransactor(
       }
 
       override suspend fun changeSuspend(f: ChangeScope.() -> Unit): Change {
-        currentCoroutineContext().job.ensureActive()
-        return frequentSpannedScope("change") {
+        val job = currentCoroutineContext().job
+        job.ensureActive()
+        val span = currentSpan.startChild(
+          SpanInfo(
+            name = "change",
+            job = job,
+            isScope = true,
+            startTimestampNano = null,
+            cause = null,
+            map = HashMap()))
+        /**
+         * DO NOT WRAP THIS BLOCK IN A SCOPE!
+         * see `change suspend is atomic case 2` in [fleet.test.frontend.kernel.TransactorTest]
+         * */
+        return runCatching {
           val rendezvous = CompletableDeferred<Unit>()
           try {
             val deferred = CompletableDeferred<Change>()
             backgroundDispatchChannel.send(ChangeTask(f = f,
                                                       rendezvous = rendezvous,
                                                       resultDeferred = deferred,
-                                                      causeSpan = currentSpan))
+                                                      causeSpan = span))
             /** we want to preserve structured concurrency which means current job should be completed only when [body] has finished
-             * see `change suspend is atomic` in [fleet.test.frontend.kernel.KernelTest]
+             * see `change suspend is atomic` in [fleet.test.frontend.kernel.TransactorTest]
              */
             withContext(NonCancellable) {
               rendezvous.complete(Unit)
@@ -368,7 +428,7 @@ suspend fun withTransactor(
           finally {
             rendezvous.completeExceptionally(CancellationException("Suspending change is cancelled"))
           }
-        }
+        }.also { span.completeWithResult(it) }.getOrThrow()
       }
 
       override val log = flow {
@@ -402,86 +462,86 @@ suspend fun withTransactor(
       }
 
       override fun toString(): String {
-        return "Kernel($kernelId)"
+        return "Kernel@$kernelId"
       }
     }
 
     sharedFlow.emit(TransactorEvent.Init(timestamp = 0L, db = initialDb))
 
-    launch(coroutineNameAppended("Changes processing job for $transactor") + changesThread.asCoroutineDispatcher(),
-           start = CoroutineStart.ATOMIC) {
-      spannedScope("kernel changes") {
-        var ts = 1L
-        consumeEach(priorityDispatchChannel, backgroundDispatchChannel) { changeTask ->
-          val changeResult = runCatching {
-            // cancellation exception thrown from here means that the coroutiune issued the change is cancelled
-            // we should not rethrow it here as it will destroy kernel's event loop
-            // in a sense the cancellation is a rogue one, we should treat it as a simple change failure, and thus keep it INSIDE runCatching
-            changeTask.rendezvous.await()
-            measureTimedValue {
-              val dbBefore = dbState.value
-              frequentSpan("change", {
-                set("ts", (dbBefore.timestamp + 1).toString())
-                cause = changeTask.causeSpan
-              }) {
-                dbBefore.change(defaultPart) {
-                  meta[DeferredChangeKey] = changeTask.resultDeferred
-                  meta[SpanChangeKey] = currentSpan
-                  middleware.run { performChange(changeTask.f) }
-                  DbTimestamp.single()[DbTimestamp.Timestamp]++
-                }
-              }
-            }
-          }
-
-          changeResult
-            .onSuccess { timedChange ->
-              val slowReporter = transactor.meta[SlowChangeReporterKernelKey]
-              checkDuration(coroutineContext = currentCoroutineContext(),
-                            slowReporter = slowReporter,
-                            duration = timedChange.duration,
-                            location = changeTask.causeSpan)
-              val change = timedChange.value
-              Transactor.logger.trace { "[$transactor] broadcasting change $change" }
-              sharedFlow.emit(TransactorEvent.SequentialChange(timestamp = ts++,
-                                                               change = change))
-              change.meta[OnCompleteKey]?.forEach { onComplete ->
-                catching {
-                  asOf(change.dbAfter) {
-                    onComplete(transactor)
+    newSingleThreadCoroutineDispatcher("Kernel event loop thread ${kernelId}", DispatcherPriority.HIGH).use { coroutineDispatcher ->
+      launch(CoroutineName("Transactor loop $transactor") + coroutineDispatcher, start = CoroutineStart.ATOMIC) {
+        spannedScope("kernel changes") {
+          var ts = 1L
+          consumeEach(priorityDispatchChannel, backgroundDispatchChannel) { changeTask ->
+            val changeResult = runCatching {
+              // cancellation exception thrown from here means that the coroutiune issued the change is cancelled
+              // we should not rethrow it here as it will destroy kernel's event loop
+              // in a sense the cancellation is a rogue one, we should treat it as a simple change failure, and thus keep it INSIDE runCatching
+              changeTask.rendezvous.await()
+              measureTimedValue {
+                val dbBefore = dbState.value
+                span("change", {
+                  set("ts", (dbBefore.timestamp + 1).toString())
+                  cause = changeTask.causeSpan
+                }) {
+                  dbBefore.change(defaultPart) {
+                    meta[DeferredChangeKey] = changeTask.resultDeferred
+                    meta[SpanChangeKey] = currentSpan
+                    middleware.run { performChange(changeTask.f) }
+                    DbTimestamp.single()[DbTimestamp.Timestamp]++
                   }
-                }.onFailure { e ->
-                  Transactor.logger.error(e) { "ChangeScope.onComplete action failed" }
-                }
-              }
-              changeTask.resultDeferred.complete(change)
-            }
-            .onFailure { x ->
-              changeTask.resultDeferred.completeExceptionally(x)
-              if (x !is CancellationException) {
-                Transactor.logger.error(x) {
-                  "$transactor change has failed"
                 }
               }
             }
+
+            changeResult
+              .onSuccess { timedChange ->
+                val slowReporter = transactor.meta[SlowChangeReporterKernelKey]
+                checkDuration(coroutineContext = currentCoroutineContext(),
+                              slowReporter = slowReporter,
+                              duration = timedChange.duration,
+                              location = changeTask.causeSpan)
+                val change = timedChange.value
+                Transactor.logger.trace { "[$transactor] broadcasting change $change" }
+                sharedFlow.emit(TransactorEvent.SequentialChange(timestamp = ts++,
+                                                                 change = change))
+                change.meta[OnCompleteKey]?.forEach { onComplete ->
+                  catching {
+                    asOf(change.dbAfter) {
+                      onComplete(transactor)
+                    }
+                  }.onFailure { e ->
+                    Transactor.logger.error(e) { "ChangeScope.onComplete action failed" }
+                  }
+                }
+                changeTask.resultDeferred.complete(change)
+              }
+              .onFailure { x ->
+                changeTask.resultDeferred.completeExceptionally(x)
+                if (x !is CancellationException) {
+                  Transactor.logger.error(x) {
+                    "$transactor change has failed"
+                  }
+                }
+              }
+          }
         }
-      }
-    }.apply {
-      invokeOnCompletion { x ->
-        check(sharedFlow.tryEmit(TransactorEvent.TheEnd(x))) {
-          "changeFlow should have been created with drop-oldest"
+      }.apply {
+        invokeOnCompletion { x ->
+          check(sharedFlow.tryEmit(TransactorEvent.TheEnd(x))) {
+            "changeFlow should have been created with drop-oldest"
+          }
         }
-      }
-    }.use {
-      try {
-        withContext(transactor + DbSource.ContextElement(FlowDbSource(transactor.dbState, debugName = "kernel $transactor")) + coroutineNameAppended("withKernel")) {
-          body(transactor)
+      }.use {
+        try {
+          withContext(transactor + DbSource.ContextElement(FlowDbSource(transactor.dbState, debugName = "kernel $transactor"))) {
+            body(transactor)
+          }
         }
-      }
-      finally {
-        Transactor.logger.info { "shutting down kernel $transactor" }
-        priorityDispatchChannel.close(); backgroundDispatchChannel.close()
-        changesThread.shutdown()
+        finally {
+          Transactor.logger.info { "shutting down kernel $transactor" }
+          priorityDispatchChannel.close(); backgroundDispatchChannel.close()
+        }
       }
     }
   }
@@ -492,9 +552,12 @@ private data class DbTimestamp(override val eid: EID) : Entity {
   }
 }
 
+internal fun currentTimestamp(): Long =
+  DbTimestamp.single()[DbTimestamp.Timestamp]
+
 val Q.timestamp: Long
   get() = asOf(this) {
-    DbTimestamp.single()[DbTimestamp.Timestamp]
+    currentTimestamp()
   }
 
 private fun checkDuration(

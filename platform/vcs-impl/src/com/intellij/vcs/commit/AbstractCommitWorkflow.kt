@@ -223,7 +223,7 @@ abstract class AbstractCommitWorkflow(val project: Project) {
   fun addCommitCustomListener(listener: CommitterResultHandler, parent: Disposable) =
     commitCustomEventDispatcher.addListener(listener, parent)
 
-  suspend fun executeSession(sessionInfo: CommitSessionInfo, commitInfo: DynamicCommitInfo): Boolean {
+  internal suspend fun executeSession(sessionInfo: CommitSessionInfo, commitInfo: DynamicCommitInfo): Boolean {
     return withModalProgress(project, message("commit.checks.on.commit.progress.text")) {
       withContext(Dispatchers.EDT) {
         fireBeforeCommitChecksStarted(sessionInfo)
@@ -300,7 +300,9 @@ abstract class AbstractCommitWorkflow(val project: Project) {
         runModalCommitChecks(commitInfo, commitChecks[CommitCheck.ExecutionOrder.MODIFICATION])
       }?.let { return it }
 
-      FileDocumentManager.getInstance().saveAllDocuments()
+      writeIntentReadAction {
+        FileDocumentManager.getInstance().saveAllDocuments()
+      }
 
       reporter.nextStep(PROGRESS_FRACTION_LATE) {
         runModalCommitChecks(commitInfo, commitChecks[CommitCheck.ExecutionOrder.LATE])

@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.push;
 
 import com.intellij.dvcs.DvcsUtil;
@@ -44,6 +44,7 @@ import git4idea.update.*;
 import one.util.streamex.StreamEx;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 
@@ -54,6 +55,7 @@ import static git4idea.push.GitPushNativeResult.Type.FORCED_UPDATE;
 import static git4idea.push.GitPushNativeResult.Type.NEW_REF;
 import static git4idea.push.GitPushRepoResult.Type.NOT_PUSHED;
 import static git4idea.push.GitPushRepoResult.Type.REJECTED_NO_FF;
+import static git4idea.push.GitPushRepoResult.tagPushResult;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 
@@ -73,7 +75,7 @@ public class GitPushOperation {
 
   private final Project myProject;
   private final @NotNull GitPushSupport myPushSupport;
-  private final Map<GitRepository, PushSpec<GitPushSource, GitPushTarget>> myPushSpecs;
+  private final @Unmodifiable Map<GitRepository, PushSpec<GitPushSource, GitPushTarget>> myPushSpecs;
   private final @Nullable GitPushTagMode myTagMode;
   private final ForceMode myForceMode;
   private final boolean mySkipHook;
@@ -99,7 +101,7 @@ public class GitPushOperation {
 
   public GitPushOperation(@NotNull Project project,
                           @NotNull GitPushSupport pushSupport,
-                          @NotNull Map<GitRepository, PushSpec<GitPushSource, GitPushTarget>> pushSpecs,
+                          @NotNull @Unmodifiable Map<GitRepository, PushSpec<GitPushSource, GitPushTarget>> pushSpecs,
                           @Nullable GitPushTagMode tagMode,
                           @NotNull ForceMode forceMode,
                           boolean skipHook) {
@@ -167,6 +169,7 @@ public class GitPushOperation {
           Collection<GitRepository> rootsToUpdate = myRepositoryManager.getRepositories();
           LOG.debug("roots to update: " + rootsToUpdate);
           GitUpdateResult updateResult = update(rootsToUpdate, updateSettings.getUpdateMethod(), rebaseOverMergeProblemDetected == null);
+          LOG.debug("update result: " + updateResult);
           for (GitRepository repository : rootsToUpdate) {
             updatedRoots.put(repository, updateResult); // TODO update result in GitUpdateProcess is a single for several roots
           }
@@ -276,9 +279,9 @@ public class GitPushOperation {
       GitPushRepoResult repoResult = null;
 
       StructuredIdeActivity pushActivity = GitOperationsCollector.startLogPush(repository.getProject());
-      GitPushTargetType targetType = getPushTargetType(repository, spec);
+      boolean setUpstream = spec.getTarget().shouldSetUpstream(spec.getSource(), repository);
       try {
-        resultWithOutput = doPush(repository, spec);
+        resultWithOutput = doPush(repository, spec, setUpstream);
         LOG.debug("Pushed to " + DvcsUtil.getShortRepositoryName(repository) + ": " + resultWithOutput);
 
         GitPushSource pushSource = spec.getSource();
@@ -288,20 +291,33 @@ public class GitPushOperation {
         }
         else {
           List<GitPushNativeResult> nativeResults = resultWithOutput.parsedResults;
-          final GitPushNativeResult sourceResult = getPushedBranchOrCommit(nativeResults);
-          if (sourceResult == null) {
-            LOG.error("No result for branch or commit among: [" + nativeResults + "]\n" +
-                      "Full result: " + resultWithOutput);
-            continue;
+
+          if (pushSource instanceof GitPushSource.Tag tagPushSource) {
+            repoResult = tagPushResult(ContainerUtil.getOnlyItem(nativeResults), tagPushSource, target.getBranch());
           }
-          List<GitPushNativeResult> tagResults = filter(nativeResults, result ->
-            !result.equals(sourceResult) && (result.getType() == NEW_REF || result.getType() == FORCED_UPDATE));
-          int commits = collectNumberOfPushedCommits(repository.getRoot(), sourceResult);
-          repoResult = GitPushRepoResult.convertFromNative(sourceResult, tagResults, commits, pushSource, target.getBranch());
+          else {
+            GitPushNativeResult sourceResult = getPushedBranchOrCommit(nativeResults);
+            if (sourceResult == null) {
+              LOG.error("No result for branch or commit among: [" + nativeResults + "]\n" +
+                        "Full result: " + resultWithOutput);
+              continue;
+            }
+            List<GitPushNativeResult> tagResults = filter(nativeResults, result ->
+              !result.equals(sourceResult) && (result.getType() == NEW_REF || result.getType() == FORCED_UPDATE));
+            int commits = collectNumberOfPushedCommits(repository.getRoot(), sourceResult);
+            repoResult = GitPushRepoResult.convertFromNative(sourceResult, tagResults, commits, pushSource, target.getBranch());
+          }
         }
       }
       finally {
-        GitOperationsCollector.endLogPush(pushActivity, resultWithOutput != null ? resultWithOutput.resultOutput : null, repoResult, targetType);
+        GitOperationsCollector.endLogPush(
+          pushActivity,
+          resultWithOutput != null ? resultWithOutput.resultOutput : null,
+          repoResult,
+          getPushTargetType(repository, spec),
+          spec.getTarget().isNewBranchCreated(),
+          setUpstream
+        );
       }
 
       LOG.debug("Converted result: " + repoResult);
@@ -385,20 +401,14 @@ public class GitPushOperation {
     }
   }
 
-  private @NotNull ResultWithOutput doPush(@NotNull GitRepository repository, @NotNull PushSpec<GitPushSource, GitPushTarget> pushSpec) {
-    GitPushSource pushSource = pushSpec.getSource();
+  private @NotNull ResultWithOutput doPush(@NotNull GitRepository repository, @NotNull PushSpec<GitPushSource, GitPushTarget> pushSpec, boolean setUpstream) {
     GitPushTarget pushTarget = pushSpec.getTarget();
-    GitLocalBranch sourceBranch = pushSource.getBranch();
     GitRemoteBranch targetBranch = pushTarget.getBranch();
 
     GitLineHandlerListener progressListener = GitStandardProgressAnalyzer.createListener(myProgressIndicator);
-    boolean setUpstream = sourceBranch != null &&
-                          pushTarget.isNewBranchCreated() &&
-                          pushSource.isBranchRef() &&
-                          !branchTrackingInfoIsSet(repository, sourceBranch);
     String tagMode = myTagMode == null ? null : myTagMode.getArgument();
 
-    String spec = createPushSpec(pushSource, pushTarget, setUpstream);
+    String spec = createPushSpec(pushSpec.getSource(), pushTarget, setUpstream);
     GitRemote remote = targetBranch.getRemote();
 
     List<GitPushParams.ForceWithLease> forceWithLease = emptyList();

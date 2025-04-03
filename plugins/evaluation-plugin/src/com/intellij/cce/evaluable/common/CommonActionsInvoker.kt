@@ -25,6 +25,7 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.TestModeFlags
 import com.intellij.util.progress.sleepCancellable
 import java.io.File
+import java.nio.file.Paths
 
 class CommonActionsInvoker(private val project: Project) : ActionsInvoker {
   init {
@@ -35,6 +36,7 @@ class CommonActionsInvoker(private val project: Project) : ActionsInvoker {
 
   override fun moveCaret(offset: Int) = onEdt {
     val editor = getEditorSafe(project)
+    editor.selectionModel.removeSelection()
     editor.caretModel.moveToOffset(offset)
     editor.scrollingModel.scrollToCaret(ScrollType.MAKE_VISIBLE)
   }
@@ -50,7 +52,7 @@ class CommonActionsInvoker(private val project: Project) : ActionsInvoker {
       LOG.warn("Psi identifier wasn't found")
       return@runWriteCommandAction
     }
-    for (ref in ReferencesSearch.search(psiElement)) {
+    for (ref in ReferencesSearch.search(psiElement).asIterable()) {
       if (!isThisReference(ref.canonicalText) ) {
         ref.handleElementRename(text)
       }
@@ -103,24 +105,27 @@ class CommonActionsInvoker(private val project: Project) : ActionsInvoker {
 
   override fun openFile(file: String): String = readActionInSmartMode(project) {
     LOG.info("Open file: $file")
-    val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(file))
-    val descriptor = OpenFileDescriptor(project, virtualFile!!)
+    val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(fullPath(file)))
+    if (virtualFile == null) {
+      throw NullPointerException("Virtual file not found for path: ${fullPath(file)}")
+    }
+    val descriptor = OpenFileDescriptor(project, virtualFile)
     spaceStrippingEnabled = TrailingSpacesStripper.isEnabled(virtualFile)
     TrailingSpacesStripper.setEnabled(virtualFile, false)
     val fileEditor = FileEditorManager.getInstance(project).openTextEditor(descriptor, true)
-                     ?: throw Exception("Can't open text editor for file: $file")
+                     ?: throw Exception("Can't open text editor for file: ${fullPath(file)}")
     return@readActionInSmartMode fileEditor.document.text
   }
 
   override fun closeFile(file: String) = onEdt {
     LOG.info("Close file: $file")
-    val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(file))!!
+    val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(fullPath(file)))!!
     TrailingSpacesStripper.setEnabled(virtualFile, spaceStrippingEnabled)
     FileEditorManager.getInstance(project).closeFile(virtualFile)
   }
 
   override fun isOpen(file: String): Boolean = readActionInSmartMode(project) {
-    FileEditorManager.getInstance(project).openFiles.any { it.path == file }
+    FileEditorManager.getInstance(project).openFiles.any { it.path == fullPath(file) }
   }
 
   override fun save() = writeAction {
@@ -139,6 +144,8 @@ class CommonActionsInvoker(private val project: Project) : ActionsInvoker {
   private fun onEdt(action: () -> Unit) = ApplicationManager.getApplication().invokeAndWait {
     action()
   }
+
+  private fun fullPath(subPath: String) = project.basePath?.let { Paths.get(it).resolve(subPath).toString() } ?: subPath
 
   companion object {
     private val LOG = logger<CommonActionsInvoker>()

@@ -1,8 +1,9 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.base.platforms.library
 
 import com.intellij.ide.JavaUiBundle
 import com.intellij.openapi.extensions.Extensions
+import com.intellij.openapi.extensions.InternalIgnoreDependencyViolation
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileElement
 import com.intellij.openapi.project.Project
@@ -10,7 +11,6 @@ import com.intellij.openapi.project.ProjectBundle
 import com.intellij.openapi.roots.OrderRootType
 import com.intellij.openapi.roots.libraries.DummyLibraryProperties
 import com.intellij.openapi.roots.libraries.LibraryType
-import com.intellij.openapi.roots.libraries.LibraryType.EP_NAME
 import com.intellij.openapi.roots.libraries.LibraryTypeService
 import com.intellij.openapi.roots.libraries.NewLibraryConfiguration
 import com.intellij.openapi.roots.libraries.ui.DescendentBasedRootFilter
@@ -27,6 +27,7 @@ import org.jetbrains.kotlin.idea.base.platforms.KotlinJavaScriptLibraryKind
 import javax.swing.Icon
 import javax.swing.JComponent
 
+@InternalIgnoreDependencyViolation
 class JSLibraryType : LibraryType<DummyLibraryProperties>(KotlinJavaScriptLibraryKind) {
     override fun createPropertiesEditor(editorComponent: LibraryEditorComponent<DummyLibraryProperties>): LibraryPropertiesEditor? {
         return null
@@ -54,9 +55,9 @@ class JSLibraryType : LibraryType<DummyLibraryProperties>(KotlinJavaScriptLibrar
 
     object RootsComponentDescriptor : DefaultLibraryRootsComponentDescriptor() {
         override fun createAttachFilesChooserDescriptor(libraryName: String?): FileChooserDescriptor {
-            val descriptor = FileChooserDescriptor(true, true, true, false, true, true).withFileFilter {
-                FileElement.isArchive(it) || isAcceptedForJsLibrary(it.extension)
-            }
+            val descriptor = FileChooserDescriptor(true, true, true, false, true, true)
+                .withExtensionFilter(ProjectBundle.message("library.attach.files.label"), "js", "kjsm")
+                .withFileFilter { FileElement.isArchive(it) || isAcceptedForJsLibrary(it.extension) }
             descriptor.title = if (StringUtil.isEmpty(libraryName))
                 ProjectBundle.message("library.attach.files.action")
             else
@@ -73,7 +74,7 @@ class JSLibraryType : LibraryType<DummyLibraryProperties>(KotlinJavaScriptLibrar
             },
             DescendentBasedRootFilter.createFileTypeBasedFilter(OrderRootType.SOURCES, false, KotlinFileType.INSTANCE, "sources")
         )
+
+        private fun isAcceptedForJsLibrary(extension: String?): Boolean = extension == "js" || extension == "kjsm"
     }
 }
-
-private fun isAcceptedForJsLibrary(extension: String?): Boolean = extension == "js" || extension == "kjsm"

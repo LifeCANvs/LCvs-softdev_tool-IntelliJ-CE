@@ -1,4 +1,6 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+@file:OptIn(UnsafeCastFunction::class)
+
 package org.jetbrains.uast.test.common.kotlin
 
 import com.intellij.lang.jvm.JvmModifier
@@ -9,14 +11,11 @@ import com.intellij.platform.uast.testFramework.env.findElementByTextFromPsi
 import com.intellij.platform.uast.testFramework.env.findUElementByTextFromPsi
 import com.intellij.psi.*
 import com.intellij.psi.impl.source.PsiClassReferenceType
-import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.testFramework.UsefulTestCase
+import com.intellij.testFramework.assertInstanceOf
 import com.intellij.testFramework.fixtures.JavaCodeInsightTestFixture
-import com.intellij.testFramework.replaceService
 import junit.framework.TestCase
 import org.intellij.lang.annotations.Language
-import org.jetbrains.kotlin.asJava.KotlinAsJavaSupport
-import org.jetbrains.kotlin.asJava.classes.KtLightClassForFacade
 import org.jetbrains.kotlin.builtins.StandardNames.ENUM_VALUES
 import org.jetbrains.kotlin.builtins.StandardNames.ENUM_VALUE_OF
 import org.jetbrains.kotlin.idea.base.test.JUnit4Assertions.assertSameElements
@@ -24,17 +23,20 @@ import org.jetbrains.kotlin.idea.test.KotlinLightCodeInsightFixtureTestCaseBase
 import org.jetbrains.kotlin.idea.test.KotlinLightCodeInsightFixtureTestCaseBase.assertContainsElements
 import org.jetbrains.kotlin.idea.test.KotlinLightCodeInsightFixtureTestCaseBase.assertDoesntContain
 import org.jetbrains.kotlin.idea.test.MockLibraryFacility
-import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.util.OperatorNameConventions
+import org.jetbrains.kotlin.utils.addToStdlib.UnsafeCastFunction
 import org.jetbrains.kotlin.utils.addToStdlib.cast
 import org.jetbrains.uast.*
+import org.jetbrains.uast.analysis.KotlinExtensionConstants.LAMBDA_THIS_PARAMETER_NAME
 import org.jetbrains.uast.kotlin.KotlinUFile
 import org.jetbrains.uast.kotlin.KotlinUFunctionCallExpression
 import org.jetbrains.uast.kotlin.psi.UastFakeLightMethodBase
+import org.jetbrains.uast.util.isConstructorCall
 import org.jetbrains.uast.visitor.AbstractUastVisitor
 import kotlin.io.path.Path
 import kotlin.io.path.extension
 import kotlin.io.path.nameWithoutExtension
+import kotlin.test.assertEquals
 
 interface UastResolveApiFixtureTestBase {
     fun checkResolveStringFromUast(myFixture: JavaCodeInsightTestFixture, project: Project) {
@@ -57,6 +59,42 @@ interface UastResolveApiFixtureTestBase {
             "resolved expression $resolve should be equivalent to ${variable.sourcePsi}",
             PsiManager.getInstance(project).areElementsEquivalent(resolve, variable.sourcePsi)
         )
+    }
+
+    fun checkResolveBuiltinOperator(myFixture: JavaCodeInsightTestFixture, project: Project) {
+        val file = myFixture.addFileToProject("s.kt", """
+            class Main { 
+                fun bar(arg: String.(String) -> String) { }
+            
+                fun main() { 
+                    bar(String::plus) 
+                } 
+            }
+        """.trimIndent()
+        )
+
+        val refs = file.toUElement()!!.findElementByTextFromPsi<UCallableReferenceExpression>("String::plus")
+        val resolved = refs.cast<UCallableReferenceExpression>().resolve()
+        assertInstanceOf<PsiMethod>(resolved)
+        assertEquals((resolved as PsiMethod).name, "plus")
+    }
+
+    fun checkResolveBuiltinClass(myFixture: JavaCodeInsightTestFixture, project: Project) {
+        val file = myFixture.addFileToProject("s.kt", """
+            class Main { 
+                fun bar(arg: String.(String) -> String) { }
+            
+                fun main() { 
+                    bar(String::plus) 
+                } 
+            }
+        """.trimIndent()
+        )
+
+        val refs = file.toUElement()!!.findElementByTextFromPsi<UCallableReferenceExpression>("String::plus")
+        val resolved = refs.cast<UCallableReferenceExpression>().qualifierExpression?.tryResolve()
+        assertInstanceOf<PsiClass>(resolved)
+        assertEquals((resolved as PsiClass).name, "String")
     }
 
     fun checkMultiResolve(myFixture: JavaCodeInsightTestFixture) {
@@ -243,17 +281,6 @@ interface UastResolveApiFixtureTestBase {
     }
 
     fun checkResolveToFacade(myFixture: JavaCodeInsightTestFixture) {
-
-        myFixture.project.replaceService(
-            KotlinAsJavaSupport::class.java,
-            object : MockKotlinAsJavaSupport(getInstance(myFixture.project)) {
-                override fun getFacadeClasses(facadeFqName: FqName, scope: GlobalSearchScope): Collection<KtLightClassForFacade> =
-                    // emulating facade classes from different modules
-                    super.getFacadeClasses(facadeFqName, scope).let { it + it }
-            },
-            myFixture.testRootDisposable
-        )
-
         myFixture.addFileToProject(
             "pkg/MyFacade.java", """
                 package pkg;
@@ -1447,6 +1474,30 @@ interface UastResolveApiFixtureTestBase {
         )
     }
 
+    fun checkResolveDataClassSyntheticMember(myFixture: JavaCodeInsightTestFixture, isK2: Boolean) {
+        myFixture.configureByText(
+            "main.kt",
+            """
+                data class JustAnotherData(val p: Int)
+                
+                fun test(d: JustAnotherData): Int {
+                  return d.hash<caret>Code()
+                }
+            """.trimIndent()
+        )
+
+        val uCallExpression = myFixture.file.findElementAt(myFixture.caretOffset).toUElement().getUCallExpression()
+            .orFail("cant convert to UCallExpression")
+        val resolved = uCallExpression.resolve()
+        val txt = uCallExpression.sourcePsi?.text
+        if (isK2) {
+            TestCase.assertNotNull(txt, resolved)
+            TestCase.assertEquals(txt, "hashCode", resolved!!.name)
+        } else {
+            TestCase.assertNull(txt, resolved)
+        }
+    }
+
     fun checkResolveSyntheticJavaPropertyCompoundAccess(myFixture: JavaCodeInsightTestFixture, isK2 : Boolean = true) {
         myFixture.addClass(
             """public class X {
@@ -2147,6 +2198,91 @@ interface UastResolveApiFixtureTestBase {
         )
     }
 
+    fun checkResolveThisExpressionForExtensionFunctionType(myFixture: JavaCodeInsightTestFixture) {
+        myFixture.configureByText(
+            "test.kt",
+            """
+                fun foo(p: Any.(Any) -> Any) { }
+                
+                class Hello {
+                  fun test() {
+                    val a = Any()
+                    a.apply {
+                      this // 0
+                    }
+                    a.apply a@ {
+                      this // 1
+                      this@a // 2
+                      this@Hello // 3
+                    }
+                    a.let {
+                      this // 4
+                    }
+                    foo {
+                      this // 5
+                    }
+                    foo b@ {
+                      this // 6
+                      this@b // 7
+                      this@Hello // 8
+                    }
+                    foo { thing ->
+                      this // 9
+                    }
+                    foo c@ { thing ->
+                      this // 10
+                      this@c // 11
+                      this@Hello // 12
+                    }
+                    foo { it ->
+                      this // 13
+                    }
+                    foo d@ { it ->
+                      this // 14
+                      this@d // 15
+                      this@Hello // 16
+                    }
+                  }
+                }
+            """.trimIndent()
+        )
+        val resolved = mutableListOf<UElement>()
+        myFixture.file.toUElement()!!.accept(
+            object : AbstractUastVisitor() {
+                override fun visitThisExpression(node: UThisExpression): Boolean {
+                    val r = node.resolve()
+                    TestCase.assertNotNull(r)
+                    resolved.add(r!!.toUElement()!!)
+                    return super.visitThisExpression(node)
+                }
+            }
+        )
+
+        fun isUParameterNamedThis(element: UElement) =
+            element is UParameter && element.name == LAMBDA_THIS_PARAMETER_NAME
+
+        fun isUClassNamedHello(element: UElement) =
+            element is UClass && element.name == "Hello"
+
+        TestCase.assertTrue(isUParameterNamedThis(resolved[0]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[1]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[2]))
+        TestCase.assertTrue(isUClassNamedHello(resolved[3]))
+        TestCase.assertTrue(isUClassNamedHello(resolved[4]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[5]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[6]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[7]))
+        TestCase.assertTrue(isUClassNamedHello(resolved[8]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[9]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[10]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[11]))
+        TestCase.assertTrue(isUClassNamedHello(resolved[12]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[13]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[14]))
+        TestCase.assertTrue(isUParameterNamedThis(resolved[15]))
+        TestCase.assertTrue(isUClassNamedHello(resolved[16]))
+    }
+
     fun checkResolvePropertiesInCompanionObjectFromBinaryDependency(myFixture: JavaCodeInsightTestFixture) {
         val mockLibraryFacility = myFixture.configureLibraryByText(
             "dependency.kt", """
@@ -2428,6 +2564,10 @@ interface UastResolveApiFixtureTestBase {
                     TestCase.assertNotNull(resolved.returnType)
                     TestCase.assertEquals("MyClass", resolved.returnType!!.canonicalText)
 
+                    TestCase.assertEquals(1, resolved.typeParameters.size)
+                    val typeParam = resolved.typeParameters.single()
+                    TestCase.assertEquals("T", typeParam.name)
+
                     return super.visitCallExpression(node)
                 }
             })
@@ -2444,18 +2584,26 @@ interface UastResolveApiFixtureTestBase {
                 
                 package test.pkg
                 
-                inline fun belongsToClassPart(): String = TODO()
+                annotation class MyAnnotation(
+                  val myAttr: String = "defaultValue",
+                )
                 
-                inline fun <reified T : Any> needFake(): String = TODO()
+                @MyAnnotation
+                inline fun <T> T.belongsToClassPart(): String = TODO()
+                
+                @MyAnnotation("myAttrValue")
+                inline fun <reified T : Any> T.needFake(): String = TODO()
             """.trimIndent()
         )
         myFixture.configureByText(
             "main.kt", """
+                import java.util.function.Consumer
                 import test.pkg.*
                 
                 fun test() {
-                  belongsToClassPart()
-                  needFake()
+                  Any().belongsToClassPart()
+                  Any().needFake()
+                  Consumer(Any::needFake)
                 }
             """.trimIndent()
         )
@@ -2464,16 +2612,47 @@ interface UastResolveApiFixtureTestBase {
             val uFile = myFixture.file.toUElementOfType<UFile>()!!
             uFile.accept(object : AbstractUastVisitor() {
                 override fun visitCallExpression(node: UCallExpression): Boolean {
+                    if (node.isConstructorCall()) {
+                        // Like Any()
+                        return super.visitCallExpression(node)
+                    }
+                    val txt = node.sourcePsi?.text
                     val resolved = node.resolve()
-                    TestCase.assertNotNull(resolved)
+                    TestCase.assertNotNull(txt, resolved)
 
                     val containingClass = resolved!!.containingClass
                     val expectedName =
                         if (isK2) "MyStringsKt" // multi-file facade
                         else "MyStringsKt__MyStringJVMKt" // multi-file class part
-                    TestCase.assertEquals(expectedName, containingClass?.name)
+                    TestCase.assertEquals(txt, expectedName, containingClass?.name)
+
+                    TestCase.assertEquals(txt, 1, resolved.parameterList.parametersCount)
+                    val rcv = resolved.parameterList.parameters.single()
+                    val rcvType = if (!isK2 && resolved.name == "needFake") "java.lang.Object" else "T"
+                    TestCase.assertEquals(txt, rcvType, rcv.type.canonicalText)
+
+                    TestCase.assertEquals(txt, 2, resolved.annotations.size)
+                    TestCase.assertTrue(txt, resolved.hasAnnotation("test.pkg.MyAnnotation"))
+                    val anno = resolved.annotations.find { it.qualifiedName == "test.pkg.MyAnnotation" }
+                    val attrVal = anno?.findAttributeValue("myAttr")
+                    val expected = if (resolved.name == "needFake") "myAttrValue" else "defaultValue"
+                    TestCase.assertEquals(txt, expected, (attrVal as? PsiLiteral)?.value)
 
                     return super.visitCallExpression(node)
+                }
+
+                override fun visitCallableReferenceExpression(node: UCallableReferenceExpression): Boolean {
+                    val txt = node.sourcePsi?.text
+                    val resolved = node.resolve() as? PsiMethod
+                    TestCase.assertNotNull(txt, resolved)
+
+                    val containingClass = resolved!!.containingClass
+                    val expectedName =
+                        if (isK2) "MyStringsKt" // multi-file facade
+                        else "MyStringsKt__MyStringJVMKt" // multi-file class part
+                    TestCase.assertEquals(txt, expectedName, containingClass?.name)
+
+                    return super.visitCallableReferenceExpression(node)
                 }
             })
         } finally {

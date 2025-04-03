@@ -1,6 +1,7 @@
-// Copyright 2000-2021 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.roots;
 
+import com.intellij.util.ArrayUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
@@ -11,12 +12,11 @@ public class JavadocOrderRootType extends PersistentOrderRootType {
     super("JAVADOC", "javadocPath", "javadoc-paths", "javadocPathEntry");
   }
 
-  @NotNull
-  public static OrderRootType getInstance() {
+  public static @NotNull OrderRootType getInstance() {
     return getOrderRootType(JavadocOrderRootType.class);
   }
 
-  private final static RootPolicy<String @NotNull []> GET_JAVADOC_URL_POLICY = new RootPolicy<>() {
+  private static final RootPolicy<String @NotNull []> GET_JAVADOC_URL_POLICY = new RootPolicy<>() {
     @Override
     public String @NotNull [] visitLibraryOrderEntry(@NotNull LibraryOrderEntry libraryOrderEntry, String[] value) {
       return libraryOrderEntry.getRootUrls(getInstance());
@@ -33,6 +33,6 @@ public class JavadocOrderRootType extends PersistentOrderRootType {
     }
   };
   public static String @NotNull [] getUrls(@NotNull OrderEntry entry) {
-    return entry.accept(GET_JAVADOC_URL_POLICY, null);
+    return entry.accept(GET_JAVADOC_URL_POLICY, ArrayUtil.EMPTY_STRING_ARRAY);
   }
 }

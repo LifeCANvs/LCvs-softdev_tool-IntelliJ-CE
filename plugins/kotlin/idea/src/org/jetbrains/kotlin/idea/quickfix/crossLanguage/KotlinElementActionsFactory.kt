@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.quickfix.crossLanguage
 
@@ -9,6 +9,7 @@ import com.intellij.codeInsight.intention.QuickFixFactory
 import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
 import com.intellij.codeInspection.util.IntentionFamilyName
 import com.intellij.codeInspection.util.IntentionName
+import com.intellij.lang.java.JavaLanguage
 import com.intellij.lang.java.beans.PropertyKind
 import com.intellij.lang.jvm.*
 import com.intellij.lang.jvm.actions.*
@@ -37,7 +38,7 @@ import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.caches.resolve.resolveToDescriptorIfAny
 import org.jetbrains.kotlin.idea.core.ShortenReferences
 import org.jetbrains.kotlin.idea.core.appendModifier
-import org.jetbrains.kotlin.idea.quickfix.AddModifierFixFE10
+import org.jetbrains.kotlin.idea.quickfix.AddModifierFixMpp
 import org.jetbrains.kotlin.idea.quickfix.MakeFieldPublicFix
 import org.jetbrains.kotlin.idea.quickfix.MakeMemberStaticFix
 import org.jetbrains.kotlin.idea.quickfix.RemoveModifierFixBase
@@ -221,11 +222,11 @@ class KotlinElementActionsFactory : JvmElementActionsFactory() {
         shouldBePresent: Boolean
     ): List<IntentionAction> {
         val action = if (shouldBePresent) {
-            AddModifierFixFE10.createIfApplicable(modifierListOwners, token)
+            AddModifierFixMpp.createIfApplicable(modifierListOwners, token)
         } else {
-            RemoveModifierFixBase(modifierListOwners, token, false).asIntention()
+            RemoveModifierFixBase(modifierListOwners, token, false)
         }
-        return listOfNotNull(action)
+        return listOfNotNull(action?.asIntention())
     }
 
     override fun createAddConstructorActions(targetClass: JvmClass, request: CreateConstructorRequest): List<IntentionAction> {
@@ -477,26 +478,89 @@ class KotlinElementActionsFactory : JvmElementActionsFactory() {
         }
 
         private fun invokeImpl(annotationEntry: KtAnnotationEntry, project: Project) {
-            val facade = JavaPsiFacade.getInstance(annotationEntry.project)
-            val isKotlinAnnotation = facade.findClass(qualifiedName, annotationEntry.resolveScope)?.language == KotlinLanguage.INSTANCE
+            val facade = JavaPsiFacade.getInstance(project)
+            val language = facade.findClass(qualifiedName, annotationEntry.resolveScope)?.language
             val dummyAnnotationRequest = annotationRequest(qualifiedName, request)
             val psiFactory = KtPsiFactory(project)
-            val annotationText = '@' + renderAnnotation(dummyAnnotationRequest, psiFactory) { isKotlinAnnotation }
-            val dummyArgumentList = psiFactory.createAnnotationEntry(annotationText).valueArgumentList!!
+            val dummyAnnotationText = '@' + renderAnnotation(dummyAnnotationRequest, psiFactory) { language == KotlinLanguage.INSTANCE }
+            val dummyArgumentList = psiFactory.createAnnotationEntry(dummyAnnotationText).valueArgumentList!!
             val argumentList = annotationEntry.valueArgumentList
+
             if (argumentList == null) {
                 annotationEntry.add(dummyArgumentList)
-            } else {
-                val dummyArgument = dummyArgumentList.arguments[0]
-                val attribute = findAttribute(annotationEntry, request.name, attributeIndex)
-                if (attribute != null) {
-                    argumentList.addArgumentBefore(dummyArgument, attribute.value)
-                    argumentList.removeArgument(attribute.index + 1)
-                } else {
-                    argumentList.addArgument(dummyArgument)
-                }
+                ShortenReferences.DEFAULT.process(annotationEntry)
+                return
+            }
+
+            when (language) {
+              JavaLanguage.INSTANCE -> changeJava(annotationEntry, argumentList, dummyArgumentList)
+              KotlinLanguage.INSTANCE -> changeKotlin(annotationEntry, argumentList, dummyArgumentList)
+              else -> changeKotlin(annotationEntry, argumentList, dummyArgumentList)
             }
             ShortenReferences.DEFAULT.process(annotationEntry)
+        }
+
+        private fun changeKotlin(annotationEntry: KtAnnotationEntry, argumentList: KtValueArgumentList, dummyArgumentList: KtValueArgumentList) {
+            val dummyArgument = dummyArgumentList.arguments[0]
+            val oldAttribute = findAttribute(annotationEntry, request.name, attributeIndex)
+            if (oldAttribute == null) {
+                argumentList.addArgument(dummyArgument)
+                return
+            }
+
+            argumentList.addArgumentBefore(dummyArgument, oldAttribute.value)
+
+            if (isAttributeDuplicated(oldAttribute)) {
+                argumentList.removeArgument(oldAttribute.value)
+            }
+        }
+
+        private fun changeJava(annotationEntry: KtAnnotationEntry, argumentList: KtValueArgumentList, dummyArgumentList: KtValueArgumentList) {
+            if (request.name == "value") {
+                val anchorAfterVarargs: KtValueArgument? = removeVarargsAttribute(argumentList)
+
+                for (renderedArgument in dummyArgumentList.arguments) {
+                    argumentList.addArgumentBefore(renderedArgument, anchorAfterVarargs)
+                }
+
+                return
+            }
+
+            val oldAttribute = findAttribute(annotationEntry, request.name, attributeIndex)
+            if (oldAttribute != null) {
+                for (dummyArgument in dummyArgumentList.arguments) {
+                    argumentList.addArgumentBefore(dummyArgument, oldAttribute.value)
+                }
+
+                if (isAttributeDuplicated(oldAttribute)) {
+                    argumentList.removeArgument(oldAttribute.value)
+                }
+                return
+            }
+
+            for (dummyArgument in dummyArgumentList.arguments) {
+                argumentList.addArgument(dummyArgument)
+            }
+        }
+
+        private fun removeVarargsAttribute(argumentList: KtValueArgumentList): KtValueArgument? {
+            for (attribute in argumentList.arguments) {
+                val attributeName = attribute.getArgumentName()?.asName?.identifier
+
+                if (attributeName == null || attributeName == "value") {
+                    argumentList.removeArgument(attribute)
+                    continue
+                }
+
+                return attribute
+            }
+
+            return null
+        }
+
+        private fun isAttributeDuplicated(attribute: IndexedValue<KtValueArgument>): Boolean {
+            val name = attribute.value.getArgumentName()?.asName?.identifier ?: return true
+            return name == request.name
         }
 
         private fun findAttribute(annotationEntry: KtAnnotationEntry, name: String, index: Int): IndexedValue<KtValueArgument>? {

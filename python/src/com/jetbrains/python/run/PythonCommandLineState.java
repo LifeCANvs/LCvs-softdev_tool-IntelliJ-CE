@@ -18,9 +18,7 @@ import com.intellij.execution.filters.TextConsoleBuilder;
 import com.intellij.execution.filters.TextConsoleBuilderFactory;
 import com.intellij.execution.filters.UrlFilter;
 import com.intellij.execution.impl.ProcessStreamsSynchronizer;
-import com.intellij.execution.process.OSProcessHandler;
-import com.intellij.execution.process.ProcessHandler;
-import com.intellij.execution.process.ProcessTerminatedListener;
+import com.intellij.execution.process.*;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.runners.ProgramRunner;
 import com.intellij.execution.target.*;
@@ -57,7 +55,6 @@ import com.intellij.util.PlatformUtils;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.execution.ParametersListUtil;
 import com.jetbrains.python.PyBundle;
-import com.jetbrains.python.PythonHelpersLocator;
 import com.jetbrains.python.console.PyDebugConsoleBuilder;
 import com.jetbrains.python.debugger.PyDebugRunner;
 import com.jetbrains.python.debugger.PyDebuggerOptionsProvider;
@@ -71,7 +68,6 @@ import com.jetbrains.python.run.target.HelpersAwareTargetEnvironmentRequest;
 import com.jetbrains.python.run.target.PySdkTargetPaths;
 import com.jetbrains.python.run.target.PythonCommandLineTargetEnvironmentProvider;
 import com.jetbrains.python.sdk.*;
-import com.jetbrains.python.sdk.flavors.JythonSdkFlavor;
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor;
 import com.jetbrains.python.sdk.flavors.conda.CondaPythonExecKt;
 import org.jetbrains.annotations.NotNull;
@@ -349,6 +345,13 @@ public abstract class PythonCommandLineState extends CommandLineState {
     // Attach extensions
     PythonRunConfigurationExtensionsManager.Companion.getInstance()
       .attachExtensionsToProcess(myConfig, processHandler, getRunnerSettings());
+
+    processHandler.addProcessListener(new ProcessAdapter() {
+      @Override
+      public void processTerminated(@NotNull ProcessEvent event) {
+        targetEnvironment.shutdown();
+      }
+    });
 
     return processHandler;
   }
@@ -874,15 +877,8 @@ public abstract class PythonCommandLineState extends CommandLineState {
                                                               boolean shouldAddContentRoots,
                                                               boolean shouldAddSourceRoots,
                                                               boolean isDebug) {
-    final HashSet<String> pythonPath = Sets.newLinkedHashSet(collectPythonPath(module, shouldAddContentRoots, shouldAddSourceRoots));
 
-    if (isDebug && PythonSdkFlavor.getFlavor(sdkHome) instanceof JythonSdkFlavor) {
-      //that fixes Jython problem changing sys.argv on execfile, see PY-8164
-      pythonPath.add(PythonHelpersLocator.findPathStringInHelpers("pycharm"));
-      pythonPath.add(PythonHelpersLocator.findPathStringInHelpers("pydev"));
-    }
-
-    return pythonPath;
+    return Sets.newLinkedHashSet(collectPythonPath(module, shouldAddContentRoots, shouldAddSourceRoots));
   }
 
   private static @Nullable Module getModule(Project project, PythonRunParams config) {

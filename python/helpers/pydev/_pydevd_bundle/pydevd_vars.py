@@ -549,6 +549,9 @@ def array_to_xml(array, name, roffset, coffset, rows, cols, format):
     rows = min(rows, MAXIMUM_ARRAY_SIZE)
     cols = min(cols, MAXIMUM_ARRAY_SIZE)
 
+    if rows == 0 and cols == 0:
+        return xml
+
     # there is no obvious rule for slicing (at least 5 choices)
     if len(array) == 1 and (rows > 1 or cols > 1):
         array = array[0]
@@ -606,6 +609,19 @@ def array_to_meta_xml(array, name, format):
     slice = name
     l = len(array.shape)
 
+    if l == 0:
+        rows, cols = 0, 0
+        bounds = (0, 0)
+        return array, slice_to_xml(name, rows, cols, format, "", bounds), rows, cols, format
+
+    try:
+        import numpy as np
+        if isinstance(array, np.recarray) and l > 1:
+            slice = "{}['{}']".format(slice, array.dtype.names[0])
+            array = array[array.dtype.names[0]]
+    except ImportError:
+        pass
+
     # initial load, compute slice
     if format == '%':
         if l > 2:
@@ -630,20 +646,11 @@ def array_to_meta_xml(array, name, format):
         # http://stackoverflow.com/questions/16837946/numpy-a-2-rows-1-column-file-loadtxt-returns-1row-2-columns
         # explanation: http://stackoverflow.com/questions/15165170/how-do-i-maintain-row-column-orientation-of-vectors-in-numpy?rq=1
         # we use kind of a hack - get information about memory from C_CONTIGUOUS
-        is_row = array.flags['C_CONTIGUOUS']
-
-        if is_row:
-            rows = 1
-            cols = len(array)
-            if cols < len(array):
-                reslice = '[0:%s]' % (cols)
-            array = array[0:cols]
-        else:
-            cols = 1
-            rows = len(array)
-            if rows < len(array):
-                reslice = '[0:%s]' % (rows)
-            array = array[0:rows]
+        cols = 1
+        rows = len(array)
+        if rows < len(array):
+            reslice = '[0:%s]' % (rows)
+        array = array[0:rows]
     elif l == 2:
         rows = array.shape[-2]
         cols = array.shape[-1]
@@ -676,7 +683,10 @@ def get_formatted_row_elements(row, iat, dim, cols, format, dtypes):
         val = iat[row, c] if dim > 1 else iat[row]
         col_formatter = get_column_formatter_by_type(format, dtypes[c])
         try:
-            yield ("%" + col_formatter) % (val,)
+            if val != val:
+                yield "nan"
+            else:
+                yield ("%" + col_formatter) % (val,)
         except TypeError:
             yield ("%" + DEFAULT_DF_FORMAT) % (val,)
 
@@ -842,6 +852,7 @@ def is_able_to_format_number(format):
 
 TYPE_TO_XML_CONVERTERS = {
     "ndarray": array_to_xml,
+    "recarray": array_to_xml,
     "DataFrame": dataframe_to_xml,
     "Series": dataframe_to_xml,
     "GeoDataFrame": dataframe_to_xml,

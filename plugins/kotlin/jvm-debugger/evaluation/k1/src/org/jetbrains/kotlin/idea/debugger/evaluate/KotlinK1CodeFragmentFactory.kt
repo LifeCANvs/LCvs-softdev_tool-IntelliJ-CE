@@ -3,10 +3,10 @@
 package org.jetbrains.kotlin.idea.debugger.evaluate
 
 import com.intellij.debugger.DebuggerManagerEx
-import com.intellij.debugger.engine.evaluation.CodeFragmentFactory
+import com.intellij.debugger.engine.JavaDebuggerCodeFragmentFactory
 import com.intellij.debugger.engine.evaluation.TextWithImports
-import com.intellij.debugger.engine.events.DebuggerCommandImpl
 import com.intellij.debugger.impl.DebuggerContextImpl
+import com.intellij.debugger.impl.PrioritizedTask
 import com.intellij.ide.highlighter.JavaFileType
 import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.diagnostic.Logger
@@ -28,19 +28,19 @@ import org.jetbrains.kotlin.idea.core.util.CodeFragmentUtils
 import org.jetbrains.kotlin.idea.debugger.base.util.hopelessAware
 import org.jetbrains.kotlin.idea.debugger.core.CodeFragmentContextTuner
 import org.jetbrains.kotlin.idea.debugger.evaluate.compilation.DebugForeignPropertyDescriptorProvider
-import org.jetbrains.kotlin.j2k.OldJ2kPostProcessor
 import org.jetbrains.kotlin.idea.j2k.convertToKotlin
 import org.jetbrains.kotlin.idea.j2k.j2kText
 import org.jetbrains.kotlin.idea.util.application.executeWriteCommand
 import org.jetbrains.kotlin.idea.util.application.isUnitTestMode
-import org.jetbrains.kotlin.j2k.AfterConversionPass
+import org.jetbrains.kotlin.j2k.J2KPostProcessingRunner
+import org.jetbrains.kotlin.j2k.OldJ2kPostProcessor
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.quoteIfNeeded
 import org.jetbrains.kotlin.types.KotlinType
 import java.util.concurrent.atomic.AtomicReference
 
-class KotlinK1CodeFragmentFactory : CodeFragmentFactory() {
-    override fun createCodeFragment(item: TextWithImports, context: PsiElement?, project: Project): JavaCodeFragment {
+class KotlinK1CodeFragmentFactory : JavaDebuggerCodeFragmentFactory() {
+    override fun createPsiCodeFragmentImpl(item: TextWithImports, context: PsiElement?, project: Project): JavaCodeFragment {
         val contextElement = CodeFragmentContextTuner.getInstance().tuneContextElement(context)
 
         val codeFragment = KtBlockCodeFragment(project, "fragment.kt", item.text, initImports(item.imports), contextElement)
@@ -66,7 +66,7 @@ class KotlinK1CodeFragmentFactory : CodeFragmentFactory() {
                     }
                 }
 
-                debuggerContext.debugProcess?.managerThread?.invoke(worker)
+                debuggerContext.managerThread?.invoke(worker)
 
                 for (i in 0..50) {
                     ProgressManager.checkCanceled()
@@ -146,29 +146,27 @@ class KotlinK1CodeFragmentFactory : CodeFragmentFactory() {
 
         var frameInfo: FrameInfo? = null
 
-        val worker = object : DebuggerCommandImpl() {
-            override fun action() {
-                try {
-                    val frameProxy = hopelessAware {
-                        if (isUnitTestMode()) {
-                            DebugContextProvider.getDebuggerContext(project, contextElement)?.frameProxy
-                        } else {
-                            debuggerContext.frameProxy
-                        }
+        val managerThread = debuggerContext.managerThread
+        // Should be invoked now if on DMT
+        managerThread?.invoke(PrioritizedTask.Priority.LOW) {
+            try {
+                val frameProxy = hopelessAware {
+                    if (isUnitTestMode()) {
+                        DebugContextProvider.getDebuggerContext(project, contextElement)?.frameProxy
+                    } else {
+                        debuggerContext.frameProxy
                     }
-
-                    frameInfo = FrameInfo.from(debuggerContext.project, frameProxy)
-                } catch (ignored: AbsentInformationException) {
-                    // Debug info unavailable
-                } catch (ignored: InvalidStackFrameException) {
-                    // Thread is resumed, the frame we have is not valid anymore
-                } finally {
-                    semaphore.up()
                 }
+
+                frameInfo = FrameInfo.from(debuggerContext.project, frameProxy)
+            } catch (_: AbsentInformationException) {
+                // Debug info unavailable
+            } catch (_: InvalidStackFrameException) {
+                // Thread is resumed, the frame we have is not valid anymore
+            } finally {
+                semaphore.up()
             }
         }
-
-        debuggerContext.debugProcess?.managerThread?.invoke(worker)
 
         for (i in 0..50) {
             if (semaphore.waitFor(20)) break
@@ -199,8 +197,8 @@ class KotlinK1CodeFragmentFactory : CodeFragmentFactory() {
         return import
     }
 
-    override fun createPresentationCodeFragment(item: TextWithImports, context: PsiElement?, project: Project): JavaCodeFragment {
-        val kotlinCodeFragment = createCodeFragment(item, context, project)
+    override fun createPresentationPsiCodeFragmentImpl(item: TextWithImports, context: PsiElement?, project: Project): JavaCodeFragment? {
+        val kotlinCodeFragment = createPsiCodeFragment(item, context, project) ?: return null
         if (PsiTreeUtil.hasErrorElements(kotlinCodeFragment) && kotlinCodeFragment is KtCodeFragment) {
             val javaExpression = try {
                 PsiElementFactory.getInstance(project).createExpressionFromText(item.text, context)
@@ -234,13 +232,7 @@ class KotlinK1CodeFragmentFactory : CodeFragmentFactory() {
                                 kotlinCodeFragment.context
                             )
 
-                            AfterConversionPass(project, OldJ2kPostProcessor(formatCode = false))
-                                .run(
-                                    convertedFragment!!,
-                                    conversionContext,
-                                    range = null,
-                                    onPhaseChanged = null
-                                )
+                            J2KPostProcessingRunner.run(OldJ2kPostProcessor(formatCode = false), convertedFragment, conversionContext)
                         }
                     } catch (e: Throwable) {
                         // ignored because text can be invalid

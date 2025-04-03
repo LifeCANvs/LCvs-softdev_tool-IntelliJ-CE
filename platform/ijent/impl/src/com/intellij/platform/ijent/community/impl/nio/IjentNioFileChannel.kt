@@ -3,7 +3,13 @@ package com.intellij.platform.ijent.community.impl.nio
 
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.diagnostic.thisLogger
-import com.intellij.platform.ijent.fs.*
+import com.intellij.platform.eel.ReadResult
+import com.intellij.platform.eel.fs.EelFileInfo
+import com.intellij.platform.eel.fs.EelFileSystemApi
+import com.intellij.platform.eel.fs.EelOpenedFile
+import com.intellij.platform.eel.fs.EelPosixFileInfo
+import com.intellij.platform.eel.path.EelPath
+import com.intellij.platform.eel.provider.utils.getOrThrowFileSystemException
 import com.intellij.platform.ijent.spi.RECOMMENDED_MAX_PACKET_SIZE
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -15,30 +21,29 @@ import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 
 internal class IjentNioFileChannel private constructor(
-  private val nioFs: IjentNioFileSystem,
-  private val ijentOpenedFile: IjentOpenedFile,
+  private val ijentOpenedFile: EelOpenedFile,
   // we keep stacktrace of the cause of closing for troubleshooting
   @Volatile
   private var closeOrigin: Throwable? = null,
 ) : FileChannel() {
   companion object {
     @JvmStatic
-    internal suspend fun createReading(nioFs: IjentNioFileSystem, path: IjentPath.Absolute): IjentNioFileChannel =
-      IjentNioFileChannel(nioFs, nioFs.ijentFs.openForReading(path).getOrThrowFileSystemException())
+    internal suspend fun createReading(nioFs: IjentNioFileSystem, path: EelPath): IjentNioFileChannel =
+      IjentNioFileChannel(nioFs.ijentFs.openForReading(path).getOrThrowFileSystemException())
 
     @JvmStatic
     internal suspend fun createWriting(
       nioFs: IjentNioFileSystem,
-      options: IjentFileSystemApi.WriteOptions,
+      options: EelFileSystemApi.WriteOptions,
     ): IjentNioFileChannel =
-      IjentNioFileChannel(nioFs, nioFs.ijentFs.openForWriting(options).getOrThrowFileSystemException())
+      IjentNioFileChannel(nioFs.ijentFs.openForWriting(options).getOrThrowFileSystemException())
 
     @JvmStatic
     internal suspend fun createReadingWriting(
       nioFs: IjentNioFileSystem,
-      options: IjentFileSystemApi.WriteOptions,
+      options: EelFileSystemApi.WriteOptions,
     ): IjentNioFileChannel {
-      return IjentNioFileChannel(nioFs, nioFs.ijentFs.openForReadingAndWriting(options).getOrThrowFileSystemException())
+      return IjentNioFileChannel(nioFs.ijentFs.openForReadingAndWriting(options).getOrThrowFileSystemException())
     }
   }
 
@@ -51,16 +56,17 @@ internal class IjentNioFileChannel private constructor(
   override fun read(dsts: Array<out ByteBuffer>, offset: Int, length: Int): Long {
     checkClosed()
     when (ijentOpenedFile) {
-      is IjentOpenedFile.Reader -> Unit
-      is IjentOpenedFile.Writer -> throw NonReadableChannelException()
+      is EelOpenedFile.Reader -> Unit
+      is EelOpenedFile.Writer -> throw NonReadableChannelException()
     }
 
     var totalRead = 0L
     fsBlocking {
       handleThatSmartMultiBufferApi(dsts, offset, length) { buf ->
-        val read = when (val res = ijentOpenedFile.read(buf).getOrThrowFileSystemException()) {
-          is IjentOpenedFile.Reader.ReadResult.Bytes -> res.bytesRead
-          is IjentOpenedFile.Reader.ReadResult.EOF -> return@fsBlocking
+        val before = buf.position()
+        val read = when (ijentOpenedFile.read(buf).getOrThrowFileSystemException()) {
+          ReadResult.NOT_EOF -> buf.position() - before
+          ReadResult.EOF -> return@fsBlocking
         }
         totalRead += read
       }
@@ -75,8 +81,8 @@ internal class IjentNioFileChannel private constructor(
   override fun write(srcs: Array<out ByteBuffer>, offset: Int, length: Int): Long {
     checkClosed()
     when (ijentOpenedFile) {
-      is IjentOpenedFile.Writer -> Unit
-      is IjentOpenedFile.Reader -> throw NonWritableChannelException()
+      is EelOpenedFile.Writer -> Unit
+      is EelOpenedFile.Reader -> throw NonWritableChannelException()
     }
 
     var totalWritten = 0L
@@ -130,7 +136,7 @@ internal class IjentNioFileChannel private constructor(
   override fun position(newPosition: Long): FileChannel {
     checkClosed()
     return fsBlocking {
-      ijentOpenedFile.seek(newPosition, IjentOpenedFile.SeekWhence.START).getOrThrowFileSystemException()
+      ijentOpenedFile.seek(newPosition, EelOpenedFile.SeekWhence.START).getOrThrowFileSystemException()
       this@IjentNioFileChannel
     }
   }
@@ -139,9 +145,9 @@ internal class IjentNioFileChannel private constructor(
     checkClosed()
     return fsBlocking {
       return@fsBlocking when (val type = ijentOpenedFile.stat().getOrThrowFileSystemException().type) {
-        is IjentFileInfo.Type.Regular -> type.size
-        is IjentFileInfo.Type.Directory, is IjentFileInfo.Type.Other -> throw IOException("This file channel is opened for a directory")
-        is IjentPosixFileInfo.Type.Symlink -> throw IllegalStateException("Internal error: symlink should be resolved for a file channel")
+        is EelFileInfo.Type.Regular -> type.size
+        is EelFileInfo.Type.Directory, is EelFileInfo.Type.Other -> throw IOException("This file channel is opened for a directory")
+        is EelPosixFileInfo.Type.Symlink -> throw IllegalStateException("Internal error: symlink should be resolved for a file channel")
       }
     }
   }
@@ -149,21 +155,16 @@ internal class IjentNioFileChannel private constructor(
   override fun truncate(size: Long): FileChannel = apply {
     checkClosed()
     val file = when (ijentOpenedFile) {
-      is IjentOpenedFile.Writer -> ijentOpenedFile
-      is IjentOpenedFile.Reader -> throw NonWritableChannelException()
+      is EelOpenedFile.Writer -> ijentOpenedFile
+      is EelOpenedFile.Reader -> throw NonWritableChannelException()
     }
     val currentSize = this.size()
     fsBlocking {
       if (size < currentSize) {
-        try {
-          file.truncate(size)
-        }
-        catch (e: IjentOpenedFile.Writer.TruncateException) {
-          e.throwFileSystemException()
-        }
+        file.truncate(size).getOrThrowFileSystemException()
       }
       val currentPosition = file.tell().getOrThrowFileSystemException()
-      file.seek(currentPosition.coerceIn(0, size), IjentOpenedFile.SeekWhence.START)
+      file.seek(currentPosition.coerceIn(0, size), EelOpenedFile.SeekWhence.START)
     }
     return this
   }
@@ -206,8 +207,8 @@ internal class IjentNioFileChannel private constructor(
       throw IllegalArgumentException("Position $position is negative")
     }
     val buf = ByteBuffer.allocate(count.toInt())
-    var currentPosition = 0;
-    var totalBytesRead = 0;
+    var currentPosition = 0
+    var totalBytesRead = 0
     do {
       val bytesRead = src.read(buf)
       if (bytesRead == 0) {
@@ -232,9 +233,10 @@ internal class IjentNioFileChannel private constructor(
   private fun readFromPosition(dst: ByteBuffer, position: Long?): Int {
     checkClosed()
     when (ijentOpenedFile) {
-      is IjentOpenedFile.Reader -> Unit
-      is IjentOpenedFile.Writer -> throw NonReadableChannelException()
+      is EelOpenedFile.Reader -> Unit
+      is EelOpenedFile.Writer -> throw NonReadableChannelException()
     }
+    val before = dst.position()
     val readResult = fsBlocking {
       if (position == null) {
         ijentOpenedFile.read(dst)
@@ -244,8 +246,8 @@ internal class IjentNioFileChannel private constructor(
       }
     }.getOrThrowFileSystemException()
     return when (readResult) {
-      is IjentOpenedFile.Reader.ReadResult.Bytes -> readResult.bytesRead
-      is IjentOpenedFile.Reader.ReadResult.EOF -> -1
+      ReadResult.NOT_EOF -> dst.position() - before
+      ReadResult.EOF -> -1
     }
   }
 
@@ -256,8 +258,8 @@ internal class IjentNioFileChannel private constructor(
   private fun writeToPosition(src: ByteBuffer, position: Long?): Int {
     checkClosed()
     when (ijentOpenedFile) {
-      is IjentOpenedFile.Writer -> Unit
-      is IjentOpenedFile.Reader -> throw NonWritableChannelException()
+      is EelOpenedFile.Writer -> Unit
+      is EelOpenedFile.Reader -> throw NonWritableChannelException()
     }
 
     val bytesWritten =
@@ -295,9 +297,9 @@ internal class IjentNioFileChannel private constructor(
       else -> throw UnsupportedOperationException("MapMode $mode is not supported")
     }
 
-    check(ijentOpenedFile is IjentOpenedFile.Reader) { "The file must be opened for reading" }
+    check(ijentOpenedFile is EelOpenedFile.Reader) { "The file must be opened for reading" }
 
-    if (ijentOpenedFile is IjentOpenedFile.Writer) {
+    if (ijentOpenedFile is EelOpenedFile.Writer) {
       thisLogger().error(
         "The file ${this} is opened for writing, but an attempt to write anything to the file won't be reflected in the memory map"
       )
@@ -329,7 +331,7 @@ internal class IjentNioFileChannel private constructor(
   }
 
   private suspend fun downloadWholeFile(fileCopyPath: Path) {
-    ijentOpenedFile as IjentOpenedFile.Reader
+    ijentOpenedFile as EelOpenedFile.Reader
     Files.newByteChannel(fileCopyPath, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE).use { outputChannel ->
       val buffer = ByteBuffer.allocate(RECOMMENDED_MAX_PACKET_SIZE)
       var position = 0L
@@ -337,14 +339,14 @@ internal class IjentNioFileChannel private constructor(
         // There are classes like `jdk.internal.jimage.BasicImageReader` that create a memory map and keep reading the file
         // with usual methods.
         // The current position in the file should remain the same after the copying.
-        when (val r = ijentOpenedFile.read(buffer, position).getOrThrowFileSystemException()) {
-          is IjentOpenedFile.Reader.ReadResult.Bytes -> {
-            position += r.bytesRead
+        when (ijentOpenedFile.read(buffer, position).getOrThrowFileSystemException()) {
+          ReadResult.NOT_EOF -> {
+            position += buffer.position()
             buffer.flip()
             outputChannel.write(buffer)
             buffer.clear()
           }
-          is IjentOpenedFile.Reader.ReadResult.EOF -> break
+          ReadResult.EOF -> break
         }
       }
     }

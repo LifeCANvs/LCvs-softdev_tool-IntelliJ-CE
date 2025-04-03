@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl.source;
 
 import com.intellij.lang.*;
@@ -13,6 +13,7 @@ import com.intellij.lexer.TokenList;
 import com.intellij.openapi.project.Project;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.JavaTokenType;
+import com.intellij.psi.ParsingDiagnostics;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.source.tree.CompositePsiElement;
@@ -236,9 +237,8 @@ public interface BasicJavaElementType {
       myParentElementTypes = Collections.singleton(parentElementType);
     }
 
-    @NotNull
     @Override
-    public ASTNode createCompositeNode() {
+    public @NotNull ASTNode createCompositeNode() {
       return myConstructor.get();
     }
 
@@ -260,16 +260,14 @@ public interface BasicJavaElementType {
       this.javaLexer = javaLexer;
     }
 
-    @NotNull
     @Override
-    public ASTNode createCompositeNode() {
+    public @NotNull ASTNode createCompositeNode() {
       return new CompositePsiElement(this) {
       };
     }
 
-    @Nullable
     @Override
-    public ASTNode parseContents(@NotNull final ASTNode chameleon) {
+    public @Nullable ASTNode parseContents(final @NotNull ASTNode chameleon) {
       assert chameleon instanceof BasicJavaDummyElement : chameleon;
       final BasicJavaDummyElement dummyElement = (BasicJavaDummyElement)chameleon;
       return BasicJavaParserUtil.parseFragment(chameleon, dummyElement.getParser(), dummyElement.consumeAll(),
@@ -304,17 +302,23 @@ public interface BasicJavaElementType {
     }
 
     @Override
-    public ASTNode parseContents(@NotNull final ASTNode chameleon) {
+    public ASTNode parseContents(final @NotNull ASTNode chameleon) {
       final PsiBuilder builder = BasicJavaParserUtil.createBuilder(chameleon, languageLevelFunction, myLexerFunction, psiAsLexer);
+      long startTime = System.nanoTime();
       myJavaThinParser.get().getStatementParser().parseCodeBlockDeep(builder, true);
-      return builder.getTreeBuilt().getFirstChildNode();
+      ASTNode node = builder.getTreeBuilt().getFirstChildNode();
+      ParsingDiagnostics.registerParse(builder, getLanguage(), System.nanoTime() - startTime);
+      return node;
     }
 
     @Override
     public @NotNull FlyweightCapableTreeStructure<LighterASTNode> parseContents(final @NotNull LighterLazyParseableNode chameleon) {
       final PsiBuilder builder = BasicJavaParserUtil.createBuilder(chameleon, languageLevelFunction, myLexerFunction);
+      long startTime = System.nanoTime();
       myJavaThinParser.get().getStatementParser().parseCodeBlockDeep(builder, true);
-      return builder.getLightTree();
+      FlyweightCapableTreeStructure<LighterASTNode> tree = builder.getLightTree();
+      ParsingDiagnostics.registerParse(builder, getLanguage(), System.nanoTime() - startTime);
+      return tree;
     }
 
     @Override
@@ -364,9 +368,8 @@ public interface BasicJavaElementType {
       }
     };
 
-    @Nullable
     @Override
-    public ASTNode parseContents(@NotNull final ASTNode chameleon) {
+    public @Nullable ASTNode parseContents(final @NotNull ASTNode chameleon) {
       return BasicJavaParserUtil.parseFragment(chameleon, myParser, myDocLexerFunction, myLexerFunction);
     }
 
@@ -437,9 +440,8 @@ public interface BasicJavaElementType {
       this.parentElementTypes = Collections.singleton(parentElementType);
     }
 
-    @Nullable
     @Override
-    public ASTNode parseContents(@NotNull final ASTNode chameleon) {
+    public @Nullable ASTNode parseContents(final @NotNull ASTNode chameleon) {
       return BasicJavaParserUtil.parseFragment(chameleon, myParser, javaDocLexer, javaLexer);
     }
 

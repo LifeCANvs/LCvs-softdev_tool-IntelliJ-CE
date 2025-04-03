@@ -3,13 +3,11 @@ package com.intellij.openapi.vfs.newvfs.persistent;
 
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.newvfs.FileAttribute;
-import com.intellij.openapi.vfs.newvfs.persistent.PersistentFSRecordsStorageFactory.OverLockFreeFileCache;
 import com.intellij.openapi.vfs.newvfs.persistent.PersistentFSRecordsStorageFactory.OverMMappedFile;
 import com.intellij.openapi.vfs.newvfs.persistent.recovery.VFSInitializationResult;
 import com.intellij.openapi.vfs.newvfs.persistent.recovery.VFSRecoverer;
 import com.intellij.platform.util.io.storages.StorageTestingUtils;
 import com.intellij.testFramework.TemporaryDirectory;
-import com.intellij.util.io.PageCacheUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Rule;
@@ -54,7 +52,7 @@ public class VFSInitializationTest {
       recordsCountBeforeClose = records.recordsCount();
     }
     finally {
-      PersistentFSConnector.disconnect(connection);
+      connection.close();
     }
 
     final PersistentFSConnection reopenedConnection = tryInit(cachesDir, version, PersistentFSConnector.RECOVERERS);
@@ -66,7 +64,7 @@ public class VFSInitializationTest {
       );
     }
     finally {
-      PersistentFSConnector.disconnect(reopenedConnection);
+      reopenedConnection.close();
     }
   }
 
@@ -198,10 +196,7 @@ public class VFSInitializationTest {
 
 
     //skip IN_MEMORY impl, since it is not really persistent
-    //skip OVER_LOCK_FREE_FILE_CACHE impl if !LOCK_FREE_PAGE_CACHE_ENABLED (fails otherwise)
-    List<PersistentFSRecordsStorageFactory> allStorageKinds = PageCacheUtils.LOCK_FREE_PAGE_CACHE_ENABLED ?
-                                                              List.of(new OverLockFreeFileCache(), new OverMMappedFile()) :
-                                                              List.of(new OverMMappedFile());
+    List<PersistentFSRecordsStorageFactory> allStorageKinds = List.of(new OverMMappedFile());
 
     List<String> filesNotLeadingToVFSRebuild = new ArrayList<>();
     for (PersistentFSRecordsStorageFactory storageKind : allStorageKinds) {
@@ -249,7 +244,7 @@ public class VFSInitializationTest {
             filesNotLeadingToVFSRebuild.add(fileToDelete.getFileName().toString());
           }
           finally {
-            PersistentFSConnector.disconnect(connection);
+            connection.close();
           }
         }
         catch (IOException ex) {
@@ -272,10 +267,7 @@ public class VFSInitializationTest {
   @Test
   public void VFS_isRebuilt_OnlyIf_ImplementationVersionChanged() throws Exception {
     //skip IN_MEMORY impl, since it is not really persistent
-    //skip OVER_LOCK_FREE_FILE_CACHE impl if !LOCK_FREE_PAGE_CACHE_ENABLED (will fail)
-    final List<PersistentFSRecordsStorageFactory> allKinds = PageCacheUtils.LOCK_FREE_PAGE_CACHE_ENABLED ?
-                                                             List.of(new OverLockFreeFileCache(), new OverMMappedFile()) :
-                                                             List.of(new OverMMappedFile());
+    final List<PersistentFSRecordsStorageFactory> allKinds = List.of(new OverMMappedFile());
 
     //check all combinations (from->to) of implementations:
     for (PersistentFSRecordsStorageFactory kindBefore : allKinds) {
@@ -336,7 +328,7 @@ public class VFSInitializationTest {
                    reopenedConnection.records().wasClosedProperly());
     }
     finally {
-      PersistentFSConnector.disconnect(reopenedConnection);
+      reopenedConnection.close();
     }
   }
 
@@ -359,7 +351,7 @@ public class VFSInitializationTest {
           fail("VFS init must fail (with error ~ NOT_CLOSED_SAFELY)");
         }
         finally {
-          PersistentFSConnector.disconnect(conn);
+          conn.close();
         }
       }
       catch (VFSInitException requestToRebuild) {
@@ -402,7 +394,7 @@ public class VFSInitializationTest {
   }
 
   private static void disconnect(PersistentFSConnection connection) throws Exception {
-    PersistentFSConnector.disconnect(connection);
+    connection.close();
     StorageTestingUtils.bestEffortToCloseAndUnmap(connection);
   }
 
@@ -411,7 +403,7 @@ public class VFSInitializationTest {
     PersistentFSRecordsStorageFactory.resetStorageImplementation();
 
     for (PersistentFSConnection connection : connectionsOpened) {
-      PersistentFSConnector.disconnect(connection);
+      connection.close();
       StorageTestingUtils.bestEffortToCloseAndUnmap(connection);
     }
     for (PersistentFSConnection connection : connectionsOpened) {

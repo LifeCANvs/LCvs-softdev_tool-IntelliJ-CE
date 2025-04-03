@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.breakpoints
 
 import com.intellij.codeInsight.folding.impl.FoldingUtil
@@ -15,11 +15,9 @@ import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.XSourcePosition
 import com.intellij.xdebugger.breakpoints.*
-import com.intellij.xdebugger.impl.DebuggerSupport
 import com.intellij.xdebugger.impl.XDebugSessionImpl
 import com.intellij.xdebugger.impl.XDebuggerUtilImpl
 import com.intellij.xdebugger.impl.XSourcePositionImpl
-import com.intellij.xdebugger.impl.breakpoints.ui.BreakpointItem
 import com.intellij.xdebugger.impl.breakpoints.ui.BreakpointPanelProvider
 import one.util.streamex.StreamEx
 import org.jetbrains.annotations.ApiStatus
@@ -79,12 +77,9 @@ object XBreakpointUtil {
       offset = textLength
     }
 
-    for (debuggerSupport in DebuggerSupport.getDebuggerSupports()) {
-      val provider = debuggerSupport.breakpointPanelProvider
-      val breakpoint = provider.findBreakpoint(project, editorDocument, offset)
-      if (breakpoint != null) {
-        return Pair.create(provider.getBreakpointGutterIconRenderer(breakpoint), breakpoint)
-      }
+    val breakpoint = PANEL_PROVIDER.findBreakpoint(project, editorDocument, offset)
+    if (breakpoint != null) {
+      return Pair.create(PANEL_PROVIDER.getBreakpointGutterIconRenderer(breakpoint), breakpoint)
     }
 
     val session = XDebuggerManager.getInstance(project).currentSession as XDebugSessionImpl?
@@ -105,25 +100,9 @@ object XBreakpointUtil {
     return Pair.create(null, null)
   }
 
-  @JvmStatic
-  fun collectPanelProviders(): List<BreakpointPanelProvider<*>> {
-    return DebuggerSupport.getDebuggerSupports()
-      .map { it.breakpointPanelProvider }
-      .sortedByDescending { it.priority }
-  }
-
-  @JvmStatic
-  fun getDebuggerSupport(project: Project, breakpointItem: BreakpointItem): DebuggerSupport? {
-    val items = mutableListOf<BreakpointItem>()
-    for (support in DebuggerSupport.getDebuggerSupports()) {
-      support.breakpointPanelProvider.provideBreakpointItems(project, items)
-      if (items.contains(breakpointItem)) {
-        return support
-      }
-      items.clear()
-    }
-    return null
-  }
+  @ApiStatus.Internal
+  @JvmField
+  val PANEL_PROVIDER: BreakpointPanelProvider<*> = XBreakpointPanelProvider()
 
   /**
    * Toggle line breakpoint with editor support:
@@ -219,7 +198,7 @@ object XBreakpointUtil {
       for (line in lineStart..linesEnd) {
         var maxPriority = 0
         for (type in lineTypes) {
-          maxPriority = max(maxPriority.toDouble(), type.priority.toDouble()).toInt()
+          maxPriority = max(maxPriority, type.priority)
           val breakpoint = breakpointManager.findBreakpointAtLine(type, file, line)
           if ((type.canPutAt(file, line, project) || breakpoint != null) &&
               (typeWinner.isEmpty() || type.priority > typeWinner[0].priority)

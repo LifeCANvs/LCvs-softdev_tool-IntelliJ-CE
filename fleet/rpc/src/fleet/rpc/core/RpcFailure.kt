@@ -4,7 +4,6 @@ package fleet.rpc.core
 import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.serialization.Serializable
-import java.lang.reflect.InvocationTargetException
 
 @Serializable
 data class FailureInfo(
@@ -21,7 +20,6 @@ data class FailureInfo(
 
 fun Throwable.toFailureInfo(): FailureInfo {
   return when (this) {
-    is InvocationTargetException -> targetException.toFailureInfo()
     is AssumptionsViolatedException -> FailureInfo(conflict = stackTraceToString())
 
     // TODO : All kinds of exception: Auth, Security, Validation, Transport
@@ -37,6 +35,7 @@ fun FailureInfo.message(): String {
     this.transportError != null -> this.transportError
 
     this.conflict != null -> this.conflict
+    this.unresolvedService != null -> this.unresolvedService
     this.serviceNotReady != null -> this.serviceNotReady
     this.producerCancelled != null -> this.producerCancelled
     else -> "unknown"

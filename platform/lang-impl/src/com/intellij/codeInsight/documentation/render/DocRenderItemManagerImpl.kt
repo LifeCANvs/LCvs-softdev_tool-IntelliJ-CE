@@ -9,7 +9,7 @@ import com.intellij.openapi.editor.event.CaretListener
 import com.intellij.openapi.editor.ex.util.EditorScrollingPositionKeeper
 import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.util.Key
-import com.intellij.openapi.util.UserDataHolderEx
+import com.intellij.util.ConcurrencyUtil
 import com.intellij.util.messages.Topic
 import java.util.*
 import java.util.function.BooleanSupplier
@@ -46,7 +46,7 @@ class DocRenderItemManagerImpl : DocRenderItemManager {
 
   override fun getItems(editor: Editor): Collection<DocRenderItem>? {
     val items = editor.getUserData(OWN_ITEMS) ?: return null
-    return Collections.unmodifiableCollection<DocRenderItem>(items)
+    return items
   }
 
   override fun removeAllItems(editor: Editor) {
@@ -55,7 +55,7 @@ class DocRenderItemManagerImpl : DocRenderItemManager {
 
   override fun setItemsToEditor(editor: Editor, itemsToSet: DocRenderPassFactory.Items, collapseNewItems: Boolean) {
     if (editor.getUserData(OWN_ITEMS) == null && itemsToSet.isEmpty) return
-    val items = (editor as UserDataHolderEx).putUserDataIfAbsent(OWN_ITEMS, mutableListOf())
+    val items = ConcurrencyUtil.computeIfAbsent(editor, OWN_ITEMS) { mutableListOf() }
     keepScrollingPositionWhile(editor) {
       val foldingTasks = mutableListOf<Runnable>()
       val itemsToUpdateRenderers: MutableList<DocRenderItemImpl> = ArrayList()

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.editor.impl;
 
 import com.intellij.core.CoreBundle;
@@ -134,8 +134,10 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
   @ApiStatus.Internal
   public static final Key<Boolean> IGNORE_RANGE_GUARDS_ON_FULL_UPDATE = Key.create("IGNORE_RANGE_GUARDS_ON_FULL_UPDATE");
 
-  static final Key<Reference<RangeMarkerTree<RangeMarkerEx>>> RANGE_MARKERS_KEY = Key.create("RANGE_MARKERS_KEY");
-  static final Key<Reference<RangeMarkerTree<RangeMarkerEx>>> PERSISTENT_RANGE_MARKERS_KEY = Key.create("PERSISTENT_RANGE_MARKERS_KEY");
+  @ApiStatus.Internal
+  public static final Key<Reference<RangeMarkerTree<RangeMarkerEx>>> RANGE_MARKERS_KEY = Key.create("RANGE_MARKERS_KEY");
+  @ApiStatus.Internal
+  public static final Key<Reference<RangeMarkerTree<RangeMarkerEx>>> PERSISTENT_RANGE_MARKERS_KEY = Key.create("PERSISTENT_RANGE_MARKERS_KEY");
   @ApiStatus.Internal
   public void documentCreatedFrom(@NotNull VirtualFile f, int tabSize) {
     processQueue();
@@ -197,7 +199,8 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
   /**
    * makes range marker without creating the document (which could be expensive)
    */
-  static @NotNull RangeMarker createRangeMarkerForVirtualFile(@NotNull VirtualFile file,
+  @ApiStatus.Internal
+  public static @NotNull RangeMarker createRangeMarkerForVirtualFile(@NotNull VirtualFile file,
                                                      int offset,
                                                      int startLine,
                                                      int startCol,
@@ -222,8 +225,8 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
     tree.addInterval(marker, offset, offset, false, false, false, 0);
 
     return marker;
-
   }
+
   public boolean setAcceptSlashR(boolean accept) {
     try {
       return myAcceptSlashR;
@@ -276,7 +279,8 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
   /**
    * @return true if stripping was completed successfully, false if the document prevented stripping by e.g., caret(s) being in the way
    */
-  boolean stripTrailingSpaces(@Nullable Project project, boolean inChangedLinesOnly, int @Nullable [] caretOffsets) {
+  @ApiStatus.Internal
+  public boolean stripTrailingSpaces(@Nullable Project project, boolean inChangedLinesOnly, int @Nullable [] caretOffsets) {
     if (!isStripTrailingSpacesEnabled) {
       return true;
     }
@@ -349,20 +353,18 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
       }
     }
     int finalTargetOffsetPos = targetOffsetPos;
+    boolean executeInBulk = finalTargetOffsetPos > STRIP_TRAILING_SPACES_BULK_MODE_LINES_LIMIT * 2;
     // Document must be unblocked by now. If not, some Save handler attempted to modify PSI
     // which should have been caught by assertion in com.intellij.pom.core.impl.PomModelImpl.runTransaction
-    DocumentUtil.writeInRunUndoTransparentAction(new DocumentRunnable(this, project) {
-      @Override
-      public void run() {
-        DocumentUtil.executeInBulk(DocumentImpl.this, finalTargetOffsetPos > STRIP_TRAILING_SPACES_BULK_MODE_LINES_LIMIT * 2, () -> {
-          int pos = finalTargetOffsetPos;
-          while (pos > 0) {
-            int endOffset = targetOffsets[--pos];
-            int startOffset = targetOffsets[--pos];
-            deleteString(startOffset, endOffset);
-          }
-        });
-      }
+    DocumentUtil.writeInRunUndoTransparentAction(() -> {
+      DocumentUtil.executeInBulk(this, executeInBulk, () -> {
+        int pos = finalTargetOffsetPos;
+        while (pos > 0) {
+          int endOffset = targetOffsets[--pos];
+          int startOffset = targetOffsets[--pos];
+          deleteString(startOffset, endOffset);
+        }
+      });
     });
     return markAsNeedsStrippingLater;
   }
@@ -387,11 +389,13 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
     }
   }
 
-  ReadonlyFragmentModificationHandler getReadonlyFragmentModificationHandler() {
+  @ApiStatus.Internal
+  public ReadonlyFragmentModificationHandler getReadonlyFragmentModificationHandler() {
     return myReadonlyFragmentModificationHandler;
   }
 
-  void setReadonlyFragmentModificationHandler(ReadonlyFragmentModificationHandler readonlyFragmentModificationHandler) {
+  @ApiStatus.Internal
+  public void setReadonlyFragmentModificationHandler(ReadonlyFragmentModificationHandler readonlyFragmentModificationHandler) {
     myReadonlyFragmentModificationHandler = readonlyFragmentModificationHandler;
   }
 
@@ -681,7 +685,9 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
     }
     else {
       newText = myText.replace(startOffset, endOffset, changedPart);
-      changedPart = newText.subtext(startOffset, startOffset + changedPart.length());
+      if (!(changedPart instanceof String)) {
+        changedPart = newText.subtext(startOffset, startOffset + changedPart.length());
+      }
     }
     boolean wasOptimized = initialStartOffset != startOffset || endOffset - startOffset != initialOldLength;
     updateText(newText, startOffset, sToDelete, changedPart, wholeTextReplaced, newModificationStamp,
@@ -804,7 +810,8 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
     myFrozen = null;
   }
 
-  void clearLineModificationFlagsExcept(int @NotNull [] caretLines) {
+  @ApiStatus.Internal
+  public void clearLineModificationFlagsExcept(int @NotNull [] caretLines) {
     IntList modifiedLines = new IntArrayList(caretLines.length);
     LineSet lineSet = getLineSet();
     for (int line : caretLines) {
@@ -1231,6 +1238,7 @@ public final class DocumentImpl extends UserDataHolderBase implements DocumentEx
            "]";
   }
 
+  @ApiStatus.Internal
   public @NotNull FrozenDocument freeze() {
     FrozenDocument frozen = myFrozen;
     if (frozen == null) {

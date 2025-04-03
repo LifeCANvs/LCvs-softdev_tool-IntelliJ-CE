@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.actions.handlers;
 
 import com.intellij.openapi.actionSystem.AnActionEvent;
@@ -22,6 +22,7 @@ import com.intellij.xdebugger.impl.actions.ToggleLineBreakpointAction;
 import com.intellij.xdebugger.impl.breakpoints.XBreakpointUtil;
 import com.intellij.xdebugger.impl.breakpoints.XLineBreakpointManager;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -31,6 +32,7 @@ import java.awt.event.MouseEvent;
 import java.util.HashSet;
 import java.util.Set;
 
+@ApiStatus.Internal
 public class XToggleLineBreakpointActionHandler extends DebuggerActionHandler {
 
   private final boolean myTemporary;
@@ -86,10 +88,10 @@ public class XToggleLineBreakpointActionHandler extends DebuggerActionHandler {
     }
   }
 
-  private static void setupLogBreakpoint(@Nullable final XLineBreakpoint<?> breakpoint,
-                                         @Nullable final InputEvent inputEvent,
-                                         @Nullable final Editor editor,
-                                         @NotNull final Project project) {
+  private static void setupLogBreakpoint(final @Nullable XLineBreakpoint<?> breakpoint,
+                                         final @Nullable InputEvent inputEvent,
+                                         final @Nullable Editor editor,
+                                         final @NotNull Project project) {
     if (breakpoint == null || editor == null ||
         !(inputEvent instanceof MouseEvent mouseEvent) ||
         inputEvent.isAltDown() || !inputEvent.isShiftDown()) {

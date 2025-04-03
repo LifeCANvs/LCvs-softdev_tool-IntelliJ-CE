@@ -1,4 +1,4 @@
-// Copyright 2000-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.debugger.pydev.transport;
 
 import com.intellij.openapi.diagnostic.Logger;
@@ -15,7 +15,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -54,20 +54,26 @@ public class ClientModeDebuggerTransport extends BaseDebuggerTransport {
    */
   private static final int HANDSHAKE_TIMEOUT_IN_MILLIS = 5000;
 
-  @NotNull private final String myHost;
+  private final @NotNull String myHost;
   private final int myPort;
+  private final Duration myRetryTimeout;
+  private final int myMaxRetries;
 
-  @NotNull private volatile State myState = State.INIT;
+  private volatile @NotNull State myState = State.INIT;
 
-  @Nullable private Socket mySocket;
-  @Nullable private volatile DebuggerReader myDebuggerReader;
+  private @Nullable Socket mySocket;
+  private volatile @Nullable DebuggerReader myDebuggerReader;
 
   public ClientModeDebuggerTransport(@NotNull RemoteDebugger debugger,
                                      @NotNull String host,
-                                     int port) {
+                                     int port,
+                                     Duration retryTimeout,
+                                     int maxRetries) {
     super(debugger);
     myHost = host;
     myPort = port;
+    myRetryTimeout = retryTimeout;
+    myMaxRetries = maxRetries;
   }
 
   @Override
@@ -83,10 +89,7 @@ public class ClientModeDebuggerTransport extends BaseDebuggerTransport {
     However, capturing stdout from the process at this point is not straightforward. Hence, we use this retry workaround.
     */
     var attempts = 0;
-    var maxRetries = 10;
-    var retryInterval = TimeUnit.MILLISECONDS.toMillis(500);
     boolean connected = false;
-
     do {
       try {
         Socket clientSocket = new Socket();
@@ -103,8 +106,7 @@ public class ClientModeDebuggerTransport extends BaseDebuggerTransport {
           myDebuggerReader = debuggerReader = new DebuggerReader(myDebugger, clientSocket.getInputStream());
         }
         catch (IOException e) {
-          LOG.debug("Failed to create debugger reader", e);
-          throw e;
+          throw new IOException("Failed to create debugger reader", e);
         }
 
         try {
@@ -117,7 +119,7 @@ public class ClientModeDebuggerTransport extends BaseDebuggerTransport {
           clientSocket.setSoTimeout(0);
         }
         catch (PyDebuggerException e) {
-          LOG.debug(String.format("[%d] Handshake failed", hashCode()));
+          LOG.warn(String.format("[%d] Handshake failed", hashCode()));
         }
         finally {
           if (!connected) {
@@ -128,14 +130,14 @@ public class ClientModeDebuggerTransport extends BaseDebuggerTransport {
       catch (IOException e) {
         attempts++;
         try {
-          Thread.sleep(retryInterval);
+          Thread.sleep(myRetryTimeout.toMillis());
         }
         catch (InterruptedException ex) {
+          LOG.warn("Connection to the debugger thread is interrupted during the retry delay", e);
           Thread.currentThread().interrupt();
-          LOG.debug("Connection to the debugger thread is interrupted during the retry delay", e);
         }
       }
-    } while (attempts < maxRetries && !connected);
+    } while (attempts < myMaxRetries && !connected);
 
     if (!connected) {
       myState = State.DISCONNECTED;

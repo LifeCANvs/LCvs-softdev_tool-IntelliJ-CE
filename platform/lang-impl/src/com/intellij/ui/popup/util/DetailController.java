@@ -3,6 +3,7 @@ package com.intellij.ui.popup.util;
 
 import com.intellij.ui.components.JBList;
 import com.intellij.util.Alarm;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -10,6 +11,7 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.io.File;
 
+@ApiStatus.Internal
 public class DetailController {
   private final MasterController myMasterController;
   private final Alarm myUpdateAlarm = new Alarm();
@@ -37,7 +39,7 @@ public class DetailController {
 
   private static @Nls String getTitle2Text(@Nullable @Nls String fullText, @NotNull JLabel label) {
     int labelWidth = label.getWidth();
-    if (fullText == null || fullText.length() == 0) return " ";
+    if (fullText == null || fullText.isEmpty()) return " ";
     while (label.getFontMetrics(label.getFont()).stringWidth(fullText) > labelWidth) {
       int sep = fullText.indexOf(File.separatorChar, 4);
       if (sep < 0) return fullText;

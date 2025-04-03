@@ -7,8 +7,10 @@ import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.application.WriteAction;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
@@ -32,8 +34,18 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-public abstract class CreateTemplateInPackageAction<T extends PsiElement> extends CreateFromTemplateAction<T> {
+public abstract class CreateTemplateInPackageAction<T extends PsiElement> extends CreateFromTemplateAction<T>
+  implements NewFileActionWithCategory {
+
+  private static final @NotNull Logger LOG = Logger.getInstance(CreateTemplateInPackageAction.class);
+
+  public static final String JAVA_NEW_FILE_CATEGORY = "Java";
+
   private final @Nullable Set<? extends JpsModuleSourceRootType<?>> mySourceRootTypes;
+
+  protected CreateTemplateInPackageAction(@Nullable Set<? extends JpsModuleSourceRootType<?>> sourceRootTypes) {
+    mySourceRootTypes = sourceRootTypes;
+  }
 
   protected CreateTemplateInPackageAction(String text, String description, Icon icon,
                                           Set<? extends JpsModuleSourceRootType<?>> rootTypes) {
@@ -58,6 +70,11 @@ public abstract class CreateTemplateInPackageAction<T extends PsiElement> extend
   }
 
   @Override
+  public @NotNull String getCategory() {
+    return JAVA_NEW_FILE_CATEGORY;
+  }
+
+  @Override
   protected @Nullable T createFile(String name, String templateName, PsiDirectory dir) {
     return checkOrCreate(name, dir, templateName);
   }
@@ -77,7 +94,7 @@ public abstract class CreateTemplateInPackageAction<T extends PsiElement> extend
   }
 
   @Override
-  protected boolean isAvailable(final DataContext dataContext) {
+  protected boolean isAvailable(@NotNull DataContext dataContext) {
     return isAvailable(dataContext, mySourceRootTypes, this::checkPackageExists);
   }
 
@@ -132,7 +149,18 @@ public abstract class CreateTemplateInPackageAction<T extends PsiElement> extend
   }
 
   public static boolean isInContentRoot(VirtualFile file, ProjectFileIndex index) {
-    return file.equals(index.getContentRootForFile(file));
+    return file.equals(index.getContentRootForFile(file)) &&
+           projectHasNoSourceRoots(file, index);
+  }
+
+  private static boolean projectHasNoSourceRoots(VirtualFile file, ProjectFileIndex index) {
+    Module module = index.getModuleForFile(file);
+    if (module != null) {
+      return ContainerUtil.or(ModuleManager.getInstance(module.getProject()).getModules(), m -> {
+        return ModuleRootManager.getInstance(module).getSourceRoots().length > 0;
+      });
+    }
+    return false;
   }
 
   protected abstract boolean checkPackageExists(PsiDirectory directory);

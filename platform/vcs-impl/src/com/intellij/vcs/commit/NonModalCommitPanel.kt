@@ -2,11 +2,7 @@
 package com.intellij.vcs.commit
 
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.ActionGroup
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.DataContext
-import com.intellij.openapi.actionSystem.DataProvider
-import com.intellij.openapi.actionSystem.DataSink
+import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.actionSystem.impl.ActionButtonUtil
 import com.intellij.openapi.editor.colors.EditorColorsListener
 import com.intellij.openapi.editor.colors.EditorColorsScheme
@@ -27,7 +23,6 @@ import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.util.EventDispatcher
 import com.intellij.util.IJSwingUtilities.updateComponentTreeUI
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.JBUI.Borders.empty
 import com.intellij.util.ui.JBUI.Borders.emptyLeft
 import com.intellij.util.ui.JBUI.scale
 import com.intellij.util.ui.components.BorderLayoutPanel
@@ -43,7 +38,7 @@ import javax.swing.border.EmptyBorder
 abstract class NonModalCommitPanel(
   val project: Project,
   val commitActionsPanel: CommitActionsPanel = CommitActionsPanel(),
-  val commitAuthorComponent: CommitAuthorComponent = CommitAuthorComponent(project)
+  val commitAuthorComponent: CommitAuthorComponent = CommitAuthorComponent(project),
 ) : BorderLayoutPanel(),
     NonModalCommitWorkflowUi,
     CommitActionsUi by commitActionsPanel,
@@ -144,15 +139,15 @@ abstract class NonModalCommitPanel(
   }
 
   override fun showCommitOptions(options: CommitOptions, actionName: @Nls String, isFromToolbar: Boolean, dataContext: DataContext) {
-    val commitOptionsPanel = CommitOptionsPanel(project, actionNameSupplier = { actionName }, nonFocusable = false, nonModalCommit = true)
+    val commitOptionsPanel = CommitOptionsPanel(project, actionNameSupplier = { actionName }, nonFocusable = false, nonModalCommit = true,
+                                                contentBorder = JBUI.Borders.empty(10, 14))
     commitOptionsPanel.setOptions(options)
 
     val commitOptionsComponent = commitOptionsPanel.component.apply {
       focusTraversalPolicy = LayoutFocusTraversalPolicy()
       isFocusCycleRoot = true
-
-      border = empty(0, 10, 10, 10)
     }
+
     // to reflect LaF changes as commit options components are created once per commit
     if (needUpdateCommitOptionsUi) {
       needUpdateCommitOptionsUi = false
@@ -177,15 +172,20 @@ abstract class NonModalCommitPanel(
     showCommitOptions(commitOptionsPopup, isFromToolbar, dataContext)
   }
 
-  protected open fun showCommitOptions(popup: JBPopup, isFromToolbar: Boolean, dataContext: DataContext) =
+  protected open fun showCommitOptions(popup: JBPopup, isFromToolbar: Boolean, dataContext: DataContext) {
     if (isFromToolbar) {
-      popup.showAbove(commitActionsPanel.getShowCommitOptionsButton() ?: commitActionsPanel)
+      VcsUIUtil.showPopupAbove(popup, commitActionsPanel.getShowCommitOptionsButton() ?: commitActionsPanel,
+                               scale(COMMIT_OPTIONS_POPUP_MINIMUM_SIZE))
     }
-    else popup.showInBestPositionFor(dataContext)
+    else {
+      popup.showInBestPositionFor(dataContext)
+    }
+  }
 
   companion object {
     internal const val COMMIT_TOOLBAR_PLACE: String = "ChangesView.CommitToolbar"
     internal const val COMMIT_EDITOR_PLACE: String = "ChangesView.Editor"
+    internal val COMMIT_OPTIONS_POPUP_MINIMUM_SIZE = 300
 
     @Deprecated("Extracted to a separate file",
                 replaceWith = ReplaceWith("showAbove(component)", "com.intellij.vcsUtil.showAbove"))

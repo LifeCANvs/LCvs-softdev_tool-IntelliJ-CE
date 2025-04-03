@@ -1,11 +1,10 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package fleet.rpc.core
 
-import fleet.util.AtomicRef
+import fleet.multiplatform.shims.AtomicRef
 import fleet.util.UID
 import fleet.util.async.coroutineNameAppended
 import fleet.util.logging.logger
-import io.opentelemetry.context.Context
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -34,11 +33,13 @@ sealed class StreamDirection {
   class FromRemote(val channel: SendChannel<Any?>) : StreamDirection()
 }
 
-class StreamDescriptor(val displayName: String,
-                       val uid: UID,
-                       val token: RpcToken?,
-                       val direction: StreamDirection,
-                       val elementSerializer: KSerializer<Any?>) {
+class StreamDescriptor(
+  val displayName: String,
+  val uid: UID,
+  val token: RpcToken?,
+  val direction: StreamDirection,
+  val elementSerializer: KSerializer<Any?>,
+) {
 
   override fun toString(): String {
     return "StreamDescriptor: ${displayName}"
@@ -110,26 +111,33 @@ sealed class InternalStreamDescriptor {
   abstract val displayName: String
   abstract val uid: UID
   abstract val elementSerializer: KSerializer<Any?>
+  abstract val serviceScope: CoroutineScope
 
-  data class ToRemote(override val route: UID,
-                      override val displayName: String,
-                      override val uid: UID,
-                      override val token: RpcToken?,
-                      override val elementSerializer: KSerializer<Any?>,
-                      val channel: ReceiveChannel<Any?>,
-                      val budget: Budget) : InternalStreamDescriptor()
+  data class ToRemote(
+    override val route: UID,
+    override val displayName: String,
+    override val uid: UID,
+    override val token: RpcToken?,
+    override val elementSerializer: KSerializer<Any?>,
+    override val serviceScope: CoroutineScope,
+    val channel: ReceiveChannel<Any?>,
+    val budget: Budget,
+  ) : InternalStreamDescriptor()
 
-  data class FromRemote(override val route: UID,
-                        override val displayName: String,
-                        override val uid: UID,
-                        override val token: RpcToken?,
-                        override val elementSerializer: KSerializer<Any?>,
-                        val channel: SendChannel<Any?>,
-                        val prefetchStrategy: PrefetchStrategy,
-                        val bufferedChannel: Channel<InternalStreamMessage>) : InternalStreamDescriptor()
+  data class FromRemote(
+    override val route: UID,
+    override val displayName: String,
+    override val uid: UID,
+    override val token: RpcToken?,
+    override val elementSerializer: KSerializer<Any?>,
+    override val serviceScope: CoroutineScope,
+    val channel: SendChannel<Any?>,
+    val prefetchStrategy: PrefetchStrategy,
+    val bufferedChannel: Channel<InternalStreamMessage>,
+  ) : InternalStreamDescriptor()
 
   companion object {
-    fun fromDescriptor(desc: StreamDescriptor, route: UID, prefetchStrategy: PrefetchStrategy): InternalStreamDescriptor {
+    fun fromDescriptor(desc: StreamDescriptor, route: UID, prefetchStrategy: PrefetchStrategy, scope: CoroutineScope): InternalStreamDescriptor {
       return when (desc.direction) {
         is StreamDirection.FromRemote -> FromRemote(route = route,
                                                     displayName = desc.displayName,
@@ -138,14 +146,16 @@ sealed class InternalStreamDescriptor {
                                                     channel = desc.direction.channel,
                                                     bufferedChannel = Channel(Channel.UNLIMITED),
                                                     token = desc.token,
-                                                    prefetchStrategy = prefetchStrategy)
+                                                    prefetchStrategy = prefetchStrategy,
+                                                    serviceScope = scope)
         is StreamDirection.ToRemote -> ToRemote(route = route,
                                                 displayName = desc.displayName,
                                                 uid = desc.uid,
                                                 elementSerializer = desc.elementSerializer,
                                                 token = desc.token,
                                                 channel = desc.direction.channel,
-                                                budget = Budget(0))
+                                                budget = Budget(0),
+                                                serviceScope = scope)
       }
     }
   }
@@ -178,9 +188,9 @@ interface PrefetchStrategy {
     private val logger = logger<PrefetchStrategy>()
 
     //@fleet.kernel.plugins.InternalInPluginModules(where = ["fleet.app.fleet.tests"])
-    const val STREAM_BURST_SIZE = 100
+    const val STREAM_BURST_SIZE: Int = 100
 
-    val Default = object : PrefetchStrategy {
+    val Default: PrefetchStrategy = object : PrefetchStrategy {
       override fun streamStarted(): Int = STREAM_BURST_SIZE
 
       override fun messageReceived(requested: Int, remaining: Int): Int? {
@@ -190,7 +200,7 @@ interface PrefetchStrategy {
       }
     }
 
-    val Exponential = object : PrefetchStrategy {
+    val Exponential: PrefetchStrategy = object : PrefetchStrategy {
       override fun streamStarted(): Int = 1
 
       override fun messageReceived(requested: Int, remaining: Int): Int? = min(requested * 2, STREAM_BURST_SIZE).takeIf { remaining == 0 }
@@ -198,20 +208,21 @@ interface PrefetchStrategy {
   }
 }
 
-fun serveStream(origin: UID,
-                coroutineScope: CoroutineScope,
-                descriptor: InternalStreamDescriptor,
-                serialization: () -> Serialization,
-                prefetchStrategy: PrefetchStrategy,
-                registerStream: (StreamDescriptor) -> InternalStreamDescriptor,
-                unregisterStream: (UID) -> InternalStreamDescriptor?,
-                wrapThrowable: (Throwable) -> Throwable = { it },
-                sendAsync: (TransportMessage, RequestCompletionHandler?) -> Unit) {
+fun serveStream(
+  origin: UID,
+  coroutineScope: CoroutineScope,
+  descriptor: InternalStreamDescriptor,
+  prefetchStrategy: PrefetchStrategy,
+  registerStream: (StreamDescriptor) -> InternalStreamDescriptor,
+  unregisterStream: (UID) -> InternalStreamDescriptor?,
+  wrapThrowable: (Throwable) -> Throwable = { it },
+  sendAsync: (TransportMessage, RequestCompletionHandler?) -> Unit,
+) {
 
   RpcStream.logger.trace { "serveStream ${descriptor.uid} ${descriptor.displayName} route=${descriptor.route}" }
   val coroutineName = coroutineScope.coroutineNameAppended(descriptor.displayName)
   fun transportMessage(message: RpcMessage) =
-    message.seal(destination = descriptor.route, origin = origin, otelData = Context.current().toTelemetryData())
+    message.seal(destination = descriptor.route, origin = origin)
 
   suspend fun sendMessage(message: RpcMessage) {
     sendSuspend(sendAsync, transportMessage(message))
@@ -223,8 +234,7 @@ fun serveStream(origin: UID,
         try {
           sendMessage(RpcMessage.StreamInit(streamId = descriptor.uid))
           for (item in descriptor.channel) {
-            val serialiation = serialization()
-            val json = rpcJsonImplementationDetail(serialiation)
+            val json = rpcJsonImplementationDetail()
             val (jsonElement, streamDescriptors) = withSerializationContext("Sub-channel of ${descriptor.uid}", token = descriptor.token,
                                                                             rpcScope = coroutineScope) {
               json.encodeToJsonElement(serializer = descriptor.elementSerializer,
@@ -233,14 +243,16 @@ fun serveStream(origin: UID,
             // register streams before we publish them to remote with `sendAsync` or we may miss some messages from FROM_REMOTE streams if remote is fast enough
             val internalStreamDescriptors = streamDescriptors.map { registerStream(it) }
             descriptor.budget.withdrawSuspend()
-            RpcStream.logger.trace { "Sending in stream ${descriptor.uid} <${descriptor.displayName}> item ${item?.javaClass?.simpleName}($item)" }
+            RpcStream.logger.trace {
+              val itemName = item?.let { it::class.simpleName }
+              "Sending in stream ${descriptor.uid} <${descriptor.displayName}> item ${itemName}($item)"
+            }
             sendMessage(RpcMessage.StreamData(streamId = descriptor.uid, data = jsonElement))
             // we must serve TO_REMOTE streams only after initial message was sent
             for (internalStream in internalStreamDescriptors) {
               serveStream(origin = origin,
                           coroutineScope = coroutineScope,
                           descriptor = internalStream,
-                          serialization = serialization,
                           prefetchStrategy = prefetchStrategy,
                           registerStream = registerStream,
                           unregisterStream = unregisterStream,
@@ -253,7 +265,7 @@ fun serveStream(origin: UID,
           val wrapped = wrapThrowable(e)
           descriptor.channel.cancel(CancellationException("cancelled with reason", wrapped))
 
-          if (e is CancellationException && coroutineContext.job.isActive) {
+          if (e is CancellationException) {
             sendAsync(transportMessage(RpcMessage.StreamClosed(streamId = descriptor.uid, error = FailureInfo(
               producerCancelled = "stream to remote is cancelled due to ${e.stackTraceToString()}"))), null)
             throw e
@@ -281,9 +293,8 @@ fun serveStream(origin: UID,
             }
             else -> cause?.toFailureInfo()
           }
-          val closedMessage = RpcMessage.StreamClosed(descriptor.uid, failure).seal(destination = descriptor.route,
-                                                                                    origin = origin,
-                                                                                    otelData = null)
+          val closedMessage = RpcMessage.StreamClosed(descriptor.uid, failure)
+            .seal(destination = descriptor.route, origin = origin)
           sendAsync(closedMessage, null)
         }
       }

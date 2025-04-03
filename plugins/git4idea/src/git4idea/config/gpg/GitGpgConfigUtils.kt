@@ -8,8 +8,10 @@ import com.intellij.openapi.util.NlsSafe
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vcs.VcsException
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import git4idea.commands.GitImpl
 import git4idea.config.GitConfigUtil
+import git4idea.repo.GitProjectConfigurationCache
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import git4idea.util.StringScanner
@@ -21,7 +23,7 @@ private fun readGitGpgConfig(repository: GitRepository): RepoConfig {
   // TODO: "tag.gpgSign" ?
   val isEnabled = isGpgSignEnabled(repository.project, repository.root)
   if (!isEnabled) return RepoConfig(null)
-  val keyValue = GitConfigUtil.getValue(repository.project, repository.root, GitConfigUtil.GPG_COMMIT_SIGN_KEY)
+  val keyValue = getGpgSignKey(repository.project, repository.root)
   if (keyValue == null) return RepoConfig(null)
   return RepoConfig(GpgKey(keyValue.trim()))
 }
@@ -80,13 +82,35 @@ private fun checkKeyCapabilities(capabilities: String): Boolean {
   return capabilities.contains("s") || capabilities.contains("S")  // can Sign
 }
 
+@RequiresBackgroundThread
+fun isGpgSignEnabledCached(repository: GitRepository): Boolean {
+  return GitConfigUtil
+    .getBooleanValue(GitProjectConfigurationCache.getInstance(repository.project)
+                       .readRepositoryConfig(repository, GitConfigUtil.GPG_COMMIT_SIGN)) == true
+}
+
 fun isGpgSignEnabled(project: Project, root: VirtualFile): Boolean {
   try {
     return GitConfigUtil.getBooleanValue(GitConfigUtil.getValue(project, root, GitConfigUtil.GPG_COMMIT_SIGN)) == true
   }
   catch (e: VcsException) {
-    logger<GitConfigUtil>().warn("Cannot get gpg.commitSign config value", e)
+    logger<GitConfigUtil>().warn("Cannot get ${GitConfigUtil.GPG_COMMIT_SIGN} config value", e)
     return false
+  }
+}
+
+@RequiresBackgroundThread
+fun getGpgSignKeyCached(repository: GitRepository): String? {
+  return GitProjectConfigurationCache.getInstance(repository.project).readRepositoryConfig(repository, GitConfigUtil.GPG_COMMIT_SIGN_KEY)
+}
+
+fun getGpgSignKey(project: Project, root: VirtualFile): String? {
+  try {
+    return GitConfigUtil.getValue(project, root, GitConfigUtil.GPG_COMMIT_SIGN_KEY)
+  }
+  catch (e: VcsException) {
+    logger<GitConfigUtil>().warn("Cannot get ${GitConfigUtil.GPG_COMMIT_SIGN_KEY} config value", e)
+    return null
   }
 }
 

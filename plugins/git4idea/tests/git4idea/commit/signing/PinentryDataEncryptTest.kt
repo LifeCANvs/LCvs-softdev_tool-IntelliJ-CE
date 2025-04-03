@@ -9,7 +9,7 @@ import kotlin.random.Random
 class PinentryDataEncryptTest : UsefulTestCase() {
 
   fun `test encrypt and decrypt`() {
-    val password = PinentryTestUtil.generatePassword(Random.nextInt(2, 200))
+    val password = PinentryTestUtil.generatePassword(Random.nextInt(4, 200))
     val keyPair = CryptoUtils.generateKeyPair()
 
     val encryptedPassword = CryptoUtils.encrypt(password, keyPair.private)
@@ -21,9 +21,9 @@ class PinentryDataEncryptTest : UsefulTestCase() {
   fun `test public key serialization`() {
     val publicKey = CryptoUtils.generateKeyPair().public
     val address = PinentryService.Address(NetUtils.getLocalHostString(), NetUtils.findAvailableSocketPort())
-    val pinentryData = PinentryService.PinentryData(CryptoUtils.publicKeyToString(publicKey), address).toString()
+    val pinentryData = PinentryService.PinentryData(CryptoUtils.publicKeyToString(publicKey), address).toEnv()
 
-    val keyToDeserialize = pinentryData.split(':')[0]
+    val keyToDeserialize = pinentryData.split(PinentryService.PinentryData.PREFIX)[1].split(':')[0]
     val deserializedKey = CryptoUtils.stringToPublicKey(keyToDeserialize)
 
     assertEquals(publicKey, deserializedKey)

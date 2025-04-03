@@ -18,9 +18,8 @@ import org.gradle.api.artifacts.result.DependencyResult;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.artifacts.result.ResolvedComponentResult;
 import org.gradle.api.artifacts.result.ResolvedDependencyResult;
+import org.gradle.api.specs.Spec;
 import org.gradle.internal.resolve.ModuleVersionResolveException;
-import org.gradle.language.base.artifact.SourcesArtifact;
-import org.gradle.language.java.artifact.JavadocArtifact;
 import org.gradle.util.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -59,7 +58,8 @@ public final class GradleDependencyResolver {
     this(context, project, GradleDependencyDownloadPolicyCache.getInstance(context).getDependencyDownloadPolicy(project));
   }
 
-  private static @NotNull Set<ResolvedArtifactResult> resolveConfigurationDependencies(@NotNull Configuration configuration) {
+  private static @NotNull Set<ResolvedArtifactResult> resolveConfigurationDependencies(@NotNull Configuration configuration,
+                                                                                       Set<String> allowedDependencyGroups) {
     // The following statement should trigger parallel resolution of configuration artifacts
     // All subsequent iterations are expected to use cached results.
     try {
@@ -67,6 +67,18 @@ public final class GradleDependencyResolver {
         @Override
         public void execute(@NotNull ArtifactView.ViewConfiguration configuration) {
           configuration.setLenient(true);
+
+          if (!allowedDependencyGroups.isEmpty()) {
+            configuration.componentFilter(new Spec<ComponentIdentifier>() {
+              @Override
+              public boolean isSatisfiedBy(ComponentIdentifier componentIdentifier) {
+                if (componentIdentifier instanceof ModuleComponentIdentifier) {
+                  return allowedDependencyGroups.contains(((ModuleComponentIdentifier)componentIdentifier).getGroup());
+                }
+                return false;
+              }
+            });
+          }
         }
       });
       return artifactView.getArtifacts().getArtifacts();
@@ -77,18 +89,32 @@ public final class GradleDependencyResolver {
   }
 
   public @NotNull Collection<ExternalDependency> resolveDependencies(@Nullable Configuration configuration) {
+    return resolveDependencies(configuration, Collections.emptySet());
+  }
+
+  /**
+   * @param configuration           resolvable configuration
+   * @param allowedDependencyGroups this filter forces to use artifactView for getting docs and sources,
+   *                                which is not working well with ivy repositories (see IDEA-275594).
+   *                                So, be careful to use this parameter.
+   * @return both resolved and unresolved with the reason dependencies from the given configuration
+   */
+  public @NotNull Collection<ExternalDependency> resolveDependencies(@Nullable Configuration configuration,
+                                                                     Set<String> allowedDependencyGroups) {
     if (configuration == null) {
       return Collections.emptySet();
     }
     // configurationDependencies can be empty, for example, in the case of a composite build. We should continue resolution anyway.
-    Set<ResolvedArtifactResult> configurationDependencies = resolveConfigurationDependencies(configuration);
+    Set<ResolvedArtifactResult> configurationDependencies = resolveConfigurationDependencies(configuration, allowedDependencyGroups);
 
     LenientConfiguration lenientConfiguration = configuration.getResolvedConfiguration().getLenientConfiguration();
     Map<ResolvedDependency, Set<ResolvedArtifact>> resolvedArtifacts = new LinkedHashMap<>();
     boolean hasFailedToTransformDependencies = false;
     for (ResolvedDependency dependency : lenientConfiguration.getAllModuleDependencies()) {
       try {
-        resolvedArtifacts.put(dependency, dependency.getModuleArtifacts());
+        if (allowedDependencyGroups.isEmpty() || allowedDependencyGroups.contains(dependency.getModuleGroup())) {
+          resolvedArtifacts.put(dependency, dependency.getModuleArtifacts());
+        }
       }
       catch (GradleException e) {
         hasFailedToTransformDependencies = true;
@@ -102,6 +128,7 @@ public final class GradleDependencyResolver {
     if (hasFailedToTransformDependencies) {
       for (DependencyResult dependencyResult : configuration.getIncoming().getResolutionResult().getAllDependencies()) {
         ComponentSelector resultRequested = dependencyResult.getRequested();
+        //Note: we don't use here alloweded dependency groups filter, because it has sense only for ModuleComponentSelector
         if (dependencyResult instanceof ResolvedDependencyResult && resultRequested instanceof ProjectComponentSelector) {
           ResolvedComponentResult resolvedComponentResult = ((ResolvedDependencyResult)dependencyResult).getSelected();
           ModuleVersionIdentifier selectedResultVersion = resolvedComponentResult.getModuleVersion();
@@ -109,13 +136,15 @@ public final class GradleDependencyResolver {
         }
       }
     }
-    AuxiliaryConfigurationArtifacts auxiliaryArtifacts = resolveAuxiliaryArtifacts(configuration, resolvedArtifacts);
+    // Here we collect java doc and source files for a given dependencies
+    AuxiliaryConfigurationArtifacts auxiliaryArtifacts =
+      resolveAuxiliaryArtifacts(configuration, resolvedArtifacts, allowedDependencyGroups);
     Set<String> resolvedFiles = new HashSet<>();
     Collection<ExternalDependency> artifactDependencies = resolveArtifactDependencies(
       resolvedFiles, resolvedArtifacts, auxiliaryArtifacts, transformedProjectDependenciesResultMap
     );
     Collection<FileCollectionDependency> otherFileDependencies = resolveOtherFileDependencies(resolvedFiles, configurationDependencies);
-    Collection<ExternalDependency> unresolvedDependencies = collectUnresolvedDependencies(lenientConfiguration);
+    Collection<ExternalDependency> unresolvedDependencies = collectUnresolvedDependencies(lenientConfiguration, allowedDependencyGroups);
 
     Collection<ExternalDependency> result = new LinkedHashSet<>();
     result.addAll(otherFileDependencies);
@@ -258,11 +287,11 @@ public final class GradleDependencyResolver {
     libraryDependency.setFile(artifactFile);
 
     ComponentIdentifier componentIdentifier = artifact.getId().getComponentIdentifier();
-    File sourcesFile = auxiliaryArtifacts.getArtifact(componentIdentifier, artifactFile, SourcesArtifact.class);
+    File sourcesFile = auxiliaryArtifacts.getSources(componentIdentifier, artifactFile);
     if (sourcesFile != null) {
       libraryDependency.setSource(sourcesFile);
     }
-    File javadocFile = auxiliaryArtifacts.getArtifact(componentIdentifier, artifactFile, JavadocArtifact.class);
+    File javadocFile = auxiliaryArtifacts.getJavadoc(componentIdentifier, artifactFile);
     if (javadocFile != null) {
       libraryDependency.setJavadoc(javadocFile);
     }
@@ -312,13 +341,14 @@ public final class GradleDependencyResolver {
 
   private @NotNull AuxiliaryConfigurationArtifacts resolveAuxiliaryArtifacts(
     @NotNull Configuration configuration,
-    @NotNull Map<ResolvedDependency, Set<ResolvedArtifact>> resolvedArtifacts
+    @NotNull Map<ResolvedDependency, Set<ResolvedArtifact>> resolvedArtifacts,
+    Set<String> allowedDependencyGroups
   ) {
     String experimentalResolverPropertyValue = System.getProperty("idea.experimental.gradle.dependency.resolver", "false");
     boolean useExperimentalResolver = Boolean.parseBoolean(experimentalResolverPropertyValue);
     AuxiliaryArtifactResolver resolver;
     if (GradleVersionUtil.isCurrentGradleAtLeast("7.3") && useExperimentalResolver) {
-      resolver = new ExperimentalAuxiliaryArtifactResolver(myProject, myDownloadPolicy);
+      resolver = new ExperimentalAuxiliaryArtifactResolver(myProject, myDownloadPolicy, allowedDependencyGroups);
     }
     else {
       resolver = new LegacyAuxiliaryArtifactResolver(myProject, myDownloadPolicy, resolvedArtifacts);
@@ -350,11 +380,15 @@ public final class GradleDependencyResolver {
   }
 
   private static @NotNull Collection<ExternalDependency> collectUnresolvedDependencies(
-    @NotNull LenientConfiguration lenientConfiguration
+    @NotNull LenientConfiguration lenientConfiguration,
+    Set<String> allowedDependencyGroups
   ) {
     Collection<ExternalDependency> result = new LinkedHashSet<>();
     Set<UnresolvedDependency> unresolvedModuleDependencies = lenientConfiguration.getUnresolvedModuleDependencies();
     for (UnresolvedDependency unresolvedDependency : unresolvedModuleDependencies) {
+      if (!allowedDependencyGroups.isEmpty() && !allowedDependencyGroups.contains(unresolvedDependency.getSelector().getGroup())) {
+        continue;
+      }
       MyModuleVersionSelector moduleVersionSelector = null;
       Throwable problem = unresolvedDependency.getProblem();
       if (problem.getCause() != null) {

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.build;
 
 import com.intellij.build.events.*;
@@ -124,7 +124,7 @@ public final class BuildTreeConsoleView implements ConsoleView, DataProvider, Bu
   /**
    * @deprecated BuildViewSettingsProvider is not used anymore.
    */
-  @Deprecated
+  @Deprecated(forRemoval = true)
   public BuildTreeConsoleView(@NotNull Project project,
                               @NotNull BuildDescriptor buildDescriptor,
                               @Nullable ExecutionConsole executionConsole,
@@ -1276,7 +1276,8 @@ public final class BuildTreeConsoleView implements ConsoleView, DataProvider, Bu
     }
   }
 
-  private final class MyTreeStructure extends AbstractTreeStructure {
+  @ApiStatus.Internal
+  public final class MyTreeStructure extends AbstractTreeStructure {
     @Override
     public @NotNull Object getRootElement() {
       return myRootNode;

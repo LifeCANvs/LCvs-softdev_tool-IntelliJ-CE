@@ -21,6 +21,7 @@ import com.intellij.refactoring.introduce.inplace.OccurrencesChooser
 import com.intellij.util.application
 import com.intellij.util.containers.addIfNotNull
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
+import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.components.KaDiagnosticCheckerFilter
 import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
@@ -32,12 +33,11 @@ import org.jetbrains.kotlin.analysis.api.resolution.KaCallableMemberCall
 import org.jetbrains.kotlin.analysis.api.resolution.singleCallOrNull
 import org.jetbrains.kotlin.analysis.api.symbols.KaSymbolOrigin
 import org.jetbrains.kotlin.analysis.api.symbols.KaValueParameterSymbol
+import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.analyzeInModalWindow
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.getImplicitReceivers
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.shortenReferences
 import org.jetbrains.kotlin.idea.base.codeInsight.KotlinDeclarationNameValidator
-import org.jetbrains.kotlin.idea.base.codeInsight.KotlinNameSuggester
-import org.jetbrains.kotlin.idea.base.codeInsight.KotlinNameSuggester.Companion.suggestNameByName
 import org.jetbrains.kotlin.idea.base.codeInsight.KotlinNameSuggestionProvider
 import org.jetbrains.kotlin.idea.base.codeInsight.ShortenReferencesFacility
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
@@ -60,11 +60,13 @@ import org.jetbrains.kotlin.types.Variance
 import org.jetbrains.kotlin.utils.exceptions.errorWithAttachment
 import org.jetbrains.kotlin.utils.exceptions.withPsiEntry
 
+typealias SuggestedNames = List<Collection<String>>
+
 object K2IntroduceVariableHandler : KotlinIntroduceVariableHandler() {
     private class IntroduceVariableContext(
         project: Project,
         isVar: Boolean,
-        nameSuggestions: List<Collection<String>>,
+        nameSuggestions: SuggestedNames,
         replaceFirstOccurrence: Boolean,
         isDestructuringDeclaration: Boolean,
         private val expressionRenderedType: String,
@@ -92,6 +94,57 @@ object K2IntroduceVariableHandler : KotlinIntroduceVariableHandler() {
             }
         }
 
+        /**
+         * A type must be specified when introducing variables in two cases.
+         *
+         * The first case is when a lambda expression is extracted:
+         * ```kotlin
+         * fun foo(nums: List<Int>) {
+         *     nums.find <selection>{ it == 42 }</selection>
+         * }
+         * ```
+         * See the following tests:
+         * + [org.jetbrains.kotlin.idea.k2.refactoring.introduce.introduceVariable.K2IntroduceVariableTestGenerated.Uncategorized.testIntroduceLambdaAndCreateBlock]
+         * + [org.jetbrains.kotlin.idea.k2.refactoring.introduce.introduceVariable.K2IntroduceVariableTestGenerated.Uncategorized.testIntroduceLambdaAndCreateBlock2]
+         * + [org.jetbrains.kotlin.idea.k2.refactoring.introduce.introduceVariable.K2IntroduceVariableTestGenerated.Uncategorized.testFunctionLiteralFromExpected]
+         * + [org.jetbrains.kotlin.idea.k2.refactoring.introduce.introduceVariable.K2IntroduceVariableTestGenerated.Uncategorized.testFunctionLiteralWithExtraArgs]
+         * + [org.jetbrains.kotlin.idea.k2.refactoring.introduce.introduceVariable.K2IntroduceVariableTestGenerated.Uncategorized.testFunctionLiteral]
+         *
+         * The second case when a type must be specified is for anonymous objects
+         * that implement more than one supertype and are extracted into non-local variables:
+         * ```kotlin
+         * interface A
+         * interface B
+         *
+         * class Main {
+         *     val a: A = <selection>object : A, B {}</selection>
+         * }
+         * ```
+         * If the 'Introduce Variable' refactoring had not specified a type for the code above,
+         * it would lead to the `AMBIGUOUS_ANONYMOUS_TYPE_INFERRED` compiler error.
+         *
+         * See the following tests:
+         * + [org.jetbrains.kotlin.idea.k2.refactoring.introduce.introduceVariable.K2IntroduceVariableTestGenerated.AnonymousObjects.testClassPropertyAmbiguous]
+         * + [org.jetbrains.kotlin.idea.k2.refactoring.introduce.introduceVariable.K2IntroduceVariableTestGenerated.AnonymousObjects.testDefaultParamNonLocalAmbiguous]
+         *
+         * Type arguments must be specified when the user does not choose the 'Specify type explicitly'
+         * option, for instance, in the following case:
+         * ```kotlin
+         * // before
+         * val v : List<List<Int>> = mutableListOf(<selection>listOf()</selection>)
+         * ```
+         * ```kotlin
+         * // after
+         * val elements = listOf<Int>()
+         * val v : List<List<Int>> = mutableListOf(elements)
+         * ```
+         * However, when the user specifies the type explicitly, the redundant type arguments are omitted:
+         * ```kotlin
+         * // after
+         * val elements: List<Int> = listOf()
+         * val v : List<List<Int>> = mutableListOf(elements))
+         * ```
+         */
         @OptIn(KaExperimentalApi::class)
         private fun analyzeIfExplicitTypeOrArgumentsAreNeeded(property: KtProperty) {
             val initializer = property.initializer ?: return
@@ -101,10 +154,15 @@ object K2IntroduceVariableHandler : KotlinIntroduceVariableHandler() {
                 @OptIn(KaAllowAnalysisFromWriteAction::class)
                 allowAnalysisFromWriteAction {
                     analyze(property) {
-                        val propertyRenderedType = property.returnType.render(position = Variance.INVARIANT)
-                        if (propertyRenderedType == expressionRenderedType) {
+                        if (initializer is KtObjectLiteralExpression &&
+                            property.diagnostics(KaDiagnosticCheckerFilter.ONLY_COMMON_CHECKERS).any {
+                                it is KaFirDiagnostic.AmbiguousAnonymousTypeInferred
+                            }
+                        ) {
+                            mustSpecifyTypeExplicitly = true
+                        } else if (property.returnType.render(position = Variance.INVARIANT) == expressionRenderedType) {
                             renderedTypeArgumentsIfMightBeNeeded = null
-                        } else if (!areTypeArgumentsNeededForCorrectTypeInference(initializer)) {
+                        } else if (initializer is KtLambdaExpression && !areTypeArgumentsNeededForCorrectTypeInference(initializer)) {
                             mustSpecifyTypeExplicitly = true
                         }
                     }
@@ -143,20 +201,26 @@ object K2IntroduceVariableHandler : KotlinIntroduceVariableHandler() {
         }
     }
 
-    private fun KtExpression.chooseApplicableComponentNamesForVariableDeclaration(
-        haveOccurrencesToReplace: Boolean,
+    private fun KtExpression.chooseDestructuringNames(
         editor: Editor?,
-        callback: (List<String>) -> Unit
+        haveOccurrencesToReplace: Boolean,
+        nameValidator: KotlinDeclarationNameValidator,
+        callback: (SuggestedNames) -> Unit,
     ) {
         if (haveOccurrencesToReplace) return callback(emptyList())
-        return chooseApplicableComponentNames(this, editor, callback = callback)
+        return chooseDestructuringNames(
+            editor = editor,
+            expression = this,
+            nameValidator = nameValidator,
+            callback = callback
+        )
     }
 
     private fun executeMultiDeclarationTemplate(
         project: Project,
         editor: Editor,
         declaration: KtDestructuringDeclaration,
-        suggestedNames: List<Collection<String>>
+        suggestedNames: SuggestedNames,
     ) {
         StartMarkAction.canStart(editor)?.let { return }
 
@@ -210,7 +274,7 @@ object K2IntroduceVariableHandler : KotlinIntroduceVariableHandler() {
             val substringInfo = expression.extractableSubstringInfo as? K2ExtractableSubstringInfo
             val physicalExpression = expression.substringContextOrThis
 
-            val expressionType = substringInfo?.guessLiteralType() ?: physicalExpression.expressionType
+            val expressionType = substringInfo?.guessLiteralType() ?: calculateExpectedType(physicalExpression)
             if (expressionType != null && expressionType.isUnitType) return@analyzeInModalWindow null
             (expressionType ?: builtinTypes.any).render(position = Variance.INVARIANT)
         } ?: return showErrorHint(project, editor, KotlinBundle.message("cannot.refactor.expression.has.unit.type"))
@@ -241,38 +305,26 @@ object K2IntroduceVariableHandler : KotlinIntroduceVariableHandler() {
             }
             val replaceFirstOccurrence = allReplaces.firstOrNull()?.shouldReplaceOccurrence(commonContainer) == true
 
-            expression.chooseApplicableComponentNamesForVariableDeclaration(
+            val anchor = calculateAnchorForExpressions(commonParent, commonContainer, allReplaces) ?: return@create
+            val nameValidator = KotlinDeclarationNameValidator(
+                visibleDeclarationsContext = anchor,
+                checkVisibleDeclarationsContext = true,
+                target = KotlinNameSuggestionProvider.ValidatorTarget.VARIABLE
+            )
+
+            expression.chooseDestructuringNames(
+                editor = editor,
                 haveOccurrencesToReplace = replaceFirstOccurrence || allReplaces.size > 1,
-                editor,
-            ) { componentNames ->
-                val anchor = calculateAnchorForExpressions(commonParent, commonContainer, allReplaces)
-                    ?: return@chooseApplicableComponentNamesForVariableDeclaration
-                val isDestructuringDeclaration = componentNames.isNotEmpty()
-                val suggestedNames = analyzeInModalWindow(expression, KotlinBundle.message("find.usages.prepare.dialog.progress")) {
-                    val nameValidator = KotlinDeclarationNameValidator(
-                        anchor,
-                        true,
-                        KotlinNameSuggestionProvider.ValidatorTarget.VARIABLE
-                    )
-                    if (isDestructuringDeclaration) {
-                        componentNames.map { componentName ->
-                            suggestNameByName(
-                                componentName
-                            ) { nameValidator.validate(it) }.let(::listOf)
-                        }
-                    } else {
-                        with(KotlinNameSuggester()) {
-                            suggestExpressionNames(expression) { nameValidator.validate(it) }.toList()
-                        }.let(::listOf)
-                    }
-                }
+                nameValidator = nameValidator,
+            ) { destructuringNames ->
+                val suggestedNames = destructuringNames.takeIf { it.isNotEmpty() } ?: suggestSingleVariableNames(expression, nameValidator)
 
                 val introduceVariableContext = IntroduceVariableContext(
                     project,
                     isVar,
                     suggestedNames,
                     replaceFirstOccurrence,
-                    isDestructuringDeclaration,
+                    destructuringNames.isNotEmpty(),
                     expressionRenderedType,
                     renderedTypeArguments,
                 )
@@ -422,4 +474,26 @@ object K2IntroduceVariableHandler : KotlinIntroduceVariableHandler() {
             }
         }
     }
+}
+
+private fun KaSession.calculateExpectedType(expression: KtExpression): KaType? {
+    if (expression is KtObjectLiteralExpression) {
+        // Special handling for KtObjectLiteralExpression is required because an instance of
+        // KaFirUsualClassType returned from the KaExpressionTypeProvider.getExpressionType
+        // extension function is rendered as <anonymous>.
+        // However, we can attempt to infer a denotable type for an anonymous object from the context
+        // using the KaExpressionTypeProvider.getExpectedType extension function.
+        val expectedType = expression.expectedType
+        if (expectedType != null) return expectedType
+        val parent = expression.parent
+        when {
+            // In certain cases, the KaExpressionTypeProvider.getExpectedType extension function
+            // does not return an expected type.
+            // See KT-67250
+            parent is KtDelegatedSuperTypeEntry && parent.delegateExpression == expression -> return parent.typeReference?.type
+            parent is KtParameter && parent.defaultValue == expression -> return parent.typeReference?.type
+            else -> return expression.objectDeclaration.superTypeListEntries.firstOrNull()?.typeReference?.type ?: builtinTypes.any
+        }
+    }
+    return expression.expressionType
 }

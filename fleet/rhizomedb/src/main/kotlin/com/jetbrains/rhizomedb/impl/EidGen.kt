@@ -5,14 +5,14 @@ import com.jetbrains.rhizomedb.EID
 import com.jetbrains.rhizomedb.MAX_PART
 import com.jetbrains.rhizomedb.Part
 import com.jetbrains.rhizomedb.withPart
-import fleet.util.AtomicRef
+import fleet.multiplatform.shims.AtomicRef
 import fleet.util.incrementAndGet
-import java.util.concurrent.ConcurrentHashMap
+import fleet.multiplatform.shims.ConcurrentHashMap
 
 sealed interface EidGen {
   companion object : EidGen {
     private val eidGens: Array<AtomicRef<Int>> = Array(MAX_PART + 1) { AtomicRef(0) }.also {
-      it[0].set(LegacySchema.LastMetaSchemaAttrId)
+      it[0].set(17)
     }
     private val eidMemo: ConcurrentHashMap<String, EID> = ConcurrentHashMap()
 

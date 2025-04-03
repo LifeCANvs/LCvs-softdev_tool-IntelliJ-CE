@@ -13,8 +13,10 @@ import com.intellij.ide.projectView.impl.nodes.StructureViewModuleNode;
 import com.intellij.ide.util.treeView.AbstractTreeNode;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
+@ApiStatus.Internal
 public final class ModuleStructurePane extends ProjectViewPane {
   private final @NotNull Module myModule;
 
@@ -27,7 +29,7 @@ public final class ModuleStructurePane extends ProjectViewPane {
   protected @NotNull ProjectAbstractTreeStructureBase createStructure() {
     return new ProjectTreeStructure(myProject, ID){
       @Override
-      protected AbstractTreeNode createRoot(final @NotNull Project project, @NotNull ViewSettings settings) {
+      protected AbstractTreeNode<?> createRoot(final @NotNull Project project, @NotNull ViewSettings settings) {
         return new StructureViewModuleNode(project, myModule, settings);
       }
     };

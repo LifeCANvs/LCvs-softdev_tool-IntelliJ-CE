@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.stubs;
 
 import com.intellij.openapi.application.AppUIExecutor;
@@ -6,11 +6,9 @@ import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.project.DumbService;
-import com.intellij.openapi.project.NoAccessDuringPsiEvents;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.project.ProjectManager;
+import com.intellij.openapi.project.*;
 import com.intellij.openapi.util.RecursionManager;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileWithId;
 import com.intellij.psi.PsiDocumentManager;
@@ -98,7 +96,7 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
   @Override
   public @Nullable ObjectStubTree<?> readFromVFile(@NotNull Project project, final @NotNull VirtualFile vFile) {
     if ((DumbService.getInstance(project).isDumb() &&
-         FileBasedIndex.getInstance().getCurrentDumbModeAccessType() != DumbModeAccessType.RELIABLE_DATA_ONLY) ||
+         FileBasedIndex.getInstance().getCurrentDumbModeAccessType(project) != DumbModeAccessType.RELIABLE_DATA_ONLY) ||
         NoAccessDuringPsiEvents.isInsideEventProcessing()) {
       return null;
     }
@@ -124,7 +122,13 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
         stub = stubTree.getStub();
       }
       catch (SerializerNotFoundException e) {
-        return processError(vFile, "No stub serializer: " + vFile.getPresentableUrl() + ": " + e.getMessage(), e);
+        boolean isDumb = DumbService.isDumb(project);
+        boolean isScanning = UnindexedFilesScannerExecutor.getInstance(project).isRunning().getValue();
+        var message = "No stub serializer: " + vFile.getPresentableUrl() + "(" +
+                      "dumb=" + isDumb + "," +
+                      "scanning=" + isScanning +
+                      "): " + e.getMessage();
+        return processError(vFile, new Exception(message, e));
       }
       if (stub == SerializedStubTree.NO_STUB) {
         return null;
@@ -182,7 +186,10 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
         if (project.equals(cachedPsi.getProject())) {
           message += " (this)";
         }
-        message += " shouldBeIndexed=" + IndexableFilesIndex.getInstance(project).shouldBeIndexed(vFile);
+        message += " use.workspace.file.index.to.generate.iterators=" + Registry.is("use.workspace.file.index.to.generate.iterators");
+        message += " shouldBeIndexed=" + IndexingIteratorsProvider.getInstance(project).shouldBeIndexed(vFile);
+        // Should return the same as above. Why do we need two different API?
+        message += " shouldBeIndexed2=" + ((FileBasedIndexImpl)FileBasedIndex.getInstance()).belongsToProjectIndexableFiles(vFile, project);
         message += "\n";
       }
     }
@@ -192,7 +199,7 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
       message += getPhysicalFileReport(nioPath);
     }
 
-    processError(vFile, message, new Exception());
+    processError(vFile, new Exception(message));
   }
 
   private static String getPhysicalFileReport(@NotNull Path file) {
@@ -211,7 +218,7 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
 
     for (PsiFileStub<?> root : ((PsiFileStubImpl<?>)tree.getRoot()).getStubRoots()) {
       if (root instanceof StubBase) {
-        StubList stubList = ((StubBase<?>)root).myStubList;
+        StubList stubList = ((StubBase<?>)root).getStubList();
         for (int i = 0; i < stubList.size(); i++) {
           StubBase<?> each = stubList.getCachedStub(i);
           PsiElement cachedPsi = each == null ? null : each.getCachedPsi();
@@ -238,8 +245,8 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
     return -1;
   }
 
-  private static ObjectStubTree<?> processError(final VirtualFile vFile, String message, @Nullable Exception e) {
-    LOG.error(message, e);
+  private static ObjectStubTree<?> processError(final VirtualFile vFile, @NotNull Exception e) {
+    LOG.error(e);
 
     AppUIExecutor.onWriteThread(ModalityState.nonModal()).later().submit(() -> {
       final Document doc = FileDocumentManager.getInstance().getCachedDocument(vFile);

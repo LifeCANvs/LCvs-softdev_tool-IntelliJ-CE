@@ -42,10 +42,6 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.*;
-import com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent;
-import com.intellij.openapi.vfs.newvfs.events.VFileDeleteEvent;
-import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
-import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent;
 import com.intellij.openapi.vfs.newvfs.impl.VirtualFileSystemEntry;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
@@ -67,7 +63,6 @@ import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.testFramework.*;
 import com.intellij.testFramework.builders.JavaModuleFixtureBuilder;
 import com.intellij.testFramework.fixtures.JavaCodeInsightFixtureTestCase;
-import com.intellij.tools.ide.metrics.benchmark.Benchmark;
 import com.intellij.util.*;
 import com.intellij.util.indexing.dependencies.IndexingRequestToken;
 import com.intellij.util.indexing.dependencies.IsFileChangedResult;
@@ -87,7 +82,9 @@ import com.intellij.util.io.PersistentMapImpl;
 import com.intellij.util.ref.GCUtil;
 import com.intellij.util.ref.GCWatcher;
 import com.intellij.util.ui.UIUtil;
+import com.intellij.workspaceModel.ide.impl.WorkspaceEntityLifecycleSupporterUtils;
 import com.siyeh.ig.JavaOverridingMethodUtil;
+import kotlin.Unit;
 import org.intellij.lang.annotations.Language;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -98,6 +95,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -526,7 +525,8 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
     FileDocumentManager.getInstance().saveAllDocuments();
     PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
 
-    //noinspection GroovyUnusedAssignment
+    //Let's help GC, even in interpreter mode
+    //noinspection UnusedAssignment
     psiFile = null;
     GCWatcher.tracking(getPsiManager().getFileManager().getCachedPsiFile(vFile))
       .ensureCollected(() -> UIUtil.dispatchAllInvocationEvents());
@@ -547,7 +547,7 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
         myFixture.addFileToProject("foo/Foo" + i + ".java", "package foo; class Foo" + i + " {}").getVirtualFile();
       assertNotNull(JavaPsiFacade.getInstance(getProject()).findClass("foo.Foo" + i, scope));
       String newName = "Bar" + i + ".java";
-      WriteCommandAction.runWriteCommandAction(getProject(), (ThrowableComputable<?,IOException>) () -> {
+      WriteCommandAction.runWriteCommandAction(getProject(), (ThrowableComputable<?, IOException>)() -> {
         file.rename(this, newName);
         return null;
       });
@@ -597,12 +597,12 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
 
   public void test_no_index_stamp_update_when_no_change_2() throws IOException {
     @Language("JAVA") String text0 = """
-            class Main111 {
-                static void staticMethod(Object o) {
-                  staticMethod(null);
-                }
-            }
-""";
+                  class Main111 {
+                      static void staticMethod(Object o) {
+                        staticMethod(null);
+                      }
+                  }
+      """;
     final VirtualFile vFile = myFixture.configureByText(JavaFileType.INSTANCE, text0).getVirtualFile();
     long stamp = FileBasedIndex.getInstance().getIndexModificationStamp(JavaNullMethodArgumentIndex.INDEX_ID, getProject());
     JavaNullMethodArgumentIndex.MethodCallData data = new JavaNullMethodArgumentIndex.MethodCallData("staticMethod", 0);
@@ -612,12 +612,12 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
     assertEquals(files.iterator().next(), vFile);
 
     @Language("JAVA") final String text = """
-            class Main {
-                static void staticMethod(Object o) {
-                  staticMethod(null);
-                }
-            }
-""";
+                  class Main {
+                      static void staticMethod(Object o) {
+                        staticMethod(null);
+                      }
+                  }
+      """;
     WriteAction.run(() -> VfsUtil.saveText(vFile, text));
     PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
 
@@ -953,39 +953,6 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
     }
   }
 
-  public void test_Vfs_Event_Processing_Performance() {
-    final String filename = "A.java";
-    myFixture.addFileToProject("foo/bar/" + filename, "class A {}");
-
-    Benchmark.newBenchmark("Vfs Event Processing By Index", () -> {
-      PsiFile[] files = FilenameIndex.getFilesByName(getProject(), filename, GlobalSearchScope.moduleScope(getModule()));
-      assertEquals(1, files.length);
-
-      VirtualFile file = files[0].getVirtualFile();
-
-      String filename2 = "B.java";
-      int max = 100000;
-      List<VFileEvent> eventList = new ArrayList<>(max);
-      int len = max / 2;
-
-      for (int i = 0; i < len; ++i) {
-        eventList.add(new VFilePropertyChangeEvent(null, file, VirtualFile.PROP_NAME, filename, filename2));
-        eventList.add(new VFilePropertyChangeEvent(null, file, VirtualFile.PROP_NAME, filename2, filename));
-        eventList.add(new VFileDeleteEvent(null, file));
-        eventList.add(new VFileCreateEvent(null, file.getParent(), filename, false, null, null, null));
-      }
-
-
-      AsyncFileListener.ChangeApplier applier =
-        ((FileBasedIndexImpl)FileBasedIndex.getInstance()).getChangedFilesCollector().prepareChange(eventList);
-      applier.beforeVfsChange();
-      applier.afterVfsChange();
-
-      files = FilenameIndex.getFilesByName(getProject(), filename, GlobalSearchScope.moduleScope(getModule()));
-      assertEquals(1, files.length);
-    }).start();
-  }
-
   public void test_class_file_in_src_content_isn_t_returned_from_index() throws IOException {
     PsiClass runnable =
       JavaPsiFacade.getInstance(getProject()).findClass(Runnable.class.getName(), GlobalSearchScope.allScope(getProject()));
@@ -1004,7 +971,7 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
     assertTrue(StubIndex.getElements(JavaStubIndexKeys.METHODS, "run", getProject(), projectScope, PsiMethod.class).isEmpty());
   }
 
-  public void test_text_todo_indexing_checks_for_cancellation() {
+  public void test_text_todo_indexing_checks_for_cancellation() throws ExecutionException, InterruptedException {
     TodoPattern pattern = new TodoPattern("(x+x+)+y", TodoAttributesUtil.createDefault(), true);
 
     TodoPattern[] oldPatterns = TodoConfiguration.getInstance().getTodoPatterns();
@@ -1018,14 +985,15 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
       final CountDownLatch progressStarted = new CountDownLatch(1);
       final ProgressIndicatorBase progressIndicatorBase = new ProgressIndicatorBase();
       final AtomicBoolean canceled = new AtomicBoolean(false);
-      ApplicationManager.getApplication().executeOnPooledThread(() -> {
+      Future<?> future = ApplicationManager.getApplication().executeOnPooledThread(() -> {
         try {
           progressStarted.await();
           TimeoutUtil.sleep(1000);
           progressIndicatorBase.cancel();
           TimeoutUtil.sleep(500);
           assertTrue(canceled.get());
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
           throw new AssertionError("Should not throw exceptions", e);
         }
       });
@@ -1039,6 +1007,7 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
           }
         }, progressIndicatorBase
       );
+      future.get();
     }
     finally {
       TodoConfiguration.getInstance().setTodoPatterns(oldPatterns);
@@ -1342,7 +1311,7 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
   private static void assertStubLanguage(@NotNull com.intellij.lang.Language expectedLanguage, @NotNull ObjectStubTree<?> stub) {
     ParserDefinition parserDefinition = LanguageParserDefinitions.INSTANCE.forLanguage(expectedLanguage);
     PsiFileStub fileStub = assertInstanceOf(stub.getPlainList().get(0), PsiFileStub.class);
-    assertEquals(parserDefinition.getFileNodeType(), fileStub.getType());
+    assertEquals(parserDefinition.getFileNodeType(), fileStub.getFileElementType());
   }
 
   @NotNull
@@ -1438,40 +1407,51 @@ public class IndexTest extends JavaCodeInsightFixtureTestCase {
     });
   }
 
-  public void test_indexes_should_be_wiped_after_scratch_removal() throws StorageException, IOException {
-    final VirtualFile file =
-      ScratchRootType.getInstance().createScratchFile(getProject(), "Foo.java", JavaLanguage.INSTANCE, "class Foo {}");
-    int fileId = ((VirtualFileWithId)file).getId();
-    deleteOnTearDown(file);
+  public void test_indexes_should_be_wiped_after_scratch_removal() {
+    WorkspaceEntityLifecycleSupporterUtils.INSTANCE.withAllEntitiesInWorkspaceFromProvidersDefinedOnEdt(getProject(), () -> {
+      final VirtualFile file =
+        ScratchRootType.getInstance().createScratchFile(getProject(), "Foo.java", JavaLanguage.INSTANCE, "class Foo {}");
+      int fileId = ((VirtualFileWithId)file).getId();
+      deleteOnTearDown(file);
 
-    FileBasedIndexImpl fileBasedIndex = (FileBasedIndexImpl)FileBasedIndex.getInstance();
-    ID<Integer, Void> trigramId = TrigramIndex.INDEX_ID;
+      FileBasedIndexImpl fileBasedIndex = (FileBasedIndexImpl)FileBasedIndex.getInstance();
+      ID<Integer, Void> trigramId = TrigramIndex.INDEX_ID;
 
-    fileBasedIndex.ensureUpToDate(trigramId, getProject(), GlobalSearchScope.everythingScope(getProject()));
-    assertNotEmpty(fileBasedIndex.getIndex(trigramId).getIndexedFileData(fileId).values());
+      fileBasedIndex.ensureUpToDate(trigramId, getProject(), GlobalSearchScope.everythingScope(getProject()));
+      try {
+        assertNotEmpty(fileBasedIndex.getIndex(trigramId).getIndexedFileData(fileId).values());
 
-    WriteCommandAction.runWriteCommandAction(getProject(), (ThrowableComputable<?, IOException>)() -> {
-      file.delete(null);
-      return null;
+        WriteCommandAction.runWriteCommandAction(getProject(), (ThrowableComputable<?, IOException>)() -> {
+          file.delete(null);
+          return null;
+        });
+        fileBasedIndex.ensureUpToDate(trigramId, getProject(), GlobalSearchScope.everythingScope(getProject()));
+        assertEmpty(fileBasedIndex.getIndex(trigramId).getIndexedFileData(fileId).values());
+      }
+      catch (StorageException | IOException e) {
+        throw new RuntimeException(e);
+      }
+      return Unit.INSTANCE;
     });
-    fileBasedIndex.ensureUpToDate(trigramId, getProject(), GlobalSearchScope.everythingScope(getProject()));
-    assertEmpty(fileBasedIndex.getIndex(trigramId).getIndexedFileData(fileId).values());
   }
 
   public void test_requestReindex() {
-    VirtualFile file = ScratchRootType.getInstance().createScratchFile(getProject(), "Foo.java", JavaLanguage.INSTANCE, "class Foo {}");
-    deleteOnTearDown(file);
+    WorkspaceEntityLifecycleSupporterUtils.INSTANCE.withAllEntitiesInWorkspaceFromProvidersDefinedOnEdt(getProject(), () -> {
+      VirtualFile file = ScratchRootType.getInstance().createScratchFile(getProject(), "Foo.java", JavaLanguage.INSTANCE, "class Foo {}");
+      deleteOnTearDown(file);
 
-    CountingFileBasedIndexExtension.registerCountingFileBasedIndex(getTestRootDisposable());
+      CountingFileBasedIndexExtension.registerCountingFileBasedIndex(getTestRootDisposable());
 
-    FileBasedIndex.getInstance().getFileData(CountingFileBasedIndexExtension.getINDEX_ID(), file, getProject());
-    assertTrue(CountingFileBasedIndexExtension.getCOUNTER().get() > 0);
+      FileBasedIndex.getInstance().getFileData(CountingFileBasedIndexExtension.getINDEX_ID(), file, getProject());
+      assertTrue(CountingFileBasedIndexExtension.getCOUNTER().get() > 0);
 
-    CountingFileBasedIndexExtension.getCOUNTER().set(0);
-    FileBasedIndex.getInstance().requestReindex(file);
+      CountingFileBasedIndexExtension.getCOUNTER().set(0);
+      FileBasedIndex.getInstance().requestReindex(file);
 
-    FileBasedIndex.getInstance().getFileData(CountingFileBasedIndexExtension.getINDEX_ID(), file, getProject());
-    assertTrue(CountingFileBasedIndexExtension.getCOUNTER().get() > 0);
+      FileBasedIndex.getInstance().getFileData(CountingFileBasedIndexExtension.getINDEX_ID(), file, getProject());
+      assertTrue(CountingFileBasedIndexExtension.getCOUNTER().get() > 0);
+      return Unit.INSTANCE;
+    });
   }
 
   public void test_modified_excluded_file_not_present_in_index() throws StorageException, IOException {

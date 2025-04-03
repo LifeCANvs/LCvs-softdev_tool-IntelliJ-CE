@@ -2,6 +2,9 @@
 package com.intellij.diff.impl.ui
 
 import com.intellij.diff.DiffEditorTitleCustomizer
+import com.intellij.diff.impl.DiffEditorTitleDetails.DetailsLabelProvider
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.FilePathSplittingPolicy
@@ -16,28 +19,40 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 
 class FilePathDiffTitleCustomizer(
-  private val displayedPath: String,
-  private val fullPath: @NlsSafe String = displayedPath,
-  private val label: JComponent? = null,
+  private val path: DetailsLabelProvider,
+  private val revisionLabel: DetailsLabelProvider?,
 ) : DiffEditorTitleCustomizer {
-  override fun getLabel(): JComponent {
-    val revisionWithPath = JPanel(GridBagLayout())
+  override fun getLabel(): JComponent =
+    Panel(revisionLabel = revisionLabel?.createComponent(), pathLabel = path.createComponent())
 
-    if (label != null) {
-      revisionWithPath.add(label, GridBagConstraints().apply {
+  private class Panel(
+    private val revisionLabel: JComponent?,
+    private val pathLabel: JComponent,
+  ) : JPanel(GridBagLayout()), Disposable {
+    init {
+      if (revisionLabel != null) {
+        add(revisionLabel, GridBagConstraints().apply {
+          fill = GridBagConstraints.BOTH
+          weightx = 0.0
+          gridx = 0
+          ipadx = scale(8)
+        })
+      }
+      add(pathLabel, GridBagConstraints().apply {
         fill = GridBagConstraints.BOTH
-        weightx = 0.0
-        gridx = 0
-        ipadx = scale(8)
+        weightx = 1.0;
+        gridx = 1
       })
     }
-    val pathLabel = DiffFilePathLabelWrapper(displayedPath, fullPath)
-    revisionWithPath.add(pathLabel, GridBagConstraints().apply {
-      fill = GridBagConstraints.BOTH
-      weightx = 1.0;
-      gridx = 1
-    })
-    return revisionWithPath
+
+    override fun dispose() {
+      if (revisionLabel is Disposable) {
+        Disposer.dispose(revisionLabel)
+      }
+      if (pathLabel is Disposable) {
+        Disposer.dispose(pathLabel)
+      }
+    }
   }
 }
 
@@ -53,6 +68,11 @@ class DiffFilePathLabelWrapper(val displayedPath: String, val fullPath: String) 
   override fun doLayout() {
     wrappedLabel.size = size
     wrappedLabel.doLayout()
+  }
+
+  override fun updateUI() {
+    super.updateUI()
+    invalidate()
   }
 
   override fun getMinimumSize(): Dimension = wrappedLabel.minimumSize

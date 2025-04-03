@@ -74,6 +74,7 @@ class JavaToJKTreeBuilder(
 
     fun buildTree(psi: PsiElement, saveImports: Boolean): JKTreeRoot? {
         nullabilityInfo = null
+        (psi.containingFile as? PsiJavaFile)?.let { collectNullabilityInfo(it) }
 
         return when (psi) {
             is PsiJavaFile -> psi.toJK()
@@ -293,9 +294,10 @@ class JavaToJKTreeBuilder(
 
         private fun PsiPrefixExpression.toJK(): JKExpression {
             val expression = operand.toJK()
-            return when (operationSign.tokenType) {
-                JavaTokenType.TILDE -> expression.callOn(symbolProvider.provideMethodSymbol("kotlin.Int.inv"))
-                else -> JKPrefixExpression(expression, createOperator(operationSign.tokenType, type))
+            return if (operationSign.tokenType == JavaTokenType.TILDE) {
+                expression.callOn(symbolProvider.provideMethodSymbol("kotlin.Int.inv"), expressionType = JKJavaPrimitiveType.INT)
+            } else {
+                JKPrefixExpression(expression, createOperator(operationSign.tokenType, type))
             }
         }
 
@@ -1087,7 +1089,11 @@ class JavaToJKTreeBuilder(
 
                 is PsiLabeledStatement -> {
                     val (labels, statement) = collectLabels()
-                    JKLabeledExpression(statement.toJK(), labels.map { JKNameIdentifier(it.text) }).asStatement()
+                    if (statement == this) {
+                        JKEmptyStatement()
+                    } else {
+                        JKLabeledExpression(statement.toJK(), labels.map { JKNameIdentifier(it.text) }).asStatement()
+                    }
                 }
 
                 is PsiEmptyStatement -> JKEmptyStatement()
@@ -1158,8 +1164,6 @@ class JavaToJKTreeBuilder(
     }
 
     private fun PsiJavaFile.toJK(): JKFile {
-        collectNullabilityInfo(this)
-
         return JKFile(
             packageStatement?.toJK() ?: JKPackageDeclaration(JKNameIdentifier("")),
             importList.toJK(saveImports = false),
@@ -1169,12 +1173,11 @@ class JavaToJKTreeBuilder(
 
     /**
      * See also [org.jetbrains.kotlin.nj2k.conversions.NullabilityConversion]
-     * TODO support not only PsiJavaFile but any PsiElement
      */
-    private fun collectNullabilityInfo(element: PsiJavaFile) {
+    private fun collectNullabilityInfo(file: PsiJavaFile) {
         val nullityInferrer = J2KNullityInferrer()
         try {
-            nullityInferrer.collect(element)
+            nullityInferrer.collect(file)
         } catch (e: ProcessCanceledException) {
             throw e
         } catch (t: Throwable) {

@@ -12,7 +12,6 @@ import com.intellij.execution.ui.UIExperiment
 import com.intellij.execution.ui.layout.impl.RunnerLayoutSettings
 import com.intellij.ide.DataManager
 import com.intellij.ide.IdeBundle
-import com.intellij.ide.impl.DataManagerImpl
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.ex.ActionUtil
@@ -70,8 +69,14 @@ import training.learn.LearnBundle
 import training.learn.LessonsBundle
 import training.learn.course.Lesson
 import training.learn.lesson.LessonManager
-import training.ui.*
+import training.ui.LEARN_TOOL_WINDOW_ID
+import training.ui.LearningUiHighlightingManager
+import training.ui.LearningUiManager
+import training.ui.LearningUiUtil
 import training.ui.LearningUiUtil.findComponentWithTimeout
+import training.ui.LessonMessagePane
+import training.ui.UISettings
+import training.ui.showOnboardingFeedbackNotification
 import training.util.LessonEndInfo
 import training.util.getActionById
 import training.util.learningToolWindow
@@ -82,7 +87,7 @@ import java.awt.Rectangle
 import java.awt.Window
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
-import java.util.*
+import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import javax.swing.JComponent
@@ -241,7 +246,7 @@ object LessonUtil {
     EditorModificationUtil.setReadOnlyHint(editor, LearnBundle.message("learn.task.read.only.hint"))
   }
 
-  fun actionName(actionId: String): @NlsActions.ActionText String {
+  fun actionName(@Language("devkit-action-id") actionId: String): @NlsActions.ActionText String {
     val name = getActionById(actionId).templatePresentation.text?.replace("...", "")
     return "<strong>${name}</strong>"
   }
@@ -269,7 +274,7 @@ object LessonUtil {
 
   fun rawShift() = rawKeyStroke(KeyStroke.getKeyStroke("SHIFT"))
 
-  val breakpointXRange: (width: Int) -> IntRange = { IntRange(14, it - 30) }
+  val breakpointXRange: (width: Int) -> IntRange = { IntRange(5, it - 38) }
 
   fun LessonContext.highlightBreakpointGutter(xRange: (width: Int) -> IntRange = breakpointXRange,
                                               logicalPosition: () -> LogicalPosition
@@ -477,7 +482,7 @@ fun LessonContext.highlightOldDebugActionsToolbar(highlightInside: Boolean = fal
 }
 
 fun TaskContext.highlightToolbarWithAction(place: String,
-                                           actionId: String,
+                                           @Language("devkit-action-id") actionId: String,
                                            highlightInside: Boolean,
                                            usePulsation: Boolean,
                                            clearPreviousHighlights: Boolean = true) {
@@ -655,7 +660,7 @@ fun LessonContext.restoreChangedSettingsInformer(restoreSettings: () -> Unit) {
   }
 }
 
-fun LessonContext.highlightButtonById(actionId: String,
+fun LessonContext.highlightButtonById(@Language("devkit-action-id") actionId: String,
                                       highlightInside: Boolean = true,
                                       usePulsation: Boolean = true,
                                       clearHighlights: Boolean = true,
@@ -800,7 +805,7 @@ fun LessonContext.sdkConfigurationTasks() {
 
 fun TaskRuntimeContext.addNewRunConfigurationFromContext(editConfiguration: (RunConfiguration) -> Unit = {}) {
   val runManager = RunManager.getInstance(project) as RunManagerImpl
-  val dataContext = DataManagerImpl.getInstance().getDataContext(editor.component)
+  val dataContext = DataManager.getInstance().getDataContext(editor.component)
   val configurationsFromContext = ConfigurationContext.getFromContext(dataContext, ActionPlaces.UNKNOWN).configurationsFromContext
   val configurationSettings = configurationsFromContext?.singleOrNull() ?.configurationSettings ?: return
   val runConfiguration = configurationSettings.configuration.clone()

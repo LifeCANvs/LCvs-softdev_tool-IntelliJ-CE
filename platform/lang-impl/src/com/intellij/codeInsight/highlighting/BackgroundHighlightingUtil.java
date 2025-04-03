@@ -11,6 +11,7 @@ import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.fileTypes.BinaryFileTypeDecompilers;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Trinity;
 import com.intellij.psi.PsiBinaryFile;
 import com.intellij.psi.PsiCompiledFile;
@@ -22,11 +23,18 @@ import com.intellij.util.TriConsumer;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.ui.UIUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.function.BiFunction;
 
+@ApiStatus.Internal
 public final class BackgroundHighlightingUtil {
+  /**
+   * Add this key to the {@link Editor}'s user data to prohibit running all background highlighting activities.
+   */
+  public static final Key<Boolean> IGNORE_EDITOR = Key.create("BackgroundHighlightingUtil.IGNORE_EDITOR");
+
   /**
    * start background thread where find injected fragment at the caret position,
    * invoke {@code backgroundProcessor} on that fragment and invoke later {@code edtProcessor} in EDT,
@@ -78,7 +86,10 @@ public final class BackgroundHighlightingUtil {
 
   static boolean isValidEditor(@NotNull Editor editor) {
     Project editorProject = editor.getProject();
-    return editorProject != null && !editorProject.isDisposed() && !editor.isDisposed() &&
+    return editorProject != null &&
+           !editorProject.isDisposed() &&
+           !editor.isDisposed() &&
+           !Boolean.TRUE.equals(editor.getUserData(IGNORE_EDITOR)) &&
            UIUtil.isShowing(editor.getContentComponent());
   }
 

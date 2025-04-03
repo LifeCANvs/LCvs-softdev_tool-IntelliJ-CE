@@ -1,5 +1,7 @@
 <idea-plugin xmlns:xi="http://www.w3.org/2001/XInclude">
 
+  <module value="com.intellij.modules.kotlin.k2"/>
+
   <dependencies>
     <plugin id="com.intellij.modules.platform"/>
     <plugin id="com.intellij.modules.java"/>
@@ -37,11 +39,24 @@
     <xi:fallback/>
   </xi:include>
 
+  <xi:include href="command-completion-k2.xml">
+    <xi:fallback/>
+  </xi:include>
+
   <extensions defaultExtensionNs="org.jetbrains.kotlin">
-
-    <supportAvailability implementation="org.jetbrains.kotlin.idea.highlighter.ScriptingSupportAvailability"/>
-
     <scriptAdditionalIdeaDependenciesProvider implementation="org.jetbrains.kotlin.idea.core.script.ModuleScriptAdditionalIdeaDependenciesProvider"/>
+
+    <bundledFirCompilerPluginProvider
+            implementation="org.jetbrains.kotlin.idea.fir.extensions.MainByRegistrarContentBundledFirCompilerPluginProvider"
+            order="first"/>
+
+    <bundledFirCompilerPluginProvider
+            implementation="org.jetbrains.kotlin.idea.fir.extensions.FromKotlinDistForIdeByNameFallbackBundledFirCompilerPluginProvider"
+            order="last"/>
+
+    <firCompilerPluginConfigurationProvider
+            implementation="org.jetbrains.kotlin.idea.fir.extensions.DefaultParcelizeFirCompilerPluginConfigurationForIdeProvider" 
+            order="last"/>
   </extensions>
 
   <extensions defaultExtensionNs="org.jetbrains.uast">
@@ -51,6 +66,8 @@
   </extensions>
 
   <extensions defaultExtensionNs="com.intellij">
+    <resolveScopeEnlarger implementation="org.jetbrains.kotlin.idea.base.analysis.builtins.KotlinBuiltInsResolveScopeEnlarger" />
+
     <applicationActivity implementation="org.jetbrains.kotlin.idea.base.plugin.K2UnsupportedPluginsNotificationActivity"/>
     <notificationGroup id="Plugins Incompatible With Kotlin Plugin in K2 Mode" displayType="BALLOON" bundle="messages.KotlinBasePluginBundle" key="plugins.incompatible.with.k2.title"/>
 
@@ -58,7 +75,7 @@
 
     <projectService serviceInterface="org.jetbrains.kotlin.analysis.api.platform.projectStructure.KotlinCompilerPluginsProvider"
                     serviceImplementation="org.jetbrains.kotlin.idea.fir.extensions.KtCompilerPluginsProviderIdeImpl"/>
-    <compilableFileTypesProvider implementation="org.jetbrains.kotlin.idea.compiler.KotlinCompilableFileTypesProvider" />
+    <compilableFileTypesProvider implementation="org.jetbrains.kotlin.idea.jvm.shared.compiler.KotlinCompilableFileTypesProvider" />
     <!-- fir-specific -->
     <applicationService serviceInterface="org.jetbrains.kotlin.idea.base.plugin.KotlinPluginModeProvider"
                         serviceImplementation="org.jetbrains.kotlin.idea.fir.plugin.K2KotlinPluginModeProvider"/>
@@ -80,11 +97,6 @@
                  defaultValue="true"
                  restartRequired="false"/>
 
-    <registryKey key="kotlin.k2.scripting.enabled"
-                 description="Enable scripting support in the K2 mode"
-                 defaultValue="true"
-                 restartRequired="true"/>
-
     <registryKey key="kotlin.k2.only.bundled.compiler.plugins.enabled"
                  description="Allow only bundled K2 compiler plugins to be used"
                  defaultValue="true"
@@ -103,6 +115,15 @@
                             id="KotlinCompletionContributor"
                             order="first"
                             implementationClass="org.jetbrains.kotlin.idea.completion.KotlinFirCompletionContributor"/>
+
+    <completion.contributor language="kotlin"
+                            order="first, after KotlinDumbCompletionContributor"
+                            implementationClass="org.jetbrains.kotlin.idea.completion.impl.k2.KotlinChainCompletionContributor"/>
+
+    <registryKey key="kotlin.k2.chain.completion.enabled"
+                 description="Allow chained completion items in Kotlin"
+                 defaultValue="false"
+                 restartRequired="true"/>
 
     <weigher key="proximity" implementationClass="org.jetbrains.kotlin.idea.completion.implCommon.weighers.PreferKotlinxLibrariesWeigher"
              id="kotlin.preferKotlinx"
@@ -140,9 +161,6 @@
     <library.type implementation="org.jetbrains.kotlin.idea.base.platforms.library.JSLibraryType"/>
     <library.type implementation="org.jetbrains.kotlin.idea.base.platforms.library.WasmJsLibraryType"/>
     <library.type implementation="org.jetbrains.kotlin.idea.base.platforms.library.WasmWasiLibraryType"/>
-
-    <projectService serviceInterface="org.jetbrains.kotlin.resolve.jvm.modules.JavaModuleResolver"
-                    serviceImplementation="org.jetbrains.kotlin.idea.modules.IdeJavaModuleResolver"/>
   </extensions>
 
 
@@ -175,10 +193,6 @@
     <lang.importOptimizer language="kotlin" implementationClass="org.jetbrains.kotlin.idea.imports.KotlinFirImportOptimizer"/>
 
     <applicationService
-            serviceInterface="org.jetbrains.kotlin.analysis.decompiled.light.classes.origin.KotlinDeclarationInCompiledFileSearcher"
-            serviceImplementation="org.jetbrains.kotlin.analysis.decompiled.light.classes.fe10.KotlinDeclarationInCompiledFileSearcherFE10Impl"/>
-
-    <applicationService
             serviceInterface="org.jetbrains.kotlin.idea.inspections.suppress.KotlinSuppressionChecker"
             serviceImplementation="org.jetbrains.kotlin.idea.inspections.suppress.KotlinK2SuppressionChecker"/>
 
@@ -189,7 +203,7 @@
   </extensions>
 
   <extensions defaultExtensionNs="com.intellij">
-    <buildProcess.parametersProvider implementation="org.jetbrains.kotlin.idea.compiler.configuration.KotlinBuildProcessParametersProvider"/>
+    <buildProcess.parametersProvider implementation="org.jetbrains.kotlin.idea.jvm.shared.compiler.configuration.KotlinBuildProcessParametersProvider"/>
 
     <configurationType implementation="org.jetbrains.kotlin.idea.run.KotlinRunConfigurationType"/>
     <configurationType implementation="org.jetbrains.kotlin.idea.run.script.standalone.KotlinStandaloneScriptRunConfigurationType"/>
@@ -203,6 +217,7 @@
     <module name="kotlin.base.fir.analysis-api-platform"/>
     <module name="kotlin.base.fir.code-insight"/>
     <module name="kotlin.base.fir.project-structure"/>
+    <module name="kotlin.base.fir.scripting"/>
 
     <module name="kotlin.copyright"/>
     <module name="kotlin.coverage"/>
@@ -221,6 +236,9 @@
     <module name="kotlin.gradle.code-insight-groovy"/>
     <module name="kotlin.gradle.code-insight-toml"/>
     <module name="kotlin.gradle.gradle-java"/>
+    <module name="kotlin.gradle.gradle-java.k2"/>
+    <module name="kotlin.gradle.scripting.shared"/>
+    <module name="kotlin.gradle.scripting.k2"/>
 
     <module name="kotlin.onboarding"/>
     <module name="kotlin.onboarding.gradle"/>
@@ -233,6 +251,9 @@
     <module name="kotlin.features-trainer"/>
 
     <module name="kotlin.jvm-decompiler"/>
+
+    <module name="kotlin.jvm.shared"/>
+    <module name="kotlin.jvm.k2"/>
 
     <module name="kotlin.code-insight.intentions.shared"/>
     <module name="kotlin.code-insight.inspections.shared"/>
@@ -275,6 +296,7 @@
     <module name="kotlin.base.injection"/>
 
     <module name="kotlin.j2k.k2"/>
+    <module name="kotlin.k2.internal"/>
 
     <module name="kotlin.performanceExtendedPlugin"/>
   </content>

@@ -2,169 +2,81 @@
 package git4idea.branch
 
 import com.intellij.dvcs.branch.GroupingKey
-import com.intellij.testFramework.UsefulTestCase
+import com.intellij.openapi.project.Project
+import com.intellij.testFramework.LightPlatformTestCase
 import com.intellij.ui.FilteringSpeedSearch
 import com.intellij.ui.tree.TreeTestUtil
 import com.intellij.ui.treeStructure.Tree
+import com.intellij.util.ThreeState
+import git4idea.GitBranch
 import git4idea.GitLocalBranch
 import git4idea.GitStandardRemoteBranch
+import git4idea.GitTag
 import git4idea.repo.GitRemote
+import git4idea.repo.GitRepository
 import git4idea.ui.branch.dashboard.*
 import junit.framework.TestCase.assertEquals
 
-class GitBranchesTreeTest: UsefulTestCase() {
-  fun `test another branch is not selected if current matches search field`() = branchesTreeTest {
-    setState(localBranches = listOf("main-123", "main"), remoteBranches = listOf("main"))
-    selectBranch("main-123")
-
-    // Remote node collapsed
-    val expectedBeforeTyping = """
-      |-ROOT
-      | HEAD_NODE
-      | -LOCAL_ROOT
-      |  BRANCH:main
-      |  [BRANCH:main-123]
-      | +REMOTE_ROOT
-    """.trimMargin()
-    assertTree(expectedBeforeTyping)
-
-    // Remote node expanded
-    val expectedDuringTyping = """
-      |-ROOT
-      | HEAD_NODE
-      | -LOCAL_ROOT
-      |  BRANCH:main
-      |  [BRANCH:main-123]
-      | -REMOTE_ROOT
-      |  -GROUP_NODE:origin
-      |   BRANCH:origin/main
-    """.trimMargin()
-
-    "mai".toCharArray().forEach { char ->
-      searchTextField.text += char
-      assertTree(expectedDuringTyping)
-    }
-  }
-
-  fun `test selection is changed to match search field`() = branchesTreeTest {
-    setState(localBranches = listOf("1", "2", "3", "main"), remoteBranches = listOf("main"))
-    selectBranch("1")
-
-    searchTextField.text = "main"
-    assertTree("""
-      |-ROOT
-      | HEAD_NODE
-      | -LOCAL_ROOT
-      |  [BRANCH:main]
-      | -REMOTE_ROOT
-      |  -GROUP_NODE:origin
-      |   BRANCH:origin/main
-    """.trimMargin())
-  }
-
-  fun `test selection is updated on exact match`() = branchesTreeTest {
-    setState(localBranches = listOf("main-123", "main"), remoteBranches = listOf("main"))
-    selectBranch("main-123")
-
-    searchTextField.text = "mai"
-    val expectedSelectionNotUpdated = """
-      |-ROOT
-      | HEAD_NODE
-      | -LOCAL_ROOT
-      |  BRANCH:main
-      |  [BRANCH:main-123]
-      | -REMOTE_ROOT
-      |  -GROUP_NODE:origin
-      |   BRANCH:origin/main
-    """.trimMargin()
-    assertTree(expectedSelectionNotUpdated)
-
-    searchTextField.text = "main"
-    val expectedSelectionUpdated = """
-      |-ROOT
-      | HEAD_NODE
-      | -LOCAL_ROOT
-      |  [BRANCH:main]
-      |  BRANCH:main-123
-      | -REMOTE_ROOT
-      |  -GROUP_NODE:origin
-      |   BRANCH:origin/main
-    """.trimMargin()
-    assertTree(expectedSelectionUpdated)
-  }
-
-  fun `test exact match of branch name and group node`() = branchesTreeTest {
-    setState(localBranches = listOf("main/123", "main"), remoteBranches = listOf())
-    selectBranch("main/123")
-    searchTextField.text = "main"
-    assertTree("""
-      |-ROOT
-      | HEAD_NODE
-      | -LOCAL_ROOT
-      |  -GROUP_NODE:main
-      |   BRANCH:main/123
-      |  [BRANCH:main]
-    """.trimMargin())
-  }
-
-  fun `test selection of remote`() = branchesTreeTest {
-    setState(localBranches = listOf("main"), remoteBranches = listOf("main", "ish/242", "a/242/b", "242", "242/fix"))
-
-    searchTextField.text = "242"
-    assertTree("""
-      |-ROOT
-      | HEAD_NODE
-      | LOCAL_ROOT
-      | -REMOTE_ROOT
-      |  -GROUP_NODE:origin
-      |   -GROUP_NODE:242
-      |    BRANCH:origin/242/fix
-      |   -GROUP_NODE:a
-      |    -GROUP_NODE:242
-      |     BRANCH:origin/a/242/b
-      |   -GROUP_NODE:ish
-      |    BRANCH:origin/ish/242
-      |   [BRANCH:origin/242]
-    """.trimMargin())
-  }
-
-  fun `test selection of remote with no grouping`() = branchesTreeTest(groupByDirectories = false) {
-    setState(localBranches = listOf("main"), remoteBranches = listOf("main", "ish/242", "a/242/b", "242", "242/fix"))
-
-    searchTextField.text = "242"
-    assertTree("""
-     |-ROOT
-     | HEAD_NODE
-     | LOCAL_ROOT
-     | -REMOTE_ROOT
-     |  [BRANCH:origin/242]
-     |  BRANCH:origin/242/fix
-     |  BRANCH:origin/a/242/b
-     |  BRANCH:origin/ish/242
-    """.trimMargin())
-  }
+abstract class GitBranchesTreeTest: LightPlatformTestCase() {
+  internal fun branchesTreeTest(groupByDirectories: Boolean = true, groupByRepos: Boolean = false, test: GitBranchesTreeTestContext.() -> Unit) =
+    with(GitBranchesTreeTestContext(groupByDirectories, groupByRepos, project)) { test() }
 }
 
-private fun branchesTreeTest(groupByDirectories: Boolean = true, test: TestContext.() -> Unit) = with(TestContext(groupByDirectories)) { test() }
-
-private class TestContext(groupByDirectories: Boolean) {
+internal class GitBranchesTreeTestContext(private val groupByDirectories: Boolean, private val groupByRepos: Boolean, private val project: Project) {
   val tree = Tree()
-  val branchesTree = GitBranchesTestTree(tree, groupByDirectories = groupByDirectories)
+  private val model = object : BranchesTreeModelBase() {
+    override val groupingConfig: Map<GroupingKey, Boolean> = buildMap {
+      this[GroupingKey.GROUPING_BY_REPOSITORY] = groupByRepos
+      this[GroupingKey.GROUPING_BY_DIRECTORY] = groupByDirectories
+    }
+
+    fun setRefs(refs: RefsCollection, onlyMy: Boolean) {
+      setTree(NodeDescriptorsModel.buildTreeNodes(
+        project,
+        refs,
+        if (onlyMy) { ref -> (ref as? BranchInfo)?.isMy == ThreeState.YES } else { _ -> true },
+        groupingConfig,
+      ))
+    }
+  }
+  val branchesTree = GitBranchesTestTree()
   val searchTextField = branchesTree.installSearchField()
 
   fun assertTree(expected: String) {
-    assertEquals("Search field - ${searchTextField.text}", expected.trim(), TreeTestUtil(tree).setSelection(true).toString().trim())
+    assertEquals("Tree state doesn't match expected. Search field - '${searchTextField.text}'", expected.trim(), printTree())
   }
 
-  fun setState(localBranches: Collection<String>, remoteBranches: Collection<String>) {
+  fun printTree(): String = TreeTestUtil(tree).setSelection(true).toString().trim()
+
+  fun setState(
+    localBranches: Collection<String>,
+    remoteBranches: Collection<String>,
+    tags: Collection<String> = emptyList(),
+    expanded: Boolean = false,
+  ) {
     val local = localBranches.map {
-      BranchInfo(GitLocalBranch(it), isLocal = true, isCurrent = false, isFavorite = false, repositories = emptyList())
+      BranchInfo(GitLocalBranch(it), isCurrent = false, isFavorite = false, repositories = emptyList())
     }
     val remote = remoteBranches.map {
-      BranchInfo(GitStandardRemoteBranch(ORIGIN, it), isLocal = false, isCurrent = false, isFavorite = false, repositories = emptyList())
+      BranchInfo(GitStandardRemoteBranch(ORIGIN, it), isCurrent = false, isFavorite = false, repositories = emptyList())
     }
-    branchesTree.refreshNodeDescriptorsModel(localBranches = local, remoteBranches = remote, showOnlyMy = false)
-    branchesTree.searchModel.updateStructure()
+    val tags = tags.map {
+      TagInfo(GitTag(it), isCurrent = false, isFavorite = false, repositories = emptyList())
+    }
+    setRawState(local, remote, tags, expanded)
+  }
+
+  fun setRawState(
+    localBranches: Collection<BranchInfo>,
+    remoteBranches: Collection<BranchInfo>,
+    tags: Collection<TagInfo> = emptyList(),
+    expanded: Boolean = false,
+  ) {
+    model.setRefs(RefsCollection(localBranches.toMutableSet(), remoteBranches.toMutableSet(), tags.toMutableSet()),
+                  onlyMy = false)
+    if (expanded) {
+      TreeTestUtil(tree).expandAll()
+    }
   }
 
   fun selectBranch(branch: String) {
@@ -178,22 +90,31 @@ private class TestContext(groupByDirectories: Boolean) {
     throw AssertionError("Node with text $branch not found")
   }
 
+  internal inner class GitBranchesTestTree : FilteringBranchesTreeBase(model, tree) {
+    @Suppress("UNCHECKED_CAST")
+    val speedSearch: FilteringSpeedSearch<BranchTreeNode, BranchNodeDescriptor>
+      get() = searchModel.speedSearch as FilteringSpeedSearch<BranchTreeNode, BranchNodeDescriptor>
+
+    init {
+      model.addListener(object : BranchesTreeModel.Listener {
+        override fun onTreeChange() {
+          searchModel.updateStructure()
+        }
+      })
+      searchModel.updateStructure()
+    }
+  }
+
   companion object {
-    private val ORIGIN_URLS = listOf("ssh://origin")
-    private val ORIGIN = GitRemote(GitRemote.ORIGIN, ORIGIN_URLS, ORIGIN_URLS, listOf(), listOf())
+    val ORIGIN_URLS = listOf("ssh://origin")
+    val ORIGIN = GitRemote(GitRemote.ORIGIN, ORIGIN_URLS, ORIGIN_URLS, listOf(), listOf())
+    val NOT_ORIGIN = GitRemote("not-origin", ORIGIN_URLS, ORIGIN_URLS, listOf(), listOf())
+
+    fun branchInfo(branch: GitBranch, isCurrent: Boolean = false, isFavorite: Boolean = false, repositories: List<GitRepository> = emptyList()) =
+      BranchInfo(branch, isCurrent, isFavorite, repositories = repositories)
+
+    fun tagInfo(tag: GitTag, isCurrent: Boolean = false, isFavorite: Boolean = false, repositories: List<GitRepository> = emptyList()) =
+      TagInfo(tag, isCurrent, isFavorite, repositories)
   }
 }
 
-internal class GitBranchesTestTree(
-  tree: Tree,
-  groupByDirectories: Boolean,
-): FilteringBranchesTreeBase(tree, BranchTreeNode(BranchNodeDescriptor(NodeType.ROOT))) {
-  @Suppress("UNCHECKED_CAST")
-  val speedSearch: FilteringSpeedSearch<BranchTreeNode, BranchNodeDescriptor>
-    get() = searchModel.speedSearch as FilteringSpeedSearch<BranchTreeNode, BranchNodeDescriptor>
-
-  override val groupingConfig: Map<GroupingKey, Boolean> = buildMap {
-    this[GroupingKey.GROUPING_BY_REPOSITORY] = false
-    this[GroupingKey.GROUPING_BY_DIRECTORY] = groupByDirectories
-  }
-}

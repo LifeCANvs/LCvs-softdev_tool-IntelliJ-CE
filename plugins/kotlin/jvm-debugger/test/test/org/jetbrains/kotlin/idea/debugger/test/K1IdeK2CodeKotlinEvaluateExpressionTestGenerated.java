@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.debugger.test;
 
@@ -318,48 +318,55 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
 
             @RunWith(JUnit3RunnerWithInners.class)
             @TestMetadata("testData/evaluation/singleBreakpoint/coroutines/stepInto")
-            public abstract static class StepInto extends AbstractK1IdeK2CodeKotlinEvaluateExpressionTest {
-                @RunWith(JUnit3RunnerWithInners.class)
-                @TestMetadata("testData/evaluation/singleBreakpoint/coroutines/stepInto")
-                public static class Uncategorized extends AbstractK1IdeK2CodeKotlinEvaluateExpressionTest {
-                    @java.lang.Override
-                    @org.jetbrains.annotations.NotNull
-                    public final KotlinPluginMode getPluginMode() {
-                        return KotlinPluginMode.K1;
-                    }
-
-                    private void runTest(String testDataFilePath) throws Exception {
-                        KotlinTestUtils.runTest(this::doSingleBreakpointTest, this, TargetBackend.JVM_IR_WITH_IR_EVALUATOR, testDataFilePath);
-                    }
-
-                    @TestMetadata("stepIntoMethodWithAndWithoutSwitcher.kt")
-                    public void testStepIntoMethodWithAndWithoutSwitcher() throws Exception {
-                        runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/stepIntoMethodWithAndWithoutSwitcher.kt");
-                    }
-
-                    @TestMetadata("stepIntoSuspendLambda.kt")
-                    public void testStepIntoSuspendLambda() throws Exception {
-                        runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/stepIntoSuspendLambda.kt");
-                    }
+            public static class StepInto extends AbstractK1IdeK2CodeKotlinEvaluateExpressionTest {
+                @java.lang.Override
+                @org.jetbrains.annotations.NotNull
+                public final KotlinPluginMode getPluginMode() {
+                    return KotlinPluginMode.K1;
                 }
 
-                @RunWith(JUnit3RunnerWithInners.class)
-                @TestMetadata("testData/evaluation/singleBreakpoint/coroutines/stepInto/unsupported")
-                public static class Unsupported extends AbstractK1IdeK2CodeKotlinEvaluateExpressionTest {
-                    @java.lang.Override
-                    @org.jetbrains.annotations.NotNull
-                    public final KotlinPluginMode getPluginMode() {
-                        return KotlinPluginMode.K1;
-                    }
+                private void runTest(String testDataFilePath) throws Exception {
+                    KotlinTestUtils.runTest(this::doSingleBreakpointTest, this, TargetBackend.JVM_IR_WITH_IR_EVALUATOR, testDataFilePath);
+                }
 
-                    private void runTest(String testDataFilePath) throws Exception {
-                        KotlinTestUtils.runTest(this::doSingleBreakpointTest, this, TargetBackend.JVM_IR_WITH_IR_EVALUATOR, testDataFilePath);
-                    }
+                @TestMetadata("smartStepIntoAsyncBasic.kt")
+                public void testSmartStepIntoAsyncBasic() throws Exception {
+                    runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/smartStepIntoAsyncBasic.kt");
+                }
 
-                    @TestMetadata("stepIntoCoroutineScope.kt")
-                    public void testStepIntoCoroutineScope() throws Exception {
-                        runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/unsupported/stepIntoCoroutineScope.kt");
-                    }
+                @TestMetadata("smartStepIntoCoroutineScope.kt")
+                public void testSmartStepIntoCoroutineScope() throws Exception {
+                    runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/smartStepIntoCoroutineScope.kt");
+                }
+
+                @TestMetadata("smartStepIntoInlineSuspendLambda.kt")
+                public void testSmartStepIntoInlineSuspendLambda() throws Exception {
+                    runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/smartStepIntoInlineSuspendLambda.kt");
+                }
+
+                @TestMetadata("smartStepIntoLaunchBasic.kt")
+                public void testSmartStepIntoLaunchBasic() throws Exception {
+                    runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/smartStepIntoLaunchBasic.kt");
+                }
+
+                @TestMetadata("smartStepIntoSuspendLambda.kt")
+                public void testSmartStepIntoSuspendLambda() throws Exception {
+                    runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/smartStepIntoSuspendLambda.kt");
+                }
+
+                @TestMetadata("smartStepIntoWithContextBasic.kt")
+                public void testSmartStepIntoWithContextBasic() throws Exception {
+                    runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/smartStepIntoWithContextBasic.kt");
+                }
+
+                @TestMetadata("stepIntoMethodWithAndWithoutSwitcher.kt")
+                public void testStepIntoMethodWithAndWithoutSwitcher() throws Exception {
+                    runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/stepIntoMethodWithAndWithoutSwitcher.kt");
+                }
+
+                @TestMetadata("stepIntoSuspendLambda.kt")
+                public void testStepIntoSuspendLambda() throws Exception {
+                    runTest("testData/evaluation/singleBreakpoint/coroutines/stepInto/stepIntoSuspendLambda.kt");
                 }
             }
 
@@ -516,6 +523,16 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
                     @TestMetadata("stepOverLaunch.kt")
                     public void testStepOverLaunch() throws Exception {
                         runTest("testData/evaluation/singleBreakpoint/coroutines/stepOver/stepOverLaunch.kt");
+                    }
+
+                    @TestMetadata("stepOverRunBlockingInsideCoroutine.kt")
+                    public void testStepOverRunBlockingInsideCoroutine() throws Exception {
+                        runTest("testData/evaluation/singleBreakpoint/coroutines/stepOver/stepOverRunBlockingInsideCoroutine.kt");
+                    }
+
+                    @TestMetadata("stepOverSuspendCallAndStopAtFirstLineBug.kt")
+                    public void testStepOverSuspendCallAndStopAtFirstLineBug() throws Exception {
+                        runTest("testData/evaluation/singleBreakpoint/coroutines/stepOver/stepOverSuspendCallAndStopAtFirstLineBug.kt");
                     }
 
                     @TestMetadata("stepOverThroughAllMethods.kt")
@@ -853,6 +870,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
             @TestMetadata("delegatedPropertyInClassWoRenderer.kt")
             public void testDelegatedPropertyInClassWoRenderer() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/frame/delegatedPropertyInClassWoRenderer.kt");
+            }
+
+            @TestMetadata("evaluatableGetters.kt")
+            public void testEvaluatableGetters() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/frame/evaluatableGetters.kt");
             }
 
             @TestMetadata("frameAnonymousObject.kt")
@@ -1722,6 +1744,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
                 runTest("testData/evaluation/singleBreakpoint/capturedVariablesInSamLambda.kt");
             }
 
+            @TestMetadata("checkCastOtherClassloader.kt")
+            public void testCheckCastOtherClassloader() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/checkCastOtherClassloader.kt");
+            }
+
             @TestMetadata("classFromAnotherPackage.kt")
             public void testClassFromAnotherPackage() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/classFromAnotherPackage.kt");
@@ -1942,6 +1969,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
                 runTest("testData/evaluation/singleBreakpoint/internalFunctionEvaluate.kt");
             }
 
+            @TestMetadata("internalMembersInInlinedLambda.kt")
+            public void testInternalMembersInInlinedLambda() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/internalMembersInInlinedLambda.kt");
+            }
+
             @TestMetadata("internalProperty.kt")
             public void testInternalProperty() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/internalProperty.kt");
@@ -1950,6 +1982,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
             @TestMetadata("javaStaticMethods.kt")
             public void testJavaStaticMethods() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/javaStaticMethods.kt");
+            }
+
+            @TestMetadata("jvmNameConstEvaluation.kt")
+            public void testJvmNameConstEvaluation() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/jvmNameConstEvaluation.kt");
             }
 
             @TestMetadata("kClass.kt")
@@ -2057,6 +2094,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
                 runTest("testData/evaluation/singleBreakpoint/localFunctionsWithReceivers.kt");
             }
 
+            @TestMetadata("localInsideLambda.kt")
+            public void testLocalInsideLambda() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/localInsideLambda.kt");
+            }
+
             @TestMetadata("localVariables.kt")
             public void testLocalVariables() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/localVariables.kt");
@@ -2065,6 +2107,16 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
             @TestMetadata("methodWithBreakpoint.kt")
             public void testMethodWithBreakpoint() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/methodWithBreakpoint.kt");
+            }
+
+            @TestMetadata("multifileClassMembers.kt")
+            public void testMultifileClassMembers() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/multifileClassMembers.kt");
+            }
+
+            @TestMetadata("multifileClassMembers-parts-inherit.kt")
+            public void testMultifileClassMembers_parts_inherit() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/multifileClassMembers-parts-inherit.kt");
             }
 
             @TestMetadata("multilineExpressionAtBreakpoint.kt")
@@ -2120,6 +2172,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
             @TestMetadata("parametersOfInlineFunSeveralOnLine.kt")
             public void testParametersOfInlineFunSeveralOnLine() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/parametersOfInlineFunSeveralOnLine.kt");
+            }
+
+            @TestMetadata("privateAssignmentOperators.kt")
+            public void testPrivateAssignmentOperators() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/privateAssignmentOperators.kt");
             }
 
             @TestMetadata("privateClass.kt")
@@ -2212,6 +2269,26 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
                 runTest("testData/evaluation/singleBreakpoint/simple.kt");
             }
 
+            @TestMetadata("smartStepIntoInlineLambdaWithParameterDestructuring.kt")
+            public void testSmartStepIntoInlineLambdaWithParameterDestructuring() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/smartStepIntoInlineLambdaWithParameterDestructuring.kt");
+            }
+
+            @TestMetadata("smartStepIntoInlineSamWithParameterDestructuring.kt")
+            public void testSmartStepIntoInlineSamWithParameterDestructuring() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/smartStepIntoInlineSamWithParameterDestructuring.kt");
+            }
+
+            @TestMetadata("smartStepIntoLambdaWithParameterDestructuring.kt")
+            public void testSmartStepIntoLambdaWithParameterDestructuring() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/smartStepIntoLambdaWithParameterDestructuring.kt");
+            }
+
+            @TestMetadata("smartStepIntoSamWithParameterDestructuring.kt")
+            public void testSmartStepIntoSamWithParameterDestructuring() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/smartStepIntoSamWithParameterDestructuring.kt");
+            }
+
             @TestMetadata("statements.kt")
             public void testStatements() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/statements.kt");
@@ -2225,6 +2302,36 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
             @TestMetadata("stdlib.kt")
             public void testStdlib() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/stdlib.kt");
+            }
+
+            @TestMetadata("stepIntoInlineLambdaWithParameterDestructuring1.kt")
+            public void testStepIntoInlineLambdaWithParameterDestructuring1() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/stepIntoInlineLambdaWithParameterDestructuring1.kt");
+            }
+
+            @TestMetadata("stepIntoInlineLambdaWithParameterDestructuring2.kt")
+            public void testStepIntoInlineLambdaWithParameterDestructuring2() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/stepIntoInlineLambdaWithParameterDestructuring2.kt");
+            }
+
+            @TestMetadata("stepIntoInlineLambdaWithParameterDestructuringAndComponentFunctions.kt")
+            public void testStepIntoInlineLambdaWithParameterDestructuringAndComponentFunctions() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/stepIntoInlineLambdaWithParameterDestructuringAndComponentFunctions.kt");
+            }
+
+            @TestMetadata("stepIntoInlineSamWithParameterDestructuring.kt")
+            public void testStepIntoInlineSamWithParameterDestructuring() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/stepIntoInlineSamWithParameterDestructuring.kt");
+            }
+
+            @TestMetadata("stepIntoLambdaWithParameterDestructuring.kt")
+            public void testStepIntoLambdaWithParameterDestructuring() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/stepIntoLambdaWithParameterDestructuring.kt");
+            }
+
+            @TestMetadata("stepIntoSamWithParameterDestructuring.kt")
+            public void testStepIntoSamWithParameterDestructuring() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/stepIntoSamWithParameterDestructuring.kt");
             }
 
             @TestMetadata("superCallsCaptured.kt")
@@ -2287,6 +2394,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
                 runTest("testData/evaluation/singleBreakpoint/unsignedArrayOf.kt");
             }
 
+            @TestMetadata("unsignedConst.kt")
+            public void testUnsignedConst() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/unsignedConst.kt");
+            }
+
             @TestMetadata("unusedTransitiveDependencies.kt")
             public void testUnusedTransitiveDependencies() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/unusedTransitiveDependencies.kt");
@@ -2320,6 +2432,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
             @TestMetadata("withSerializationPlugin.kt")
             public void testWithSerializationPlugin() throws Exception {
                 runTest("testData/evaluation/singleBreakpoint/withSerializationPlugin.kt");
+            }
+
+            @TestMetadata("withSerializationPlugin_ver_1.7.1.kt")
+            public void testWithSerializationPlugin_ver_1_7_1() throws Exception {
+                runTest("testData/evaluation/singleBreakpoint/withSerializationPlugin_ver_1.7.1.kt");
             }
 
             @TestMetadata(".kt.kt")
@@ -2367,6 +2484,11 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
 
             private void runTest(String testDataFilePath) throws Exception {
                 KotlinTestUtils.runTest(this::doMultipleBreakpointsTest, this, TargetBackend.JVM_IR_WITH_IR_EVALUATOR, testDataFilePath);
+            }
+
+            @TestMetadata("breakpointsInLambdasWithDestructuring.kt")
+            public void testBreakpointsInLambdasWithDestructuring() throws Exception {
+                runTest("testData/evaluation/multipleBreakpoints/breakpointsInLambdasWithDestructuring.kt");
             }
 
             @TestMetadata("clearCache.kt")
@@ -2564,6 +2686,16 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
                 runTest("testData/evaluation/multipleBreakpoints/privateMembersPriority.kt");
             }
 
+            @TestMetadata("protectedDerivedPropertyWithField.kt")
+            public void testProtectedDerivedPropertyWithField() throws Exception {
+                runTest("testData/evaluation/multipleBreakpoints/protectedDerivedPropertyWithField.kt");
+            }
+
+            @TestMetadata("protectedPropertyWithoutFieldInBase.kt")
+            public void testProtectedPropertyWithoutFieldInBase() throws Exception {
+                runTest("testData/evaluation/multipleBreakpoints/protectedPropertyWithoutFieldInBase.kt");
+            }
+
             @TestMetadata("remappedParameterInInline.kt")
             public void testRemappedParameterInInline() throws Exception {
                 runTest("testData/evaluation/multipleBreakpoints/remappedParameterInInline.kt");
@@ -2654,6 +2786,31 @@ public abstract class K1IdeK2CodeKotlinEvaluateExpressionTestGenerated extends A
             @TestMetadata("inlineFunWithSamFromOtherModule.kt")
             public void testInlineFunWithSamFromOtherModule() throws Exception {
                 runTest("testData/evaluation/jvmMultiModule/inlineFunWithSamFromOtherModule.kt");
+            }
+
+            @TestMetadata("inlineInternal.kt")
+            public void testInlineInternal() throws Exception {
+                runTest("testData/evaluation/jvmMultiModule/inlineInternal.kt");
+            }
+
+            @TestMetadata("inlineInternalWithDefaultParams.kt")
+            public void testInlineInternalWithDefaultParams() throws Exception {
+                runTest("testData/evaluation/jvmMultiModule/inlineInternalWithDefaultParams.kt");
+            }
+
+            @TestMetadata("inlineWithAnonymousObjectsRegeneration.kt")
+            public void testInlineWithAnonymousObjectsRegeneration() throws Exception {
+                runTest("testData/evaluation/jvmMultiModule/inlineWithAnonymousObjectsRegeneration.kt");
+            }
+
+            @TestMetadata("internalMembersInInlinedLambda.kt")
+            public void testInternalMembersInInlinedLambda() throws Exception {
+                runTest("testData/evaluation/jvmMultiModule/internalMembersInInlinedLambda.kt");
+            }
+
+            @TestMetadata("objectsInInlineFunctions.kt")
+            public void testObjectsInInlineFunctions() throws Exception {
+                runTest("testData/evaluation/jvmMultiModule/objectsInInlineFunctions.kt");
             }
         }
     }

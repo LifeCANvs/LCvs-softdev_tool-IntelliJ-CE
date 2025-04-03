@@ -10,6 +10,7 @@ import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.NotNullLazyValue;
 import com.intellij.openapi.util.SystemInfoRt;
@@ -22,6 +23,7 @@ import com.jetbrains.cef.JCefAppConfig;
 import com.jetbrains.cef.JCefVersionDetails;
 import org.cef.CefSettings;
 import org.cef.misc.BoolRef;
+import org.cef.misc.Utils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -53,10 +55,8 @@ final class SettingsHelper {
     CefSettings settings = config.getCefSettings();
     settings.windowless_rendering_enabled = isOffScreenRenderingModeEnabled();
     settings.log_severity = getLogLevel();
-    settings.log_file = System.getProperty("ide.browser.jcef.log.path",
-                                           System.getProperty("user.home") + Platform.current().fileSeparator + "jcef_" + ProcessHandle.current().pid() + ".log");
-    if (settings.log_file.trim().isEmpty())
-      settings.log_file = null;
+    settings.log_file = getLogPath();
+
     //todo[tav] IDEA-260446 & IDEA-260344 However, without proper background the CEF component flashes white in dark themes
     //settings.background_color = settings.new ColorType(bg.getAlpha(), bg.getRed(), bg.getGreen(), bg.getBlue());
 
@@ -200,10 +200,6 @@ final class SettingsHelper {
 
     args = ArrayUtil.mergeArrays(args, "--autoplay-policy=no-user-gesture-required", "--disable-component-update");
 
-    if (isOffScreenRenderingModeEnabled()) {
-      args = ArrayUtil.mergeArrays(args, "--disable-gpu-compositing");
-    }
-
     return args;
   }
 
@@ -232,8 +228,8 @@ final class SettingsHelper {
     notification.notify(null);
   }
 
-  private static CefSettings.LogSeverity getLogLevel() {
-    String level = System.getProperty("ide.browser.jcef.log.level", "disable").toLowerCase(Locale.ENGLISH);
+  static CefSettings.LogSeverity getLogLevel() {
+    String level = Utils.getString("ide.browser.jcef.log.level", "disable").toLowerCase(Locale.ENGLISH);
     return switch (level) {
       case "disable" -> CefSettings.LogSeverity.LOGSEVERITY_DISABLE;
       case "verbose" -> CefSettings.LogSeverity.LOGSEVERITY_VERBOSE;
@@ -243,6 +239,23 @@ final class SettingsHelper {
       case "fatal" -> CefSettings.LogSeverity.LOGSEVERITY_FATAL;
       default -> CefSettings.LogSeverity.LOGSEVERITY_DEFAULT;
     };
+  }
+
+  static boolean isDebugMode() {
+    if (ApplicationManager.getApplication().isUnitTestMode()) {
+      // Temporary code for debugging (IJPL-149228), TODO: remove later
+      return true;
+    }
+    return Utils.getBoolean("jcef_debug", false);
+  }
+
+  static String getLogPath() {
+    if (Utils.getBoolean("JCEF_USE_IDE_LOG")) // just for convenient debugging
+      return PathManager.getLogPath() + Platform.current().fileSeparator + "idea.log";
+
+    final String def = PathManager.getLogPath() + Platform.current().fileSeparator + "jcef_" + ProcessHandle.current().pid() + ".log";
+    final String result = Utils.getString("ide.browser.jcef.log.path", def).trim();
+    return result.isEmpty() || result.equals("null") ? null : result;
   }
 
   private static @Nullable String readLinuxDistributionFromOsRelease() {

@@ -2,7 +2,12 @@ package com.intellij.notebooks.visualization.ui
 
 import com.intellij.codeInsight.hints.presentation.InlayPresentation
 import com.intellij.codeInsight.hints.presentation.PresentationRenderer
+import com.intellij.notebooks.ui.editor.actions.command.mode.NotebookEditorMode
+import com.intellij.notebooks.ui.editor.actions.command.mode.setMode
+import com.intellij.notebooks.visualization.NotebookCellLines
+import com.intellij.notebooks.visualization.UpdateContext
 import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.application.runInEdt
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.InlayProperties
 import com.intellij.openapi.editor.ex.EditorEx
@@ -13,23 +18,19 @@ import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.StringUtil
-import com.intellij.notebooks.ui.editor.actions.command.mode.NotebookEditorMode
-import com.intellij.notebooks.ui.editor.actions.command.mode.setMode
-import com.intellij.notebooks.visualization.NotebookCellLines
-import com.intellij.notebooks.visualization.UpdateContext
 import java.awt.Dimension
 import java.awt.Rectangle
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import kotlin.text.lines
 
 class TextEditorCellViewComponent(
   private val editor: EditorEx,
   private val cell: EditorCell,
-) : EditorCellViewComponent(), HasGutterIcon, InputComponent {
+) : EditorCellViewComponent(), InputComponent {
 
-  private var highlighters: List<RangeHighlighter>? = null
+  private var highlighter: RangeHighlighter? = null
 
   private val interval: NotebookCellLines.Interval
     get() = cell.intervalPointer.get() ?: error("Invalid interval")
@@ -43,47 +44,50 @@ class TextEditorCellViewComponent(
     override fun mousePressed(e: MouseEvent) {
       if (editor.xyToLogicalPosition(e.point).line in cell.interval.lines) {
         editor.setMode(NotebookEditorMode.EDIT)
-        cell.switchToEditMode()
       }
     }
   }
 
+  private val presentationToInlay = mutableMapOf<InlayPresentation, Inlay<*>>()
+
+  private val gutterIconStickToFirstVisibleLine = Registry.`is`("jupyter.run.cell.button.sticks.first.visible.line")
+
   init {
     editor.contentComponent.addMouseListener(mouseListener)
-  }
-
-  override fun updateGutterIcons(gutterAction: AnAction?) {
-    disposeExistingHighlighter()
-    if (gutterAction != null) {
-      val markupModel = editor.markupModel
-      val interval = safeInterval ?: return
-      val startOffset = editor.document.getLineStartOffset(interval.lines.first)
-      val endOffset = editor.document.getLineEndOffset(interval.lines.last)
-      val highlighter = markupModel.addRangeHighlighter(
-        startOffset,
-        endOffset,
-        HighlighterLayer.FIRST - 100,
-        TextAttributes(),
-        HighlighterTargetArea.LINES_IN_RANGE
-      )
-      highlighter.gutterIconRenderer = ActionToGutterRendererAdapter(gutterAction)
-      this.highlighters = listOf(highlighter)
+    cell.gutterAction.afterChange(this) { action ->
+      updateGutterIcons(action)
     }
+    updateGutterIcons(cell.gutterAction.get())
   }
 
-  override fun doDispose() {
+  private fun updateGutterIcons(gutterAction: AnAction?) = runInEdt {
     disposeExistingHighlighter()
-    presentationToInlay.values.forEach { Disposer.dispose(it) }
+    if (gutterAction == null) return@runInEdt
+
+    val markupModel = editor.markupModel
+    val interval = safeInterval ?: return@runInEdt
+    val startOffset = editor.document.getLineStartOffset(interval.computeFirstLineForHighlighter(editor, gutterIconStickToFirstVisibleLine))
+    val endOffset = editor.document.getLineEndOffset(interval.lines.last)
+    val highlighter = markupModel.addRangeHighlighter(
+      startOffset,
+      endOffset,
+      HighlighterLayer.FIRST - 100,
+      TextAttributes(),
+      HighlighterTargetArea.LINES_IN_RANGE
+    )
+
+    highlighter.gutterIconRenderer = ActionToGutterRendererAdapter(gutterAction)
+    this.highlighter = highlighter
+  }
+
+  override fun dispose(): Unit = editor.updateManager.update { ctx ->
+    disposeExistingHighlighter()
     editor.contentComponent.removeMouseListener(mouseListener)
   }
 
   private fun disposeExistingHighlighter() {
-    if (highlighters != null) {
-      highlighters?.forEach {
-        it.dispose()
-      }
-      highlighters = null
-    }
+    highlighter?.dispose()
+    highlighter = null
   }
 
   override fun calculateBounds(): Rectangle {
@@ -133,8 +137,6 @@ class TextEditorCellViewComponent(
     editor.caretModel.moveToOffset(offset)
   }
 
-  private val presentationToInlay = mutableMapOf<InlayPresentation, Inlay<*>>()
-
   override fun addInlayBelow(presentation: InlayPresentation) {
     editor.inlayModel.addBlockElement(
       editor.document.getLineEndOffset(cell.interval.lines.last),
@@ -144,10 +146,34 @@ class TextEditorCellViewComponent(
       PresentationRenderer(presentation)
     )?.also { inlay ->
       presentationToInlay[presentation] = inlay
+      Disposer.register(this, inlay)
     }
   }
 
   override fun removeInlayBelow(presentation: InlayPresentation) {
     presentationToInlay.remove(presentation)?.let { inlay -> Disposer.dispose(inlay) }
   }
+
+  override fun doGetInlays(): Sequence<Inlay<*>> {
+    return presentationToInlay.values.asSequence()
+  }
+
+  override fun doCheckAndRebuildInlays() {
+    if (isInlaysBroken()) {
+      val presentations = presentationToInlay.keys.toList()
+      presentationToInlay.values.forEach { inlay -> Disposer.dispose(inlay) }
+      presentations.forEach { addInlayBelow(it) }
+    }
+  }
+
+  private fun isInlaysBroken(): Boolean {
+    val offset = editor.document.getLineEndOffset(interval.lines.last)
+    for (inlay in presentationToInlay.values) {
+      if (!inlay.isValid || inlay.offset != offset) {
+        return true
+      }
+    }
+    return false
+  }
+
 }

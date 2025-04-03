@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.jps.incremental.storage;
 
 import com.dynatrace.hash4j.hashing.HashStream64;
@@ -8,7 +8,6 @@ import com.google.gson.stream.JsonWriter;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.util.ArrayUtilRt;
-import com.intellij.util.concurrency.AppExecutorUtil;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
@@ -18,7 +17,6 @@ import org.jetbrains.jps.builders.BuildRootDescriptor;
 import org.jetbrains.jps.builders.BuildRootIndex;
 import org.jetbrains.jps.builders.BuildTarget;
 import org.jetbrains.jps.builders.BuildTargetIndex;
-import org.jetbrains.jps.builders.storage.BuildDataPaths;
 import org.jetbrains.jps.cache.model.BuildTargetState;
 import org.jetbrains.jps.cmdline.ProjectDescriptor;
 import org.jetbrains.jps.incremental.BuildListener;
@@ -62,16 +60,15 @@ import static org.jetbrains.jps.incremental.storage.ProjectStamps.PORTABLE_CACHE
 public final class BuildTargetSourcesState implements BuildListener {
   private static final Logger LOG = Logger.getInstance(BuildTargetSourcesState.class);
   public static final String TARGET_SOURCES_STATE_FILE_NAME = "target_sources_state.json";
-  private final ExecutorService parallelBuildExecutor = AppExecutorUtil.createBoundedApplicationPoolExecutor(
-    "TargetSourcesState Executor Pool", SharedThreadPool.getInstance(), MAX_BUILDER_THREADS);
+  private final ExecutorService parallelBuildExecutor = SharedThreadPool.getInstance().createBoundedExecutor(
+    "TargetSourcesState Executor Pool", MAX_BUILDER_THREADS);
   private final Map<String, BuildTarget<?>> changedBuildTargets = new ConcurrentHashMap<>();
   // Some modules can have same out folder for different BuildTarget's to avoid an extra hash calculation collection will be used
   // There are no pre-calculated hashes for entries from this collection in FileStampStorage
   private final Map<String, Long> calculatedHashes = new ConcurrentHashMap<>();
-  private final PathRelativizerService relativizer;
   private final BuildTargetIndex buildTargetIndex;
   private final BuildRootIndex buildRootIndex;
-  private final ProjectStamps projectStamps;
+  private final BuildDataManager dataManager;
   private final CompileContext context;
   private final String outputFolderPath;
   private final Path targetStateStorage;
@@ -79,15 +76,13 @@ public final class BuildTargetSourcesState implements BuildListener {
   public BuildTargetSourcesState(@NotNull CompileContext context) {
     this.context = context;
 
-    ProjectDescriptor pd = context.getProjectDescriptor();
-    projectStamps = pd.getProjectStamps();
-    buildRootIndex = pd.getBuildRootIndex();
-    buildTargetIndex = pd.getBuildTargetIndex();
-    relativizer = pd.dataManager.getRelativizer();
-    outputFolderPath = getOutputFolderPath(pd.getProject());
+    ProjectDescriptor projectDescriptor = context.getProjectDescriptor();
+    dataManager = projectDescriptor.dataManager;
+    buildRootIndex = projectDescriptor.getBuildRootIndex();
+    buildTargetIndex = projectDescriptor.getBuildTargetIndex();
+    outputFolderPath = getOutputFolderPath(projectDescriptor.getProject());
 
-    BuildDataPaths dataPaths = pd.getTargetsState().getDataPaths();
-    targetStateStorage = dataPaths.getDataStorageRoot().toPath().resolve(TARGET_SOURCES_STATE_FILE_NAME);
+    targetStateStorage = dataManager.getDataPaths().getDataStorageDir().resolve(TARGET_SOURCES_STATE_FILE_NAME);
 
     // subscribe to events for reporting only changed build targets
     context.addBuildListener(this);
@@ -116,6 +111,7 @@ public final class BuildTargetSourcesState implements BuildListener {
       result = Collections.emptyList();
     }
     else {
+      PathRelativizerService relativizer = dataManager.getRelativizer();
       List<Future<?>> list = new ArrayList<>(buildTargets.size());
       for (BuildTarget<?> t : buildTargets) {
         list.add(parallelBuildExecutor.submit(() -> {
@@ -260,26 +256,30 @@ public final class BuildTargetSourcesState implements BuildListener {
                               @NotNull LongArrayList hash,
                               @NotNull HashStream64 hashToReuse) {
     try {
-      Path rootFile = rootDescriptor.getRootFile().toPath();
+      Path rootFile = rootDescriptor.getFile();
       if (Files.notExists(rootFile) || rootFile.toAbsolutePath().startsWith(outputFolderPath)) {
         return;
       }
 
-      Files.walkFileTree(rootFile, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE, new SimpleFileVisitor<>() {
-        @Override
-        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-          return buildRootIndex.isDirectoryAccepted(dir, rootDescriptor) ? FileVisitResult.CONTINUE : FileVisitResult.SKIP_SUBTREE;
-        }
+      StampsStorage<?> stStorage = dataManager.getFileStampStorage(target);
+      if (stStorage instanceof HashStampStorage) {
+        HashStampStorage stampStorage = (HashStampStorage)stStorage;
+        Files.walkFileTree(rootFile, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE, new SimpleFileVisitor<>() {
+          @Override
+          public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+            return buildRootIndex.isDirectoryAccepted(dir, rootDescriptor) ? FileVisitResult.CONTINUE : FileVisitResult.SKIP_SUBTREE;
+          }
 
-        @Override
-        public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
-          if (!buildRootIndex.isFileAccepted(path.toFile(), rootDescriptor)) {
+          @Override
+          public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
+            if (!buildRootIndex.isFileAccepted(path, rootDescriptor)) {
+              return FileVisitResult.CONTINUE;
+            }
+            getFileHash(path, rootFile, hash, hashToReuse, stampStorage);
             return FileVisitResult.CONTINUE;
           }
-          getFileHash(target, path, rootFile, hash, hashToReuse);
-          return FileVisitResult.CONTINUE;
-        }
-      });
+        });
+      }
     }
     catch (IOException e) {
       LOG.warn("Couldn't calculate build target hash for : " + target.getPresentableName(), e);
@@ -305,16 +305,13 @@ public final class BuildTargetSourcesState implements BuildListener {
       .getAsLong();
   }
 
-  private void getFileHash(@NotNull BuildTarget<?> target,
-                           @NotNull Path path,
-                           @NotNull Path rootFile,
-                           @NotNull LongArrayList hash,
-                           @NotNull HashStream64 hashToReuse) {
-    StampsStorage<? extends StampsStorage.Stamp> storage = projectStamps.getStampStorage();
-    assert storage instanceof HashStampStorage;
-    HashStampStorage fileStampStorage = (HashStampStorage)storage;
-    Long fileHash = fileStampStorage.getStoredFileHash(path, target);
-    if (fileHash == null) {
+  private static void getFileHash(@NotNull Path path,
+                                  @NotNull Path rootFile,
+                                  @NotNull LongArrayList hash,
+                                  @NotNull HashStream64 hashToReuse,
+                                  @NotNull HashStampStorage stampStorage) {
+    HashStamp stamp = stampStorage.getStoredFileStamp(path);
+    if (stamp == null) {
       return;
     }
 
@@ -325,7 +322,7 @@ public final class BuildTargetSourcesState implements BuildListener {
 
     hash.add(hashToReuse
                .reset()
-               .putLong(fileHash)
+               .putLong(stamp.hash)
                .putString(relativePath)
                .getAsLong());
   }
@@ -353,8 +350,8 @@ public final class BuildTargetSourcesState implements BuildListener {
     return new HashMap<>();
   }
 
-  private boolean reportStateUnavailable() {
-    return !PORTABLE_CACHES || projectStamps == null;
+  private static boolean reportStateUnavailable() {
+    return !PORTABLE_CACHES;
   }
 
   private static @NotNull String toRelative(@NotNull Path target, @NotNull Path rootPath) {

@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk.add.v2
 
 import com.intellij.execution.target.TargetEnvironmentConfiguration
@@ -7,30 +7,34 @@ import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.notification.NotificationsManager
-import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.getOrLogException
 import com.intellij.openapi.help.HelpManager
+import com.intellij.openapi.module.Module
+import com.intellij.openapi.observable.properties.AtomicProperty
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.projectRoots.impl.SdkConfigurationUtil
+import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.openapi.ui.validation.DialogValidationRequestor
+import com.intellij.openapi.ui.validation.WHEN_PROPERTY_CHANGED
+import com.intellij.openapi.ui.validation.and
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.ui.dsl.builder.Panel
 import com.jetbrains.python.PyBundle.message
+import com.jetbrains.python.Result
 import com.jetbrains.python.icons.PythonIcons
 import com.jetbrains.python.newProject.collector.InterpreterStatisticsInfo
-import com.jetbrains.python.sdk.LOGGER
-import com.jetbrains.python.sdk.ModuleOrProject
-import com.jetbrains.python.sdk.PythonSdkType
-import com.jetbrains.python.sdk.installSdkIfNeeded
+import com.jetbrains.python.sdk.*
 import com.jetbrains.python.sdk.pipenv.PIPENV_ICON
 import com.jetbrains.python.sdk.poetry.POETRY_ICON
+import com.jetbrains.python.sdk.uv.UV_ICON
 import com.jetbrains.python.statistics.InterpreterTarget
-import kotlinx.coroutines.CoroutineScope
+import com.jetbrains.python.errorProcessing.ErrorSink
+import com.jetbrains.python.errorProcessing.PyError
 import javax.swing.Icon
-
-
-@Service(Service.Level.APP)
-class PythonAddSdkService(val coroutineScope: CoroutineScope)
+import com.intellij.python.hatch.icons.PythonHatchIcons
+import com.intellij.ui.dsl.builder.Align
+import com.intellij.ui.dsl.builder.Row
+import com.jetbrains.python.psi.icons.PythonPsiApiIcons
 
 abstract class PythonAddEnvironment(open val model: PythonAddInterpreterModel) {
 
@@ -40,7 +44,7 @@ abstract class PythonAddEnvironment(open val model: PythonAddInterpreterModel) {
   internal val propertyGraph
     get() = model.propertyGraph
 
-  abstract fun buildOptions(panel: Panel, validationRequestor: DialogValidationRequestor)
+  abstract fun buildOptions(panel: Panel, validationRequestor: DialogValidationRequestor, errorSink: ErrorSink)
   open fun onShown() {}
 
   /**
@@ -48,11 +52,38 @@ abstract class PythonAddEnvironment(open val model: PythonAddInterpreterModel) {
    *
    * Error is shown to user. Do not catch all exceptions, only return exceptions valuable to user
    */
-  abstract suspend fun getOrCreateSdk(moduleOrProject: ModuleOrProject): Result<Sdk>
+  abstract suspend fun getOrCreateSdk(moduleOrProject: ModuleOrProject): Result<Sdk, PyError>
+
+  open suspend fun createPythonModuleStructure(module: Module): Result<Unit, PyError> = Result.success(Unit)
+
   abstract fun createStatisticsInfo(target: PythonInterpreterCreationTargets): InterpreterStatisticsInfo
 }
 
-abstract class PythonNewEnvironmentCreator(override val model: PythonMutableTargetAddInterpreterModel) : PythonAddEnvironment(model)
+abstract class PythonNewEnvironmentCreator(override val model: PythonMutableTargetAddInterpreterModel) : PythonAddEnvironment(model) {
+  internal val venvExistenceValidationState: AtomicProperty<VenvExistenceValidationState> =
+    AtomicProperty(VenvExistenceValidationState.Invisible)
+
+  internal fun Row.venvExistenceValidationAlert(validationRequestor: DialogValidationRequestor, onSelectExisting: () -> Unit) {
+    venvExistenceValidationAlert(venvExistenceValidationState, onSelectExisting)
+      .align(Align.FILL)
+      .validationRequestor(validationRequestor and WHEN_PROPERTY_CHANGED(venvExistenceValidationState))
+      .cellValidation { component ->
+        addInputRule {
+          if (!component.isVisible) {
+            return@addInputRule null
+          }
+
+          val state = venvExistenceValidationState.get()
+
+          if (state is VenvExistenceValidationState.Error)
+            ValidationInfo("")
+          else
+            null
+        }
+      }
+  }
+}
+
 abstract class PythonExistingEnvironmentConfigurator(model: PythonAddInterpreterModel) : PythonAddEnvironment(model)
 
 
@@ -61,7 +92,9 @@ enum class PythonSupportedEnvironmentManagers(val nameKey: String, val icon: Ico
   CONDA("sdk.create.custom.conda", PythonIcons.Python.Anaconda),
   POETRY("sdk.create.custom.poetry", POETRY_ICON),
   PIPENV("sdk.create.custom.pipenv", PIPENV_ICON),
-  PYTHON("sdk.create.custom.python", com.jetbrains.python.psi.icons.PythonPsiApiIcons.Python)
+  UV("sdk.create.custom.uv", UV_ICON),
+  HATCH("sdk.create.custom.hatch", PythonHatchIcons.Logo),
+  PYTHON("sdk.create.custom.python", PythonPsiApiIcons.Python)
 }
 
 enum class PythonInterpreterSelectionMode(val nameKey: String) {
@@ -75,7 +108,7 @@ enum class PythonInterpreterCreationTargets(val nameKey: String, val icon: Icon)
   SSH("", AllIcons.Nodes.HomeFolder),
 }
 
-fun PythonInterpreterCreationTargets.toStatisticsField(): InterpreterTarget {
+internal fun PythonInterpreterCreationTargets.toStatisticsField(): InterpreterTarget {
   return when (this) {
     PythonInterpreterCreationTargets.LOCAL_MACHINE -> InterpreterTarget.LOCAL
     else -> throw NotImplementedError("PythonInterpreterCreationTargets added, but not accounted for in statistics")
@@ -119,6 +152,6 @@ internal suspend fun setupSdkIfDetected(interpreter: PythonSelectableInterpreter
                                              false,
                                              null, // todo create additional data for target
                                              null) ?: return null
-  addSdk(newSdk)
+  newSdk.persist()
   return newSdk
 }

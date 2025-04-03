@@ -26,14 +26,12 @@ import com.intellij.testFramework.LightVirtualFile;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.containers.ContainerUtil;
 import one.util.streamex.StreamEx;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.Nls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 
 import static com.intellij.openapi.util.text.HtmlChunk.tag;
@@ -89,6 +87,10 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
       String message = executeDelete(deleteFile);
       return message == null ? Result.SUCCESS : new Error(message);
     }
+    if (command instanceof ModMoveFile moveFile) {
+      String message = executeMove(moveFile);
+      return message == null ? Result.SUCCESS : new Error(message);
+    }
     if (command instanceof ModCompositeCommand cmp) {
       BatchExecutionResult result = Result.NOTHING;
       for (ModCommand subCommand : cmp.commands()) {
@@ -115,6 +117,9 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
     if (command instanceof ModShowConflicts) {
       return Result.CONFLICTS;
     }
+    if (command instanceof ModEditOptions<?> editOptions) {
+      return bypassEditOptions(editOptions, context);
+    }
     if (command instanceof ModDisplayMessage message) {
       if (message.kind() == ModDisplayMessage.MessageKind.ERROR) {
         return new Error(message.messageText());
@@ -122,6 +127,11 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
       return Result.INTERACTIVE;
     }
     throw new IllegalArgumentException("Unknown command: " + command);
+  }
+
+  private <T extends OptionContainer> BatchExecutionResult bypassEditOptions(@NotNull ModEditOptions<T> options, @NotNull ActionContext context) {
+    if (!options.canUseDefaults()) return Result.INTERACTIVE;
+    return doExecuteInBatch(context, options.nextCommand().apply(options.containerSupplier().get()));
   }
 
   private BatchExecutionResult executeChooseInBatch(@NotNull ActionContext context, ModChooseAction chooser) {
@@ -139,8 +149,7 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
     return executeInBatch(context, next);
   }
 
-  @Nls
-  protected String executeDelete(ModDeleteFile file) {
+  protected @Nls String executeDelete(@NotNull ModDeleteFile file) {
     try {
       WriteAction.run(() -> file.file().delete(this));
       return null;
@@ -150,12 +159,52 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
     }
   }
 
-  @Nls
-  protected String executeCreate(@NotNull Project project, @NotNull ModCreateFile create) {
+  protected @Nls String executeMove(@NotNull ModMoveFile file) {
+    VirtualFile source = actualize(file.file());
+    FutureVirtualFile target = file.targetFile();
+    VirtualFile parent = actualize(target.getParent());
+    return WriteAction.compute(() -> {
+      VirtualFile origParent = source.getParent();
+      if (parent != null && !parent.equals(origParent)) {
+        try {
+          source.move(this, parent);
+        }
+        catch (IOException e) {
+          return AnalysisBundle.message("modcommand.executor.cannot.move.file",
+                                        source.getPath(), parent.getPath(), e.getLocalizedMessage());
+        }
+      }
+      if (!target.getName().equals(source.getName())) {
+        try {
+          source.rename(this, target.getName());
+        }
+        catch (IOException e) {
+          if (origParent != null && !origParent.equals(parent)) {
+            try {
+              // Try to rollback 'move' in case if rename failed
+              source.move(this, origParent);
+            }
+            catch (IOException ignored) {
+              // Ignore move exception 
+            }
+          }
+          return AnalysisBundle.message("modcommand.executor.cannot.rename.file",
+                                        source.getPath(), target.getName(), e.getLocalizedMessage());
+        }
+      }
+      return null;
+    });
+  }
+
+  protected @Nls String executeCreate(@NotNull Project project, @NotNull ModCreateFile create) {
     FutureVirtualFile file = create.file();
     VirtualFile parent = actualize(file.getParent());
     try {
       return WriteAction.compute(() -> {
+        if (create.content() instanceof ModCreateFile.Directory) {
+          parent.createChildDirectory(this, file.getName());
+          return null;
+        }
         VirtualFile newFile = parent.createChildData(this, file.getName());
         if (create.content() instanceof ModCreateFile.Text text) {
           PsiFile psiFile = PsiManager.getInstance(project).findFile(newFile);
@@ -234,7 +283,7 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
     }
   }
 
-  protected @NotNull List<@NotNull Fragment> calculateRanges(@NotNull ModUpdateFileText upd) {
+  protected @Unmodifiable @NotNull List<@NotNull Fragment> calculateRanges(@NotNull ModUpdateFileText upd) {
     return List.of(new Fragment(0, upd.oldText().length(), upd.newText().length()));
   }
 
@@ -258,13 +307,17 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
       }
       else if (command instanceof ModCreateFile createFile) {
         VirtualFile vFile = createFile.file();
-        String content =
-          createFile.content() instanceof ModCreateFile.Text text ? text.text() : AnalysisBundle.message("preview.binary.content");
-        customDiffList.add(new IntentionPreviewInfo.CustomDiff(vFile.getFileType(),
-                                                               getFileNamePresentation(project, vFile),
-                                                               "",
-                                                               content,
-                                                               true));
+        if (createFile.content() instanceof ModCreateFile.Directory) {
+          navigateInfo = new IntentionPreviewInfo.Html(text(AnalysisBundle.message("preview.create.directory", vFile.getPath())));
+        } else {
+          String content =
+            createFile.content() instanceof ModCreateFile.Text text ? text.text() : AnalysisBundle.message("preview.binary.content");
+          customDiffList.add(new IntentionPreviewInfo.CustomDiff(vFile.getFileType(),
+                                                                 getFileNamePresentation(project, vFile),
+                                                                 "",
+                                                                 content,
+                                                                 true));
+        }
       }
       else if (command instanceof ModNavigate navigate && navigate.caret() != -1) {
         VirtualFile virtualFile = navigate.file();
@@ -277,6 +330,9 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
       }
       else if (command instanceof ModChooseAction target) {
         return getChoosePreview(context, target);
+      }
+      else if (command instanceof ModEditOptions<?> target) {
+        return getEditOptionsPreview(context, target);
       }
       else if (command instanceof ModChooseMember target) {
         return getPreview(target.nextCommand().apply(target.defaultSelection()), context);
@@ -299,18 +355,37 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
         navigateInfo = new IntentionPreviewInfo.Html(text(
           AnalysisBundle.message("preview.open.url", StringUtil.shortenTextWithEllipsis(openUrl.url(), 50, 10))));
       }
+      else if (command instanceof ModMoveFile moveFile) {
+        FutureVirtualFile targetFile = moveFile.targetFile();
+        if (targetFile.getName().equals(moveFile.file().getName())) {
+          navigateInfo = IntentionPreviewInfo.moveToDirectory(moveFile.file(), targetFile.getParent());
+        } else {
+          navigateInfo = IntentionPreviewInfo.rename(moveFile.file(), targetFile.getName());
+        }
+      }
       else if (command instanceof ModUpdateSystemOptions options) {
         HtmlChunk preview = createOptionsPreview(context, options);
         navigateInfo = preview.isEmpty() ? IntentionPreviewInfo.EMPTY : new IntentionPreviewInfo.Html(preview);
       }
     }
+    customDiffList.sort(Comparator.comparing(diff -> diff.fileName() != null));
     return customDiffList.isEmpty() ? navigateInfo :
            customDiffList.size() == 1 ? customDiffList.get(0) :
            new IntentionPreviewInfo.MultiFileDiff(customDiffList);
   }
 
+  private @NotNull <T extends OptionContainer> IntentionPreviewInfo getEditOptionsPreview(@NotNull ActionContext context,
+                                                                                          @NotNull ModEditOptions<T> target) {
+    return getPreview(target.nextCommand().apply(target.containerSupplier().get()), context);
+  }
+
   protected @NotNull String getFileNamePresentation(Project project, VirtualFile file) {
-    return file.getName();
+    StringBuilder presentation = new StringBuilder(file.getName());
+    while (file.getParent() instanceof FutureVirtualFile parent) {
+      presentation.insert(0, parent.getName() + "/");
+      file = parent;
+    }
+    return presentation.toString();
   }
 
   private static @NotNull IntentionPreviewInfo getChoosePreview(@NotNull ActionContext context, @NotNull ModChooseAction target) {
@@ -378,8 +453,7 @@ public class ModCommandBatchExecutorImpl implements ModCommandExecutor {
     throw new IllegalStateException("Value of type " + newValue.getClass() + " is not supported");
   }
 
-  @NotNull
-  private static HtmlChunk getValueChunk(Object value, LocMessage.PrefixSuffix prefixSuffix) {
+  private static @NotNull HtmlChunk getValueChunk(Object value, LocMessage.PrefixSuffix prefixSuffix) {
     HtmlChunk.Element input = tag("input").attr("type", "text").attr("value", String.valueOf(value))
       .attr("size", value.toString().length() + 1).attr("readonly", "true");
     return tag("table").child(tag("tr").children(

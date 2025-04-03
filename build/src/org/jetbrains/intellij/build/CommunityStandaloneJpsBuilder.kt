@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build
 
 import kotlinx.coroutines.Dispatchers
@@ -21,8 +21,10 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
 
   layout.withModules(sequenceOf(
     "intellij.platform.util",
+    "intellij.platform.util.multiplatform",
     "intellij.platform.util.classLoader",
     "intellij.platform.util.base",
+    "intellij.platform.util.base.multiplatform",
     "intellij.platform.util.xmlDom",
     "intellij.platform.util.jdom",
     "intellij.platform.tracing.rt",
@@ -63,7 +65,6 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
 
 
   layout.withModule("intellij.maven.jps", "maven-jps.jar")
-  layout.withModule("intellij.java.compiler.charts.jps", "java-compiler-charts-jps.jar")
   layout.withModule("intellij.java.aetherDependencyResolver", "aether-dependency-resolver.jar")
   layout.withModule("intellij.gradle.jps", "gradle-jps.jar")
 
@@ -84,8 +85,7 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
     "Log4J",
     "jgoodies-forms",
     "Eclipse",
-    "netty-codec-http",
-    "netty-codec-protobuf",
+    "netty-jps",
     "lz4-java",
     "commons-codec",
     "commons-logging",
@@ -99,10 +99,10 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
     "kotlin-stdlib",
     "commons-lang3",
     "maven-resolver-provider",
-    "netty-buffer",
     "aalto-xml",
     "caffeine",
-    "jetbrains.kotlinx.metadata.jvm",
+    "mvstore",
+    "kotlin-metadata",
     "hash4j"
   )) {
     layout.withProjectLibrary(it, LibraryPackMode.STANDALONE_MERGED)

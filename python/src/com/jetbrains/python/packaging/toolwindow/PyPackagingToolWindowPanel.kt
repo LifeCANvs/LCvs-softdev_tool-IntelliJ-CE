@@ -33,9 +33,7 @@ import com.jetbrains.python.packaging.toolwindow.packages.PyPackageSearchTextFie
 import com.jetbrains.python.packaging.toolwindow.packages.PyPackagesListController
 import com.jetbrains.python.packaging.toolwindow.ui.PyPackagesUiComponents
 import com.jetbrains.python.packaging.utils.PyPackageCoroutine
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.event.ActionEvent
@@ -49,7 +47,7 @@ class PyPackagingToolWindowPanel(private val project: Project) : SimpleToolWindo
     Disposer.register(this, it)
   }
 
-  private val packageListController = PyPackagesListController(project, controller = this).also {
+  internal val packageListController = PyPackagesListController(project, controller = this).also {
     Disposer.register(this, it)
   }
 
@@ -198,19 +196,11 @@ class PyPackagingToolWindowPanel(private val project: Project) : SimpleToolWindo
 
   fun setEmpty() {
     packageSelected(null)
+    packageListController.setLoadingState(false)
   }
 
   override fun dispose() {
     packagingScope.cancel()
-  }
-
-  internal suspend fun recreateModulePanel() {
-    val newPanel = createLeftPanel()
-    withContext(Dispatchers.Main) {
-      leftPanel = newPanel
-      splitter?.firstComponent = leftPanel
-      splitter?.repaint()
-    }
   }
 
   fun selectPackageName(name: String) {

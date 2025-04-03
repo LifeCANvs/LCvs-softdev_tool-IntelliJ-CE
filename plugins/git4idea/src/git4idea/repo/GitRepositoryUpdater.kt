@@ -1,9 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.repo
 
 import com.intellij.dvcs.DvcsUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.progress.util.BackgroundTaskUtil
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.LocalFileSystem.WatchRequest
@@ -39,7 +40,10 @@ internal class GitRepositoryUpdater(
     remotesDir = VcsUtil.getVirtualFile(repositoryFiles.refsRemotesFile)
     tagsDir = VcsUtil.getVirtualFile(repositoryFiles.refsTagsFile)
     reftableDir = VcsUtil.getVirtualFile(repositoryFiles.reftableFile)
+  }
 
+  fun installListeners() {
+    Disposer.register(repository, this)
     AsyncVfsEventsPostProcessor.getInstance().addListener(this, repository.coroutineScope)
   }
 
@@ -144,11 +148,13 @@ internal class GitRepositoryUpdater(
       BackgroundTaskUtil.syncPublisher(repository.project, GitRepository.GIT_REPO_CHANGE).repositoryChanged(repository)
     }
     if (configChanged) {
+      GitProjectConfigurationCache.getInstance(repository.project).clearForRepo(repository)
       BackgroundTaskUtil.syncPublisher(repository.project, GitConfigListener.TOPIC).notifyConfigChanged(repository)
     }
     if (indexChanged || externallyCommitted || headMoved || headChanged || currentBranchChanged || gitignoreChanged) {
-      VcsDirtyScopeManager.getInstance(repository.project).dirDirtyRecursively(repository.root)
+      VcsDirtyScopeManager.getInstance(repository.project).rootDirty(repository.root)
       repository.untrackedFilesHolder.invalidate()
+      repository.resolvedConflictsFilesHolder.invalidate()
     }
     if (indexChanged) {
       refreshRoots(repository.project, listOf(repository.root))

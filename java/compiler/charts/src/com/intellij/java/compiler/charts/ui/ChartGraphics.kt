@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.compiler.charts.ui
 
 import com.intellij.ide.ui.UISettings.Companion.setupAntialiasing
@@ -13,18 +13,19 @@ import java.awt.image.ImageObserver
 import kotlin.math.roundToInt
 
 class ChartGraphics(val graphics: Graphics2D, val offsetX: Double, val offsetY: Double) {
-  constructor(graphics: Graphics2D, offsetX: Int, offsetY: Int): this(graphics, offsetX.toDouble(), offsetY.toDouble())
+  constructor(graphics: Graphics2D, offsetX: Int, offsetY: Int) : this(graphics, offsetX.toDouble(), offsetY.toDouble())
 
-  fun fill(s: Shape) = graphics.fill(move(s))
-  fun draw(s: Shape) = graphics.draw(move(s))
-  fun clip(s: Shape) = graphics.clip(move(s))
-  fun drawString(str: String, x: Float, y: Float) = graphics.drawString(str, x + offsetX.toFloat(), y + offsetY.toFloat())
-  fun drawString(str: String, x: Int, y: Int) = graphics.drawString(str, x + offsetX.roundToInt(), y + offsetY.roundToInt())
-  fun fillOval(x: Int, y: Int, width: Int, height: Int) = graphics.fillOval(x + offsetX.roundToInt(), y + offsetY.roundToInt(), width, height)
-  fun drawOval(x: Int, y: Int, width: Int, height: Int) = graphics.drawOval(x + offsetX.roundToInt(), y + offsetY.roundToInt(), width, height)
-
-  fun fontMetrics() = graphics.fontMetrics
+  fun fill(s: Shape): Unit = graphics.fill(move(s))
+  fun draw(s: Shape): Unit = graphics.draw(move(s))
+  fun clip(s: Shape): Unit = graphics.clip(move(s))
+  fun drawString(str: String, x: Float, y: Float): Unit = graphics.drawString(str, x + offsetX.toFloat(), y + offsetY.toFloat())
+  fun drawString(str: String, x: Int, y: Int): Unit = graphics.drawString(str, x + offsetX.roundToInt(), y + offsetY.roundToInt())
+  fun fillOval(x: Int, y: Int, width: Int, height: Int): Unit = graphics.fillOval(x + offsetX.roundToInt(), y + offsetY.roundToInt(), width, height)
+  fun drawOval(x: Int, y: Int, width: Int, height: Int): Unit = graphics.drawOval(x + offsetX.roundToInt(), y + offsetY.roundToInt(), width, height)
+  fun fontMetrics(): FontMetrics = graphics.fontMetrics
   fun create(): ChartGraphics = ChartGraphics(graphics.create() as Graphics2D, offsetX, offsetY)
+
+  // helpers
   fun moveTo(offsetX: Double, offsetY: Double): ChartGraphics = ChartGraphics(graphics, -offsetX, -offsetY)
 
   fun withColor(color: Color, block: ChartGraphics.() -> Unit): ChartGraphics {
@@ -72,9 +73,12 @@ class ChartGraphics(val graphics: Graphics2D, val offsetX: Double, val offsetY: 
     graphics.drawImage(img, transform, observer)
   }
 
-  fun setupRenderingHints() {
-    graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-    graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+  fun withRenderingHints(): ChartGraphics {
+    if (graphics.getRenderingHint(RenderingHints.KEY_ANTIALIASING) != RenderingHints.VALUE_ANTIALIAS_ON)
+      graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+    if (graphics.getRenderingHint(RenderingHints.KEY_RENDERING) != RenderingHints.VALUE_RENDER_QUALITY)
+      graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+    return this
   }
 
   fun getStringBounds(text: String): Rectangle2D = fontMetrics().getStringBounds(text, graphics)
@@ -87,7 +91,7 @@ class ChartGraphics(val graphics: Graphics2D, val offsetX: Double, val offsetY: 
   }
 
   private fun move(rect: Rectangle2D): Rectangle2D {
-    if(offsetX != 0.0 || offsetY != 0.0) {
+    if (offsetX != 0.0 || offsetY != 0.0) {
       return Rectangle2D.Double(rect.x + offsetX, rect.y + offsetY, rect.width, rect.height)
     }
     return rect
@@ -103,7 +107,8 @@ class ChartGraphics(val graphics: Graphics2D, val offsetX: Double, val offsetY: 
   private fun move(line: Line2D): Line2D {
     if (offsetX != 0.0 || offsetY != 0.0) {
       return Line2D.Double(line.x1 + offsetX, line.y1 + offsetY, line.x2 + offsetX, line.y2 + offsetY)
-    } else {
+    }
+    else {
       return line
     }
   }

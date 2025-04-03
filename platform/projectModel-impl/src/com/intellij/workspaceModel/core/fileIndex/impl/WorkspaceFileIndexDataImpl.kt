@@ -9,6 +9,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.SingleFileSourcesTracker
 import com.intellij.openapi.roots.impl.PackageDirectoryCacheImpl
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vfs.*
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.platform.backend.workspace.WorkspaceModel
@@ -26,13 +27,21 @@ import com.intellij.util.containers.CollectionFactory
 import com.intellij.util.containers.ConcurrentBitSet
 import com.intellij.workspaceModel.core.fileIndex.*
 
-internal class WorkspaceFileIndexDataImpl(private val contributorList: List<WorkspaceFileIndexContributor<*>>,
-                                          private val project: Project, parentDisposable: Disposable): WorkspaceFileIndexData, Disposable {
+internal class WorkspaceFileIndexDataImpl(
+  private val contributorList: List<WorkspaceFileIndexContributor<*>>,
+  private val project: Project, parentDisposable: Disposable
+): WorkspaceFileIndexData, Disposable {
   private val contributors = contributorList.filter { it.storageKind == EntityStorageKind.MAIN }.groupBy { it.entityClass }
   private val contributorsForUnloaded = contributorList.filter { it.storageKind == EntityStorageKind.UNLOADED }.groupBy { it.entityClass }
   private val contributorDependencies = contributorList.associateWith { it.dependenciesOnOtherEntities }
   
-  /** these maps are accessed under 'Read Action' and updated under 'Write Action' or under 'Read Action' with a special lock in [NonIncrementalContributors.updateIfNeeded] */
+  /** These maps are accessed under 'Read Action' and updated under 'Write Action' or under 'Read Action' with a special lock in [NonIncrementalContributors.updateIfNeeded]
+   * [VirtualFile] is used as a key instead of [VirtualFileUrl] primarily for performance and memory efficiency.
+   * Using VirtualFile allows for fast HashMap lookups in getFileInfo (which is requested via for example [com.intellij.openapi.roots.FileIndex.isInContent])
+   * Also, we would need to convert all virtual files to urls but all created instances of VirtualFileUrl are retained indefinitely which will
+   * lead to memory leak. Maybe it is possible to implement lightweight [VirtualFileUrl] but it's not clear how to then implement efficient
+   * equals and hashCode.
+   */
   private val fileSets: MutableMap<VirtualFile, StoredFileSetCollection> = CollectionFactory.createSmallMemoryFootprintMap()
   private val fileSetsByPackagePrefix = PackagePrefixStorage()
 
@@ -40,7 +49,7 @@ internal class WorkspaceFileIndexDataImpl(private val contributorList: List<Work
   
   private val packageDirectoryCache: PackageDirectoryCacheImpl
   private val nonIncrementalContributors = NonIncrementalContributors(project)
-  private val librariesAndSdkContributors: LibrariesAndSdkContributors
+  private val librariesAndSdkContributors: LibrariesAndSdkContributors?
   private val fileIdWithoutFileSets = ConcurrentBitSet.create()
   private val fileTypeRegistry = FileTypeRegistry.getInstance()
   private val dirtyEntities = HashSet<EntityPointer<WorkspaceEntity>>()
@@ -52,15 +61,23 @@ internal class WorkspaceFileIndexDataImpl(private val contributorList: List<Work
   init {
     Disposer.register(parentDisposable, this)
     //do not move before registration to parentDisposable
-    librariesAndSdkContributors = LibrariesAndSdkContributors(project, fileSets, fileSetsByPackagePrefix, this)
+    librariesAndSdkContributors = if (Registry.`is`("ide.workspace.model.sdk.remove.custom.processing")) {
+      null
+    } else {
+      LibrariesAndSdkContributors(project, fileSets, fileSetsByPackagePrefix, this)
+    }
     WorkspaceFileIndexDataMetrics.instancesCounter.incrementAndGet()
     val start = Nanoseconds.now()
 
     packageDirectoryCache = PackageDirectoryCacheImpl(::fillPackageDirectories, ::isPackageDirectory)
     registerAllEntities(EntityStorageKind.MAIN)
     registerAllEntities(EntityStorageKind.UNLOADED)
-    WorkspaceFileIndexDataMetrics.registerFileSetsTimeNanosec.addMeasuredTime {
-      librariesAndSdkContributors.registerFileSets()
+    if (librariesAndSdkContributors != null) {
+      WorkspaceFileIndexDataMetrics.registerFileSetsTimeNanosec.addMeasuredTime {
+        ApplicationManager.getApplication().runReadAction {
+          librariesAndSdkContributors.registerFileSets()
+        }
+      }
     }
 
     WorkspaceFileIndexDataMetrics.initTimeNanosec.addElapsedTime(start)
@@ -152,7 +169,7 @@ internal class WorkspaceFileIndexDataImpl(private val contributorList: List<Work
     if (hasDirtyEntities && ApplicationManager.getApplication().isWriteAccessAllowed) {
       updateDirtyEntities()
     }
-    ApplicationManager.getApplication().assertReadAccessAllowed()
+    ThreadingAssertions.assertReadAccess()
     nonIncrementalContributors.updateIfNeeded(fileSets, fileSetsByPackagePrefix, nonExistingFilesRegistry)
   }
 
@@ -166,7 +183,7 @@ internal class WorkspaceFileIndexDataImpl(private val contributorList: List<Work
       val action = { storedFileSet: StoredFileSet ->
         when (storedFileSet) {
           is WorkspaceFileSetImpl -> {
-            visitor.visitIncludedRoot(storedFileSet)
+            visitor.visitIncludedRoot(storedFileSet, storedFileSet.entityPointer, storedFileSet.recursive)
           }
           is ExcludedFileSet -> Unit
         }
@@ -263,14 +280,14 @@ internal class WorkspaceFileIndexDataImpl(private val contributorList: List<Work
   }
 
   override fun resetCustomContributors() {
-    ApplicationManager.getApplication().assertWriteAccessAllowed()
+    ThreadingAssertions.assertWriteAccess()
     nonIncrementalContributors.resetCache()
     resetFileCache()
   }
 
   override fun markDirty(entityPointers: Collection<EntityPointer<WorkspaceEntity>>,
                          filesToInvalidate: Collection<VirtualFile>) = WorkspaceFileIndexDataMetrics.markDirtyTimeNanosec.addMeasuredTime {
-    ApplicationManager.getApplication().assertWriteAccessAllowed()
+    ThreadingAssertions.assertWriteAccess()
     dirtyEntities.addAll(entityPointers)
     dirtyFiles.addAll(filesToInvalidate)
     hasDirtyEntities = dirtyEntities.isNotEmpty()
@@ -278,7 +295,7 @@ internal class WorkspaceFileIndexDataImpl(private val contributorList: List<Work
 
   override fun onEntitiesChanged(event: VersionedStorageChange,
                                  storageKind: EntityStorageKind) = WorkspaceFileIndexDataMetrics.onEntitiesChangedTimeNanosec.addMeasuredTime {
-    ApplicationManager.getApplication().assertWriteAccessAllowed()
+    ThreadingAssertions.assertWriteAccess()
     contributorList.filter { it.storageKind == storageKind }.forEach { 
       processChangesByContributor(it, storageKind, event)
     }
@@ -288,7 +305,7 @@ internal class WorkspaceFileIndexDataImpl(private val contributorList: List<Work
   override fun updateDirtyEntities() {
     val start = Nanoseconds.now()
 
-    ApplicationManager.getApplication().assertWriteAccessAllowed()
+    ThreadingAssertions.assertWriteAccess()
     for (file in dirtyFiles) {
       val collection = fileSets.remove(file)
       collection?.forEach { 

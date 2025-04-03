@@ -6,6 +6,7 @@ import com.intellij.codeInspection.util.IntentionName
 import com.intellij.execution.ExecutionException
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeAndWaitIfNeeded
+import com.intellij.openapi.diagnostic.fileLogger
 import com.intellij.openapi.diagnostic.getOrLogException
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileTypes.FileTypeRegistry
@@ -29,7 +30,7 @@ import com.intellij.pycharm.community.ide.impl.configuration.PySdkConfigurationC
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
-import com.jetbrains.extensions.failure
+import com.jetbrains.python.failure
 import com.jetbrains.python.PyBundle
 import com.jetbrains.python.PySdkBundle
 import com.jetbrains.python.packaging.PyPackageManager
@@ -37,7 +38,7 @@ import com.jetbrains.python.packaging.PyPackageUtil
 import com.jetbrains.python.packaging.PyTargetEnvironmentPackageManager
 import com.jetbrains.python.requirements.RequirementsFileType
 import com.jetbrains.python.sdk.*
-import com.jetbrains.python.sdk.add.PyAddNewVirtualEnvFromFilePanel
+import com.jetbrains.python.sdk.add.v1.PyAddNewVirtualEnvFromFilePanel
 import com.jetbrains.python.sdk.configuration.PyProjectSdkConfigurationExtension
 import com.jetbrains.python.sdk.configuration.createVirtualEnvSynchronously
 import java.awt.BorderLayout
@@ -46,6 +47,7 @@ import java.nio.file.Paths
 import javax.swing.JComponent
 import javax.swing.JPanel
 
+private val LOGGER = fileLogger()
 class PyRequirementsTxtOrSetupPySdkConfiguration : PyProjectSdkConfigurationExtension {
 
   override fun createAndAddSdkForConfigurator(module: Module) = createAndAddSdk(module, Source.CONFIGURATOR).getOrLogException(LOGGER)

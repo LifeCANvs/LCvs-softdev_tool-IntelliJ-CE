@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.intention.impl.config;
 
 import com.intellij.codeInsight.intention.IntentionActionDelegate;
@@ -22,6 +22,7 @@ import com.intellij.util.TimeoutUtil;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.tree.TreeUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -33,9 +34,10 @@ import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreePath;
 import java.awt.*;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 
+@ApiStatus.Internal
 public abstract class IntentionSettingsTree {
   private JComponent myComponent;
   private CheckboxTree myTree;
@@ -332,7 +334,7 @@ public abstract class IntentionSettingsTree {
     @Override
     public void filter() {
       String filter = getFilter();
-      if (filter != null && filter.length() > 0) {
+      if (filter != null && !filter.isEmpty()) {
         if (!myExpansionMonitor.isFreeze()) {
           myExpansionMonitor.freeze();
         }
@@ -348,7 +350,7 @@ public abstract class IntentionSettingsTree {
         IdeFocusManager.getGlobalInstance().doWhenFocusSettlesDown(() -> IdeFocusManager.getGlobalInstance().requestFocus(myTree, true));
       });
       TreeUtil.expandAll(myTree);
-      if (filter == null || filter.length() == 0) {
+      if (filter == null || filter.isEmpty()) {
         TreeUtil.collapseAll(myTree, 0);
         myExpansionMonitor.restore();
       }
@@ -357,14 +359,14 @@ public abstract class IntentionSettingsTree {
     @Override
     protected void onlineFilter() {
       String filter = getFilter();
-      if (filter != null && filter.length() > 0) {
+      if (filter != null && !filter.isEmpty()) {
         if (!myExpansionMonitor.isFreeze()) {
           myExpansionMonitor.freeze();
         }
       }
       IntentionSettingsTree.this.filter(filterModel(filter, true));
       TreeUtil.expandAll(myTree);
-      if (filter == null || filter.length() == 0) {
+      if (filter == null || filter.isEmpty()) {
         TreeUtil.collapseAll(myTree, 0);
         myExpansionMonitor.restore();
       }

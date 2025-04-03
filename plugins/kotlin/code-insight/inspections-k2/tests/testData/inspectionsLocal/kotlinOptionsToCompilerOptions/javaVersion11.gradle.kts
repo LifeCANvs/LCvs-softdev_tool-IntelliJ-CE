@@ -1,4 +1,6 @@
 // FIX: Replace 'kotlinOptions' with 'compilerOptions'
+// DISABLE_K2_ERRORS
+// TODO: KTIJ-32773
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -23,5 +25,4 @@ tasks.test {
 val compileKotlin: KotlinCompile by tasks
 compileKotlin.<caret>kotlinOptions {
     jvmTarget = JavaVersion.VERSION_11.toString()
-    optIn = listOf("org.mylibrary.OptInAnnotation")
 }

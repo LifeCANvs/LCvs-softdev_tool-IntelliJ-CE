@@ -176,14 +176,12 @@ public class PythonFoldingBuilder extends CustomFoldingBuilder implements DumbAw
   }
 
   private static boolean checkFoldBlocks(@NotNull ASTNode statementList, @NotNull IElementType parentType) {
-    if (!PyElementTypes.PARTS.contains(parentType) && parentType != PyElementTypes.WITH_STATEMENT && parentType != PyElementTypes.CASE_CLAUSE) {
-      return false;
-    }
     PsiElement element = statementList.getPsi();
-    if (element instanceof PyStatementList) {
-      return StringUtil.countNewLines(element.getText()) > 0;
-    }
-    return false;
+    assert element instanceof PyStatementList;
+
+    return PyElementTypes.PARTS.contains(parentType) ||
+           parentType == PyElementTypes.WITH_STATEMENT ||
+           parentType == PyElementTypes.CASE_CLAUSE;
   }
 
   private static void foldLongStrings(ASTNode node, List<FoldingDescriptor> descriptors) {
@@ -224,7 +222,7 @@ public class PythonFoldingBuilder extends CustomFoldingBuilder implements DumbAw
       if (stringLiteralExpression.isDocString()) {
         final String stringValue = stringLiteralExpression.getStringValue().trim();
         final String[] lines = LineTokenizer.tokenize(stringValue, true);
-        if (lines.length > 2 && lines[1].trim().length() == 0) {
+        if (lines.length > 2 && lines[1].trim().isEmpty()) {
           return prefix + "\"\"\"" + lines[0].trim() + "...\"\"\"";
         }
         return prefix + "\"\"\"...\"\"\"";

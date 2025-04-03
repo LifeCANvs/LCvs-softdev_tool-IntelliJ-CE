@@ -16,11 +16,12 @@ import org.jetbrains.kotlin.idea.codeinsight.utils.isToString
 import org.jetbrains.kotlin.idea.references.mainReference
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.psiUtil.isSingleQuoted
 
 private const val TRIPLE_DOUBLE_QUOTE = "\"\"\""
 
 /**
- * Recursively visits all operands of binary [expression] with plus and,
+ * Recursively visits all operands of binary expression with plus and,
  * returns true if all operands do not have a new line. Otherwise, returns false.
  */
 fun KtExpression.containNoNewLine(): Boolean {
@@ -180,13 +181,13 @@ private fun foldOperandsOfBinaryExpression(left: KtExpression?, right: String, f
 context(KaSession)
 fun buildStringTemplateForBinaryExpression(expression: KtBinaryExpression): KtStringTemplateExpression {
     val rightText = buildStringTemplateForExpression(expression.right, forceBraces = false, nextText = null)
-    return foldOperandsOfBinaryExpression(expression.left, rightText, KtPsiFactory(expression))
+    return foldOperandsOfBinaryExpression(expression.left, rightText, KtPsiFactory(expression.project))
 }
 
 context(KaSession)
 fun canConvertToStringTemplate(expression: KtBinaryExpression): Boolean {
     if (expression.textContains('\n')) return false
-    if (expression.containsMultiDollarStringOperands()) return false
+    if (expression.containsPrefixedStringOperands()) return false
 
     val entries = buildStringTemplateForBinaryExpression(expression).entries
     return entries.none { it is KtBlockStringTemplateEntry }
@@ -194,16 +195,29 @@ fun canConvertToStringTemplate(expression: KtBinaryExpression): Boolean {
             && entries.any { it is KtLiteralStringTemplateEntry }
 }
 
-private fun convertContent(element: KtStringTemplateExpression): String {
+/**
+ * Converts the content of the [element] string template preparing it to be used in a raw string:
+ * * Replaces escaped characters with their unescaped value
+ * * Normalizes line separators
+ * * Escapes dangerous literal `$` chars with `${"$"}` or equivalent multi-dollar versions for prefixed strings
+ */
+fun convertContentForRawString(element: KtStringTemplateExpression): String {
+    val escapedDollarReplacementText by lazy {
+        KtPsiFactory(element.project).createMultiDollarBlockStringTemplateEntry(
+            KtPsiFactory(element.project).createExpression("\"$\""),
+            element.entryPrefixLength
+        ).text
+    }
     val text = buildString {
         val entries = element.entries
         for ((index, entry) in entries.withIndex()) {
             val value = entry.value()
 
-            if (value.endsWith("$") && index < entries.size - 1) {
+            if (value.endsWith("$") && index < entries.lastIndex) {
                 val nextChar = entries[index + 1].value().first()
                 if (nextChar.isJavaIdentifierStart() || nextChar == '{') {
-                    append("\${\"$\"}")
+                    append(value.substring(0, value.length - 1))
+                    append(escapedDollarReplacementText)
                     continue
                 }
             }
@@ -223,8 +237,7 @@ fun KtStringTemplateExpression.canBeConvertedToStringLiteral(): Boolean {
         // the replacement may make things even worse, suppress the action
         return false
     }
-    val text = text
-    if (text.startsWith("\"\"\"")) return false // already raw
+    if (!isSingleQuoted()) return false // already raw
 
     val escapeEntries = entries.filterIsInstance<KtEscapeStringTemplateEntry>()
     for (entry in escapeEntries) {
@@ -232,23 +245,27 @@ fun KtStringTemplateExpression.canBeConvertedToStringLiteral(): Boolean {
         if (Character.isISOControl(c) && c != '\n' && c != '\r') return false
     }
 
-    val converted = convertContent(this)
+    val converted = convertContentForRawString(this)
     return !converted.contains("\"\"\"")
 }
 
 fun KtStringTemplateExpression.convertToStringLiteral(): KtExpression {
-    val text = convertContent(this)
-    return replaced(KtPsiFactory(project).createExpression("\"\"\"" + text + "\"\"\""))
+    val text = convertContentForRawString(this)
+    val prefixLength = templatePrefixLength
+    val factory = KtPsiFactory(project)
+    val rawReplacement = factory.createStringTemplate(text, prefixLength, isRaw = true)
+    val replacement = if (prefixLength > 1) simplifyDollarEntries(rawReplacement) else rawReplacement
+    return replaced(replacement)
 }
 
-private fun KtExpression?.isMultiDollarString(): Boolean =
-    this is KtStringTemplateExpression && interpolationPrefix?.textLength?.let { it > 1 } == true
+private fun KtExpression?.isPrefixedString(): Boolean =
+    this is KtStringTemplateExpression && interpolationPrefix != null
 
-fun KtBinaryExpression?.containsMultiDollarStringOperands(): Boolean {
+fun KtBinaryExpression?.containsPrefixedStringOperands(): Boolean {
     var containsMultiDollarString = false
     this?.accept(object : KtVisitorVoid() {
         override fun visitStringTemplateExpression(expression: KtStringTemplateExpression) {
-            if (expression.isMultiDollarString()) {
+            if (expression.isPrefixedString()) {
                 containsMultiDollarString = true
             }
         }

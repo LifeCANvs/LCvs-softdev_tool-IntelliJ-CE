@@ -46,6 +46,7 @@
     <orderEntry type="module" module-name="kotlin.gradle.code-insight-toml" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.gradle.gradle" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.gradle.gradle-java" scope="RUNTIME" />
+    <orderEntry type="module" module-name="kotlin.gradle.gradle-java.k2" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.gradle.gradle-tooling" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.gradle.gradle-tooling.impl" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.grazie" scope="RUNTIME" />
@@ -69,7 +70,6 @@
     <orderEntry type="module" module-name="kotlin.run-configurations.jvm" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.scripting" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.spellchecker" scope="RUNTIME" />
-    <orderEntry type="module" module-name="kotlin.fir.fir-low-level-api-ide-impl" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.uast.uast-kotlin.k2" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.uast.uast-kotlin-idea.k2" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.base.fir.analysis-api-platform" scope="RUNTIME" />
@@ -124,5 +124,11 @@
     <orderEntry type="module" module-name="kotlin.performanceExtendedPlugin" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.jvm-debugger.evaluation.k2" scope="RUNTIME" />
     <orderEntry type="module" module-name="kotlin.features-trainer" scope="RUNTIME" />
+    <orderEntry type="module" module-name="kotlin.k2.internal" scope="RUNTIME" />
+    <orderEntry type="module" module-name="kotlin.base.fir.scripting" scope="RUNTIME" />
+    <orderEntry type="module" module-name="kotlin.jvm.shared" scope="RUNTIME" />
+    <orderEntry type="module" module-name="kotlin.jvm.k2" scope="RUNTIME" />
+    <orderEntry type="module" module-name="kotlin.gradle.scripting.shared" scope="RUNTIME" />
+    <orderEntry type="module" module-name="kotlin.gradle.scripting.k2" scope="RUNTIME" />
   </component>
 </module>

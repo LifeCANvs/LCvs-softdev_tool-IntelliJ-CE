@@ -1,7 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.documentation.render;
 
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
+import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerEx;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.editor.ClientEditorManager;
 import com.intellij.openapi.editor.Editor;
@@ -17,7 +17,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Iterator;
 
-import static com.intellij.codeWithMe.ClientId.withClientId;
+import static com.intellij.codeWithMe.ClientId.withExplicitClientId;
 
 public final class DocRenderManager {
   private static final Key<Boolean> DOC_RENDER_ENABLED = Key.create("doc.render.enabled");
@@ -45,7 +45,7 @@ public final class DocRenderManager {
     if (editor.getEditorKind() == EditorKind.DIFF) return false;
     Boolean value = editor.getUserData(DOC_RENDER_ENABLED);
     boolean enabled;
-    try (AccessToken ignored = withClientId(ClientEditorManager.getClientId(editor))) {
+    try (AccessToken ignored = withExplicitClientId(ClientEditorManager.getClientId(editor))) {
       enabled = EditorSettingsExternalizable.getInstance().isDocCommentRenderingEnabled();
     }
     return value == null ? enabled : value;
@@ -64,7 +64,7 @@ public final class DocRenderManager {
       DocRenderPassFactory.forceRefreshOnNextPass(editor);
     }
     for (Project project : ProjectManager.getInstance().getOpenProjects()) {
-      DaemonCodeAnalyzer.getInstance(project).restart();
+      DaemonCodeAnalyzerEx.getInstanceEx(project).restart("DocRenderManager.resetAllEditorsToDefaultState");
     }
   }
 
@@ -79,7 +79,7 @@ public final class DocRenderManager {
     DocRenderPassFactory.forceRefreshOnNextPass(editor);
     Project project = editor.getProject();
     if (project != null) {
-      DaemonCodeAnalyzer.getInstance(project).restart();
+      DaemonCodeAnalyzerEx.getInstanceEx(project).restart("DocRenderManager.resetEditorToDefaultState");
     }
   }
 }

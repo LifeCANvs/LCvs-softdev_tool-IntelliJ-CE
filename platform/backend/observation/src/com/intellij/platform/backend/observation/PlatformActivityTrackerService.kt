@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.backend.observation
 
 import com.intellij.concurrency.IntelliJContextElement
@@ -10,11 +10,11 @@ import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.registry.Registry
-import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.jetbrains.annotations.ApiStatus.Internal
+import org.jetbrains.annotations.VisibleForTesting
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -78,7 +78,6 @@ internal class PlatformActivityTrackerService(private val scope: CoroutineScope)
    * Installs a tracker for a blocking asynchronous activity of [action].
    * This method is cheap to use: it does not add any synchronization or complex computations.
    */
-  @RequiresBlockingContext
   fun <T> trackConfigurationActivityBlocking(kind: ActivityKey, action: () -> T): T {
     val currentContext = currentThreadContext()
     return withObservationTracker(kind) { observationTracker ->
@@ -116,15 +115,17 @@ internal class PlatformActivityTrackerService(private val scope: CoroutineScope)
     override fun produceChildElement(oldContext: CoroutineContext, isStructured: Boolean): IntelliJContextElement {
       // we would like to know about all child computations, regardless of their relation to the current process
       val newJob = Job(mainJob)
-      if (Registry.`is`("ide.activity.tracking.enable.debug", false)) {
-        computationMap[newJob] = Throwable()
-      }
+      traceObservedComputation(newJob)
       return ObservationTracker(mainJob, newJob)
     }
 
     override fun afterChildCompleted(context: CoroutineContext) {
-      computationMap.remove(currentJob)
+      removeObservedComputation(currentJob)
       currentJob.complete()
+    }
+
+    override fun childCanceled(context: CoroutineContext) {
+      afterChildCompleted(context)
     }
   }
 
@@ -213,8 +214,31 @@ internal class PlatformActivityTrackerService(private val scope: CoroutineScope)
   }
 }
 
-private val computationMap : MutableMap<Job, Throwable?> = ConcurrentHashMap()
+private val computationMap : MutableMap<Any, Throwable> = ConcurrentHashMap()
 
-internal fun dumpCurrentlyObservedComputations(): Set<Throwable> {
-  return computationMap.values.mapNotNullTo(HashSet()) { it }
+@Internal
+@VisibleForTesting
+fun dumpObservedComputations(): Set<Throwable> {
+  return computationMap.values.mapTo(HashSet()) { it }
+}
+
+@Internal
+fun dumpObservedComputationsToString(): String {
+  if (!Registry.`is`("ide.activity.tracking.enable.debug")) {
+    return "Enable 'ide.activity.tracking.enable.debug' registry option to collect activity traces"
+  }
+  return dumpObservedComputations()
+    .joinToString("\n") { it.stackTraceToString() }
+}
+
+@Internal
+fun traceObservedComputation(id: Any) {
+  if (Registry.`is`("ide.activity.tracking.enable.debug", false)) {
+    computationMap[id] = Throwable()
+  }
+}
+
+@Internal
+fun removeObservedComputation(id: Any) {
+  computationMap.remove(id)
 }

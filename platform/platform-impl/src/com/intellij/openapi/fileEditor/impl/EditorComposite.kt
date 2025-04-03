@@ -39,8 +39,6 @@ import com.intellij.platform.diagnostic.telemetry.impl.span
 import com.intellij.platform.fileEditor.FileEntry
 import com.intellij.platform.fileEditor.FileEntryTab
 import com.intellij.ui.*
-import com.intellij.ui.SideBorder.BOTTOM
-import com.intellij.ui.SideBorder.TOP
 import com.intellij.ui.components.panels.NonOpaquePanel
 import com.intellij.ui.components.panels.Wrapper
 import com.intellij.ui.tabs.JBTabs
@@ -113,7 +111,8 @@ open class EditorComposite internal constructor(
    * Currently selected editor
    */
   @JvmField
-  internal val selectedEditorWithProvider: StateFlow<FileEditorWithProvider?> = _selectedEditorWithProvider.asStateFlow()
+  @Internal
+  val selectedEditorWithProvider: StateFlow<FileEditorWithProvider?> = _selectedEditorWithProvider.asStateFlow()
 
   private val topComponents = HashMap<FileEditor, JComponent>()
   private val bottomComponents = HashMap<FileEditor, JComponent>()
@@ -381,6 +380,7 @@ open class EditorComposite internal constructor(
         }
       }
     }
+    component.validate()
 
     fileEditorWithProviderToSelect?.fileEditor?.selectNotify()
 
@@ -487,7 +487,7 @@ open class EditorComposite internal constructor(
     get() {
       val editorWithProvider = selectedEditorWithProvider.value ?: return null
       val component = focusWatcher.focusedComponent
-      if (component !is JComponent || !component.isShowing() || !component.isEnabled() || !component.isFocusable()) {
+      if (component !is JComponent || !component.isShowing() || !component.isEnabled || !component.isFocusable) {
         return editorWithProvider.fileEditor.preferredFocusedComponent
       }
       else {
@@ -724,6 +724,7 @@ open class EditorComposite internal constructor(
     dispatcher.multicaster.editorRemoved(editorTypeId)
   }
 
+  @JvmName("currentStateAsFileEntry")
   internal fun currentStateAsFileEntry(): FileEntry? {
     val fileEditorWithProviderList = fileEditorWithProviders.value
     if (fileEditorWithProviderList.isEmpty()) {
@@ -943,25 +944,6 @@ fun retrofitEditorComposite(composite: FileEditorComposite?): com.intellij.opena
   else {
     return composite.retrofit()
   }
-}
-
-internal fun restoreEditorState(
-  file: VirtualFile,
-  fileEditorWithProvider: FileEditorWithProvider,
-  isNewEditor: Boolean,
-  exactState: Boolean,
-  project: Project,
-) {
-  val state = if (isNewEditor) {
-    // We have to try to get state from the history only in case of the editor is not opened.
-    // Otherwise, history entry might have a state out of sync with the current editor state.
-    EditorHistoryManager.getInstance(project).getState(file, fileEditorWithProvider.provider) ?: return
-  }
-  else {
-    return
-  }
-
-  restoreEditorState(fileEditorWithProvider = fileEditorWithProvider, state = state, exactState = exactState, project = project)
 }
 
 internal fun restoreEditorState(

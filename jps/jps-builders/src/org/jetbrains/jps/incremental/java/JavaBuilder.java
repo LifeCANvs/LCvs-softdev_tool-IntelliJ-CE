@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.jps.incremental.java;
 
 import com.intellij.openapi.diagnostic.Logger;
@@ -9,9 +9,10 @@ import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.FileFilters;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.util.text.Strings;
+import com.intellij.util.CurrentJavaVersion;
 import com.intellij.util.ExceptionUtil;
 import com.intellij.util.concurrency.Semaphore;
-import com.intellij.util.concurrency.SequentialTaskExecutor;
 import com.intellij.util.containers.FileCollectionFactory;
 import com.intellij.util.containers.SmartHashSet;
 import com.intellij.util.execution.ParametersListUtil;
@@ -29,6 +30,7 @@ import org.jetbrains.jps.backwardRefs.JavaBackwardReferenceIndexWriter;
 import org.jetbrains.jps.builders.*;
 import org.jetbrains.jps.builders.impl.DirtyFilesHolderBase;
 import org.jetbrains.jps.builders.impl.TargetOutputIndexImpl;
+import org.jetbrains.jps.builders.impl.java.JavacCompilerTool;
 import org.jetbrains.jps.builders.java.*;
 import org.jetbrains.jps.builders.logging.ProjectBuilderLogger;
 import org.jetbrains.jps.builders.storage.BuildDataCorruptedException;
@@ -79,6 +81,10 @@ public final class JavaBuilder extends ModuleLevelBuilder {
 
   private static final String USE_MODULE_PATH_ONLY_OPTION = "compiler.force.module.path";
 
+  // the compiler sdk version from which specifying -proc:full is required for annotation processing to work
+  // if the option is set, it will override the hardcoded logic in 'addCompilerOptions'
+  private static final String PROC_FULL_REQUIRED_OPTION = "compiler.proc.full.required";
+
   public static final String BUILDER_ID = "java";
   public static final Key<Boolean> IS_ENABLED = Key.create("_java_compiler_enabled_");
   public static final FileFilter JAVA_SOURCES_FILTER = FileFilters.withExtension(JAVA_EXTENSION);
@@ -91,20 +97,22 @@ public final class JavaBuilder extends ModuleLevelBuilder {
   private static final List<String> COMPILABLE_EXTENSIONS = Collections.singletonList(JAVA_EXTENSION);
 
   private static final String PROC_ONLY_OPTION = "-proc:only";
+  private static final String PROC_FULL_OPTION = "-proc:full";
+  private static final String PROC_NONE_OPTION = "-proc:none";
   private static final String RELEASE_OPTION = "--release";
   private static final String TARGET_OPTION = "-target";
-  private static final String PROC_NONE_OPTION = "-proc:none";
   private static final String PROCESSORPATH_OPTION = "-processorpath";
   private static final String ENCODING_OPTION = "-encoding";
   private static final String ENABLE_PREVIEW_OPTION = "--enable-preview";
   private static final String PROCESSOR_MODULE_PATH_OPTION = "--processor-module-path";
   private static final String SOURCE_OPTION = "-source";
   private static final String SYSTEM_OPTION = "--system";
+  private static final String PATCH_MODULE_OPTION = "--patch-module";
   private static final Set<String> FILTERED_OPTIONS = Set.of(
     TARGET_OPTION, RELEASE_OPTION, "-d"
   );
   private static final Set<String> FILTERED_SINGLE_OPTIONS = Set.of(
-    "-g", "-deprecation", "-nowarn", "-verbose", PROC_NONE_OPTION, PROC_ONLY_OPTION, "-proceedOnError"
+    "-g", "-deprecation", "-nowarn", "-verbose", PROC_NONE_OPTION, PROC_ONLY_OPTION, PROC_FULL_OPTION, "-proceedOnError"
   );
   private static final Set<String> POSSIBLY_CONFLICTING_OPTIONS = Set.of(
     SOURCE_OPTION, SYSTEM_OPTION, "--boot-class-path", "-bootclasspath", "--class-path", "-classpath", "-cp", PROCESSORPATH_OPTION, "-sourcepath", "--module-path", "-p", "--module-source-path"
@@ -112,6 +120,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
 
   private static final List<ClassPostProcessor> ourClassProcessors = new ArrayList<>();
   private static final @Nullable File ourDefaultRtJar;
+  private static final int ourProcFullRequiredFrom; // 0, if not set
   static {
     File rtJar = null;
     StringTokenizer tokenizer = new StringTokenizer(System.getProperty("sun.boot.class.path", ""), File.pathSeparator, false);
@@ -123,6 +132,14 @@ public final class JavaBuilder extends ModuleLevelBuilder {
       }
     }
     ourDefaultRtJar = rtJar;
+
+    int procFullRequired = 0;
+    try {
+      procFullRequired = Math.max(Integer.parseInt(System.getProperty(PROC_FULL_REQUIRED_OPTION, "0")), 0);
+    }
+    catch (NumberFormatException ignored) {
+    }
+    ourProcFullRequiredFrom = procFullRequired;
   }
 
   private static final class CompilableModuleTypesHolder {
@@ -142,9 +159,9 @@ public final class JavaBuilder extends ModuleLevelBuilder {
   private final Executor myTaskRunner;
   private final Collection<JavacFileReferencesRegistrar> myRefRegistrars = new ArrayList<>();
 
-  public JavaBuilder(Executor tasksExecutor) {
+  public JavaBuilder() {
     super(BuilderCategory.TRANSLATOR);
-    myTaskRunner = SequentialTaskExecutor.createSequentialApplicationPoolExecutor("JavaBuilder Pool", tasksExecutor);
+    myTaskRunner = SharedThreadPool.getInstance().createBoundedExecutor("JavaBuilder Pool", 1);
     //add here class processors in the sequence they should be executed
   }
 
@@ -154,7 +171,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
 
   @Override
   public @NotNull String getPresentableName() {
-    return StringUtil.capitalize(getBuilderName());
+    return Strings.capitalize(getBuilderName());
   }
 
   @Override
@@ -437,7 +454,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
         forkSdk = null;
       }
 
-      final int compilerSdkVersion = forkSdk == null ? JavaVersion.current().feature : forkSdk.getSecond();
+      final int compilerSdkVersion = forkSdk == null ? CurrentJavaVersion.currentJavaVersion().feature : forkSdk.getSecond();
 
       final Pair<Iterable<String>, Iterable<String>> vm_compilerOptions = getCompilationOptions(compilerSdkVersion, context, chunk, profile, compilingTool);
       final Iterable<String> vmOptions = vm_compilerOptions.first;
@@ -456,12 +473,15 @@ public final class JavaBuilder extends ModuleLevelBuilder {
       final Iterable<? extends File> classPath;
       final ModulePath modulePath;
       final Iterable<? extends File> upgradeModulePath;
-      if (moduleInfoFile != null) { // has modules
+      if (moduleInfoFile != null || Iterators.contains(options, PATCH_MODULE_OPTION)) { // has modules or trying to patch a module
+
         final ModulePathSplitter splitter = MODULE_PATH_SPLITTER.get(context);
         final Pair<ModulePath, Collection<File>> pair = splitter.splitPath(
           moduleInfoFile, outs.keySet(), ProjectPaths.getCompilationModulePath(chunk, false), collectAdditionalRequires(options)
         );
-        final boolean useModulePathOnly = Boolean.parseBoolean(System.getProperty(USE_MODULE_PATH_ONLY_OPTION))/*compilerConfig.useModulePathOnly()*/;
+
+        // always add everything to ModulePath if module path usagfe is forced or '--patch-module' is explicitly specified in the command line
+        final boolean useModulePathOnly = moduleInfoFile == null || Boolean.parseBoolean(System.getProperty(USE_MODULE_PATH_ONLY_OPTION))/*compilerConfig.useModulePathOnly()*/;
         if (useModulePathOnly) {
           // in Java 9, named modules are not allowed to read classes from the classpath
           // moreover, the compiler requires all transitive dependencies to be on the module path
@@ -517,7 +537,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
       return invokeJavac(compilerSdkVersion, context, chunk, compilingTool, options, files, classesConsumer, (_options, _files, _outSink) -> {
         logJavacCall(chunk, _options, "in-process");
         return JavacMain.compile(
-          _options, _files, classPath, platformCp, modulePath, upgradeModulePath, sourcePath, outs, diagnosticSink, _outSink, context.getCancelStatus(), compilingTool
+          _options, _files, classPath, platformCp, modulePath, upgradeModulePath, sourcePath, outs, diagnosticSink, _outSink, context.getCancelStatus(), compilingTool, null
         );
       });
     }
@@ -679,7 +699,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
     if (!isJavac(compilingTool)) {
       return false; // applicable to javac only
     }
-    final int compilerSdkVersion = JavaVersion.current().feature;
+    final int compilerSdkVersion = CurrentJavaVersion.currentJavaVersion().feature;
 
     if (preferTargetJdkCompiler(context)) {
       final Pair<JpsSdk<JpsDummyElement>, Integer> sdkVersionPair = getAssociatedSdk(chunk);
@@ -784,7 +804,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
   }
 
   private static synchronized @NotNull ExternalJavacManager ensureJavacServerStarted(@NotNull CompileContext context) throws IOException {
-    ExternalJavacManager server = ExternalJavacManager.KEY.get(context);
+    ExternalJavacManager server = ExternalJavacManagerKey.KEY.get(context);
     if (server != null) {
       return server;
     }
@@ -806,7 +826,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
       }
     };
     server.start(listenPort);
-    ExternalJavacManager.KEY.set(context, server);
+    ExternalJavacManagerKey.KEY.set(context, server);
     return server;
   }
 
@@ -933,7 +953,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
       vmOptions.addAll(extension.getOptions(compilingTool, compilerSdkVersion));
     }
 
-    addCompilationOptions(compilerSdkVersion, compilationOptions, context, chunk, profile, true);
+    addCompilationOptions(compilerSdkVersion, compilingTool, compilationOptions, context, chunk, profile, true);
 
     return Pair.create(vmOptions, compilationOptions);
   }
@@ -953,11 +973,11 @@ public final class JavaBuilder extends ModuleLevelBuilder {
   }
 
   public static void addCompilationOptions(List<? super String> options, CompileContext context, ModuleChunk chunk, @Nullable ProcessorConfigProfile profile) {
-    addCompilationOptions(JavaVersion.current().feature, options, context, chunk, profile, false);
+    addCompilationOptions(CurrentJavaVersion.currentJavaVersion().feature, JavaBuilderUtil.findCompilingTool(JavacCompilerTool.ID), options, context, chunk, profile, false);
   }
 
   private static void addCompilationOptions(
-    int compilerSdkVersion, List<? super String> options, CompileContext context, ModuleChunk chunk, @Nullable ProcessorConfigProfile profile, boolean procOnlySupported
+    int compilerSdkVersion, JavaCompilingTool compilingTool, List<? super String> options, CompileContext context, ModuleChunk chunk, @Nullable ProcessorConfigProfile profile, boolean procOnlySupported
   ) {
     if (!options.contains(ENCODING_OPTION)) {
       final CompilerEncodingConfiguration config = context.getProjectDescriptor().getEncodingConfiguration();
@@ -986,6 +1006,21 @@ public final class JavaBuilder extends ModuleLevelBuilder {
 
       if (procOnlySupported && profile.isProcOnly()) {
         options.add(PROC_ONLY_OPTION);
+      }
+      else {
+        // for newer compilers need to enable annotation processing explicitly
+
+        if (ourProcFullRequiredFrom > 0 /*the requirement explicitly configured*/) {
+          if (compilerSdkVersion >= ourProcFullRequiredFrom) {
+            options.add(PROC_FULL_OPTION);
+          }
+        }
+        else {
+          // by default required for javac from version 23
+          if (compilerSdkVersion > 22 && isJavac(compilingTool)){
+            options.add(PROC_FULL_OPTION);
+          }
+        }
       }
 
       final File srcOutput = ProjectPaths.getAnnotationProcessorGeneratedSourcesOutputDir(
@@ -1242,7 +1277,7 @@ public final class JavaBuilder extends ModuleLevelBuilder {
   @Override
   public void chunkBuildFinished(CompileContext context, ModuleChunk chunk) {
     JavaBuilderUtil.cleanupChunkResources(context);
-    ExternalJavacManager extJavacManager = ExternalJavacManager.KEY.get(context);
+    ExternalJavacManager extJavacManager = ExternalJavacManagerKey.KEY.get(context);
     if (extJavacManager != null) {
       extJavacManager.shutdownIdleProcesses();
     }

@@ -1,10 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("JAVA_MODULE_DOES_NOT_EXPORT_PACKAGE")
 package com.intellij.ide
 
 import com.intellij.codeWithMe.ClientId
 import com.intellij.codeWithMe.ClientId.Companion.currentOrNull
-import com.intellij.codeWithMe.ClientId.Companion.withClientId
+import com.intellij.codeWithMe.ClientId.Companion.withExplicitClientId
 import com.intellij.concurrency.*
 import com.intellij.diagnostic.EventWatcher
 import com.intellij.diagnostic.LoadingState
@@ -17,35 +17,37 @@ import com.intellij.ide.ui.UISettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.*
 import com.intellij.openapi.application.ex.ApplicationManagerEx
-import com.intellij.openapi.application.impl.AnyThreadWriteThreadingSupport
 import com.intellij.openapi.application.impl.InvocationUtil
+import com.intellij.openapi.application.impl.getGlobalThreadingSupport
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.editor.impl.ad.util.ThreadLocalRhizomeDB
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.keymap.impl.IdeKeyEventDispatcher
 import com.intellij.openapi.keymap.impl.IdeMouseEventDispatcher
 import com.intellij.openapi.keymap.impl.KeyState
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.ui.JBPopupMenu
-import com.intellij.openapi.util.*
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.EmptyRunnable
+import com.intellij.openapi.util.SystemInfoRt
+import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.openapi.wm.ex.WindowManagerEx
 import com.intellij.openapi.wm.impl.FocusManagerImpl
-import com.intellij.openapi.wm.impl.IdeFrameImpl
 import com.intellij.platform.ide.bootstrap.StartupErrorReporter
 import com.intellij.ui.ComponentUtil
+import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.speedSearch.SpeedSearchSupply
-import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.concurrency.unwrapContextRunnable
 import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.ui.EDT
-import com.intellij.util.ui.EdtInvocationManager
 import com.intellij.util.ui.StartupUiUtil
 import com.intellij.util.ui.UIUtil
 import com.jetbrains.JBR
@@ -63,7 +65,6 @@ import java.awt.event.*
 import java.lang.invoke.MethodHandle
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -81,7 +82,7 @@ class IdeEventQueue private constructor() : EventQueue() {
   private val activityListeners = ContainerUtil.createLockFreeCopyOnWriteList<Runnable>()
 
   @Internal
-  val threadingSupport: ThreadingSupport = AnyThreadWriteThreadingSupport
+  val threadingSupport: ThreadingSupport = getGlobalThreadingSupport()
   val keyEventDispatcher: IdeKeyEventDispatcher = IdeKeyEventDispatcher(this)
   val mouseEventDispatcher: IdeMouseEventDispatcher = IdeMouseEventDispatcher()
   val popupManager: IdePopupManager = IdePopupManager()
@@ -106,11 +107,8 @@ class IdeEventQueue private constructor() : EventQueue() {
   private val eventsPosted = AtomicLong()
   private val eventsReturned = AtomicLong()
 
-  private var isInInputEvent = false
   var trueCurrentEvent: AWTEvent = InvocationEvent(this, EmptyRunnable.getInstance())
     private set
-
-  private var currentSequencedEvent: AWTEvent? = null
 
   @Volatile
   private var lastActiveTime = System.nanoTime()
@@ -124,8 +122,6 @@ class IdeEventQueue private constructor() : EventQueue() {
   private var winMetaPressed = false
   private var inputMethodLock = 0
   private val postEventListeners = ContainerUtil.createLockFreeCopyOnWriteList<PostEventHook>()
-  private val runnablesWaitingFocusChange = HashMap<AWTEvent, MutableList<Runnable>>()
-  private val focusEventList = ConcurrentLinkedQueue<AWTEvent>()
 
   @Internal
   @JvmField
@@ -141,7 +137,6 @@ class IdeEventQueue private constructor() : EventQueue() {
     val systemEventQueue = Toolkit.getDefaultToolkit().systemEventQueue
     assert(systemEventQueue !is IdeEventQueue) { systemEventQueue }
     systemEventQueue.push(this)
-    threadingSupport.postInit(Thread.currentThread())
     EDT.updateEdt()
     replaceDefaultKeyboardFocusManager()
     addDispatcher(WindowsAltSuppressor(), null)
@@ -177,49 +172,6 @@ class IdeEventQueue private constructor() : EventQueue() {
   internal fun setIdleTracker(value: () -> Unit) {
     EDT.assertIsEdt()
     idleTracker = value
-  }
-
-  /**
-   * Executes given `runnable` after all focus activities are finished.
-   *
-   * @apiNote be careful with this method. It may run `runnable` synchronously in the context of the current thread, or may queue
-   * runnable until the focus events queue is empty. In the latter case, runnable is going to be run while processing the last focus
-   * event from the queue, without any context, e.g., outside the write-safe context. Consider using safer [IdeFocusManager.doWhenFocusSettlesDown]
-   */
-  fun executeWhenAllFocusEventsLeftTheQueue(runnable: Runnable) {
-    ifFocusEventsInTheQueue(
-      yes = { e ->
-        var runnables = runnablesWaitingFocusChange.get(e)
-        if (runnables == null) {
-          runnables = mutableListOf()
-          runnables.add(runnable)
-          runnablesWaitingFocusChange.put(e, runnables)
-        }
-        else {
-          Logs.FOCUS_AWARE_RUNNABLES_LOG.debug { "We have already had a runnable for the event: $e" }
-          runnables.add(runnable)
-        }
-      },
-      no = runnable,
-    )
-  }
-
-  private fun runnablesWaitingForFocusChangeState(): String =
-    focusEventList.joinToString(separator = ", ") { event -> "[${event.id}; ${event.source.javaClass.name}]" }
-
-  private inline fun ifFocusEventsInTheQueue(yes: (AWTEvent) -> Unit, no: Runnable) {
-    val lastFocusGainedEvent = focusEventList.lastOrNull { it.id == FocusEvent.FOCUS_GAINED }
-    if (lastFocusGainedEvent == null) {
-      Logs.FOCUS_AWARE_RUNNABLES_LOG.debug { "No focus gained event in the queue runnable is run on EDT if needed : ${no.javaClass.name}" }
-      EdtInvocationManager.invokeLaterIfNeeded(no)
-    }
-    else {
-      Logs.FOCUS_AWARE_RUNNABLES_LOG.debug {
-        "Focus event list (trying to execute runnable): ${runnablesWaitingForFocusChangeState()}\n" +
-        "runnable saved for : [${lastFocusGainedEvent.id}; ${lastFocusGainedEvent.source}] -> ${no.javaClass.name}"
-      }
-      yes(lastFocusGainedEvent)
-    }
   }
 
   @Suppress("DeprecatedCallableAddReplaceWith")
@@ -294,7 +246,7 @@ class IdeEventQueue private constructor() : EventQueue() {
     try {
       performanceWatcher?.edtEventStarted()
       eventWatcher?.edtEventStarted(event, startedAt)
-      fixNestedSequenceEvent(event)
+      SequencedEventNestedFieldHolder.fixNestedSequenceEvent(event)
       // Add code below if you need
 
       // Update EDT if it changes (might happen after Application disposal)
@@ -335,19 +287,19 @@ class IdeEventQueue private constructor() : EventQueue() {
         disableAltGrUnsupportedOnMac(event)
       }
 
-      val wasInputEvent = isInInputEvent
-      isInInputEvent = isInputEvent(event)
       val oldEvent = trueCurrentEvent
       trueCurrentEvent = event
       val finalEvent = event
       val runnable = InvocationUtil.extractRunnable(event)?.unwrapContextRunnable()
       val runnableClass = runnable?.javaClass ?: Runnable::class.java
+      @Suppress("TestOnlyProblems")
+      val nakedRunnable = runnable is NakedRunnable
       val processEventRunnable = Runnable {
         withAttachedClientId(finalEvent).use {
           val progressManager = ProgressManager.getInstanceOrNull()
           try {
             runCustomProcessors(finalEvent, preProcessors)
-            performActivity(finalEvent, isCoroutineWILEnabled && !threadingSupport.isInsideUnlockedWriteIntentLock()) {
+            performActivity(finalEvent, !nakedRunnable && isPureSwingEventWilEnabled && !threadingSupport.isInsideUnlockedWriteIntentLock()) {
               if (progressManager == null) {
                 _dispatchEvent(finalEvent)
               }
@@ -363,11 +315,8 @@ class IdeEventQueue private constructor() : EventQueue() {
             processException(t)
           }
           finally {
-            isInInputEvent = wasInputEvent
             trueCurrentEvent = oldEvent
-            if (currentSequencedEvent === finalEvent) {
-              currentSequencedEvent = null
-            }
+            SequencedEventNestedFieldHolder.eventDispatched(finalEvent)
             runCustomProcessors(finalEvent, postProcessors)
             if (finalEvent is KeyEvent) {
               maybeReady()
@@ -377,9 +326,6 @@ class IdeEventQueue private constructor() : EventQueue() {
                                          startedAt,
                                          runnableClass)
             }
-          }
-          if (isFocusEvent(finalEvent)) {
-            onFocusEvent(finalEvent)
           }
         }
       }
@@ -411,45 +357,6 @@ class IdeEventQueue private constructor() : EventQueue() {
       }
       catch (t: Throwable) {
         processException(t)
-      }
-    }
-  }
-
-  // Fixes IDEA-218430: nested sequence events cause deadlock
-  private fun fixNestedSequenceEvent(e: AWTEvent) {
-    if (e.javaClass == SequencedEventNestedFieldHolder.SEQUENCED_EVENT_CLASS) {
-      if (currentSequencedEvent != null) {
-        val sequenceEventToDispose = currentSequencedEvent!!
-        currentSequencedEvent = null // Set to null BEFORE dispose b/c `dispose` can dispatch events internally
-        SequencedEventNestedFieldHolder.invokeDispose(sequenceEventToDispose)
-      }
-      currentSequencedEvent = e
-    }
-  }
-
-  private fun onFocusEvent(event: AWTEvent) {
-    Logs.FOCUS_AWARE_RUNNABLES_LOG.debug { "Focus event list (execute on focus event): " + runnablesWaitingForFocusChangeState() }
-    val events = mutableListOf<AWTEvent>()
-    @Suppress("UsePropertyAccessSyntax")
-    while (!focusEventList.isEmpty()) {
-      val f = focusEventList.poll()
-      events.add(f)
-      if (f == event) {
-        break
-      }
-    }
-
-    for (entry in events) {
-      val runnables = runnablesWaitingFocusChange.remove(entry) ?: continue
-      for (r in runnables) {
-        if (r !is ExpirableRunnable || !r.isExpired) {
-          try {
-            r.run()
-          }
-          catch (e: Throwable) {
-            processException(e)
-          }
-        }
       }
     }
   }
@@ -543,7 +450,7 @@ class IdeEventQueue private constructor() : EventQueue() {
     if (isUserActivityEvent(e)) {
       ActivityTracker.getInstance().inc()
     }
-    if (popupManager.isPopupActive && popupManager.dispatch(e)) {
+    if (popupManager.isPopupActive && threadingSupport.runPreventiveWriteIntentReadAction { popupManager.dispatch(e) }) {
       if (keyEventDispatcher.isWaitingForSecondKeyStroke) {
         keyEventDispatcher.state = KeyState.STATE_INIT
       }
@@ -552,9 +459,11 @@ class IdeEventQueue private constructor() : EventQueue() {
 
     if (e is WindowEvent) {
       // app activation can call methods that need write intent (like project saving)
-      threadingSupport.runWriteIntentReadAction<Unit, Throwable> { processAppActivationEvent(e) }
+      threadingSupport.runPreventiveWriteIntentReadAction { processAppActivationEvent(e) }
     }
-    if (dispatchByCustomDispatchers(e)) {
+
+    // IJPL-177735 Remove Write-Intent lock from IdeEventQueue.EventDispatcher
+    if (threadingSupport.runPreventiveWriteIntentReadAction { dispatchByCustomDispatchers(e) }) {
       return
     }
     if (e is InputMethodEvent && SystemInfoRt.isMac && keyEventDispatcher.isWaitingForSecondKeyStroke) {
@@ -562,8 +471,8 @@ class IdeEventQueue private constructor() : EventQueue() {
     }
 
     when {
-      e is MouseEvent -> threadingSupport.runWriteIntentReadAction<Unit, Throwable> { dispatchMouseEvent(e) }
-      e is KeyEvent -> threadingSupport.runWriteIntentReadAction<Unit, Throwable> { dispatchKeyEvent(e) }
+      e is MouseEvent -> threadingSupport.runPreventiveWriteIntentReadAction { dispatchMouseEvent(e) }
+      e is KeyEvent -> threadingSupport.runPreventiveWriteIntentReadAction { dispatchKeyEvent(e) }
       appIsLoaded() -> {
         val app = ApplicationManagerEx.getApplicationEx()
         if (e is ComponentEvent) {
@@ -583,6 +492,7 @@ class IdeEventQueue private constructor() : EventQueue() {
     MouseEvent.MOUSE_PRESSED == e.id ||
     MouseEvent.MOUSE_RELEASED == e.id ||
     MouseEvent.MOUSE_CLICKED == e.id ||
+    MouseEvent.MOUSE_DRAGGED == e.id ||
     e is FocusEvent ||
     e is WindowEvent && e.id != WindowEvent.WINDOW_CLOSED
 
@@ -662,24 +572,21 @@ class IdeEventQueue private constructor() : EventQueue() {
     return false
   }
 
-  private fun defaultDispatchEvent(e: AWTEvent) {
+  @Internal
+  fun defaultDispatchEvent(e: AWTEvent) {
     try {
       maybeReady()
       val me = e as? MouseEvent
-      val ke = e as? KeyEvent
-      val consumed = ke == null || ke.isConsumed
+      val keyEvent = e as? KeyEvent
+      val consumed = keyEvent == null || keyEvent.isConsumed
       if (me != null && (me.isPopupTrigger || e.id == MouseEvent.MOUSE_PRESSED) ||
-          ke != null /*&& ke.keyCode == KeyEvent.VK_CONTEXT_MENU*/) {
+          keyEvent != null /*&& ke.keyCode == KeyEvent.VK_CONTEXT_MENU*/) {
         popupTriggerTime = System.nanoTime()
-      }
-      val source = e.source
-      if (source is IdeFrameImpl) {
-        source.detectWindowActivationByMousePressed(e)
       }
       super.dispatchEvent(e)
       // collect mnemonics statistics only if a key event was processed above
-      if (!consumed && ke!!.isConsumed && KeyEvent.KEY_PRESSED == ke.id) {
-        logMnemonicUsed(ke)
+      if (!consumed && keyEvent.isConsumed && KeyEvent.KEY_PRESSED == keyEvent.id) {
+        logMnemonicUsed(keyEvent)
       }
     }
     catch (t: Throwable) {
@@ -703,24 +610,26 @@ class IdeEventQueue private constructor() : EventQueue() {
     }
   }
 
-  fun pumpEventsForHierarchy(modalComponent: Component, exitCondition: Future<*>, eventConsumer: Consumer<AWTEvent>) = resetThreadContext().use {
-    EDT.assertIsEdt()
-    Logs.LOG.debug { "pumpEventsForHierarchy($modalComponent, $exitCondition)" }
+  fun pumpEventsForHierarchy(modalComponent: Component, exitCondition: Future<*>, eventConsumer: Consumer<AWTEvent>) {
+    resetThreadContext().use {
+      EDT.assertIsEdt()
+      Logs.LOG.debug { "pumpEventsForHierarchy($modalComponent, $exitCondition)" }
 
-    while (!exitCondition.isDone) {
-      try {
-        val event = nextEvent
-        val consumed = consumeUnrelatedEvent(modalComponent, event)
-        if (!consumed) {
-          dispatchEvent(event)
+      while (!exitCondition.isDone) {
+        try {
+          val event = nextEvent
+          val consumed = consumeUnrelatedEvent(modalComponent, event)
+          if (!consumed) {
+            dispatchEvent(event)
+          }
+          eventConsumer.accept(event)
         }
-        eventConsumer.accept(event)
+        catch (e: Throwable) {
+          Logs.LOG.error(e)
+        }
       }
-      catch (e: Throwable) {
-        Logs.LOG.error(e)
-      }
+      Logs.LOG.debug { "pumpEventsForHierarchy.exit($modalComponent, $exitCondition)" }
     }
-    Logs.LOG.debug { "pumpEventsForHierarchy.exit($modalComponent, $exitCondition)" }
   }
 
   fun interface EventDispatcher {
@@ -826,9 +735,7 @@ class IdeEventQueue private constructor() : EventQueue() {
     if (event is KeyEvent) {
       keyboardEventPosted.incrementAndGet()
     }
-    if (isFocusEvent(event)) {
-      focusEventList.add(event)
-    }
+
     super.postEvent(event)
     return true
   }
@@ -867,7 +774,7 @@ class IdeEventQueue private constructor() : EventQueue() {
   }
 
   private fun withAttachedClientId(event: AWTEvent): AccessToken {
-    return if (event is ClientIdAwareEvent) withClientId(event.clientId) else AccessToken.EMPTY_ACCESS_TOKEN
+    return if (event is ClientIdAwareEvent) withExplicitClientId(event.clientId) else AccessToken.EMPTY_ACCESS_TOKEN
   }
 
   @Deprecated("Does nothing currently")
@@ -912,11 +819,11 @@ class IdeEventQueue private constructor() : EventQueue() {
     }
   }
 
-  fun getPostedEventCount() = eventsPosted.get()
+  fun getPostedEventCount(): Long = eventsPosted.get()
 
-  fun getReturnedEventCount() = eventsReturned.get()
+  fun getReturnedEventCount(): Long = eventsReturned.get()
 
-  fun getPostedSystemEventCount() = (AppContext.getAppContext()?.get("jb.postedSystemEventCount") as? AtomicLong)?.get() ?: -1
+  fun getPostedSystemEventCount(): Long = (AppContext.getAppContext()?.get("jb.postedSystemEventCount") as? AtomicLong)?.get() ?: -1
 
   fun flushNativeEventQueue() {
     SunToolkit.flushPendingEvents()
@@ -941,9 +848,6 @@ class IdeEventQueue private constructor() : EventQueue() {
 private object Logs {
   @JvmField
   val LOG: Logger = logger<IdeEventQueue>()
-
-  @JvmField
-  val FOCUS_AWARE_RUNNABLES_LOG: Logger = Logger.getInstance(IdeEventQueue::class.java.name + ".runnables")
 }
 
 /**
@@ -1035,6 +939,8 @@ internal fun performActivity(e: AWTEvent, needWIL: Boolean, runnable: () -> Unit
     }
   }
 
+  setImplicitThreadLocalRhizomeIfEnabled()
+
   if (transactionGuard == null) {
     runnable()
   }
@@ -1042,11 +948,8 @@ internal fun performActivity(e: AWTEvent, needWIL: Boolean, runnable: () -> Unit
     val runnableWithWIL =
       if (needWIL) {
         {
-          ThreadingAssertions.setImplicitLockOnEDT(true)
-          try {
-            WriteIntentReadAction.run(runnable)
-          } finally {
-            ThreadingAssertions.setImplicitLockOnEDT(false)
+          WriteIntentReadAction.run {
+            runnable()
           }
         }
       }
@@ -1083,7 +986,10 @@ private fun processMouseWheelEvent(e: MouseWheelEvent): Boolean {
   }
 
   e.consume()
-  (selectedPath[0].component as? JBPopupMenu)?.processMouseWheelEvent(e)
+
+  selectedPath.filterIsInstance<JBPopupMenu>()
+    .filter { it.contains(RelativePoint(e).getPoint(it)) }
+    .forEach { it.processMouseWheelEvent(e) }
   return true
 }
 
@@ -1108,15 +1014,6 @@ private fun processAppActivationEvent(event: WindowEvent) {
       }
     }
   }
-}
-
-private fun isFocusEvent(e: AWTEvent): Boolean {
-  return e.id == FocusEvent.FOCUS_GAINED ||
-         e.id == FocusEvent.FOCUS_LOST ||
-         e.id == WindowEvent.WINDOW_ACTIVATED ||
-         e.id == WindowEvent.WINDOW_DEACTIVATED ||
-         e.id == WindowEvent.WINDOW_LOST_FOCUS ||
-         e.id == WindowEvent.WINDOW_GAINED_FOCUS
 }
 
 private fun isKeyboardEvent(event: AWTEvent): Boolean = event is KeyEvent
@@ -1154,18 +1051,35 @@ internal fun consumeUnrelatedEvent(modalComponent: Component?, event: AWTEvent):
 }
 
 private object SequencedEventNestedFieldHolder {
-  private val DISPOSE_METHOD: MethodHandle
 
-  @JvmField
-  val SEQUENCED_EVENT_CLASS: Class<*> = SequencedEventNestedFieldHolder::class.java.classLoader.loadClass("java.awt.SequencedEvent")
+  private val SEQUENCED_EVENT_CLASS: Class<*> = javaClass.classLoader.loadClass("java.awt.SequencedEvent")
 
-  fun invokeDispose(event: AWTEvent) {
+  private val DISPOSE_METHOD: MethodHandle = MethodHandles
+    .privateLookupIn(SEQUENCED_EVENT_CLASS, MethodHandles.lookup())
+    .findVirtual(SEQUENCED_EVENT_CLASS, "dispose", MethodType.methodType(Void.TYPE))
+
+  private fun invokeDispose(event: AWTEvent) {
     DISPOSE_METHOD.invoke(event)
   }
 
-  init {
-    DISPOSE_METHOD = MethodHandles.privateLookupIn(SEQUENCED_EVENT_CLASS, MethodHandles.lookup())
-      .findVirtual(SEQUENCED_EVENT_CLASS, "dispose", MethodType.methodType(Void.TYPE))
+  private var currentSequencedEvent: AWTEvent? = null
+
+  // Fixes IDEA-218430: nested sequence events cause deadlock
+  fun fixNestedSequenceEvent(e: AWTEvent) {
+    if (e.javaClass == SEQUENCED_EVENT_CLASS) {
+      val sequenceEventToDispose = currentSequencedEvent
+      if (sequenceEventToDispose != null) {
+        currentSequencedEvent = null // Set to null BEFORE dispose b/c `dispose` can dispatch events internally
+        invokeDispose(sequenceEventToDispose)
+      }
+      currentSequencedEvent = e
+    }
+  }
+
+  fun eventDispatched(e: AWTEvent) {
+    if (currentSequencedEvent === e) {
+      currentSequencedEvent = null
+    }
   }
 }
 
@@ -1175,7 +1089,7 @@ private object SequencedEventNestedFieldHolder {
  * and after [processAppActivationEvent], which defeats the very purpose of this flag.
  */
 @Internal
-internal var skipWindowDeactivationEvents: Boolean = false
+var skipWindowDeactivationEvents: Boolean = false
 
 // we have to stop editing with <ESC> (if any) and consume the event to prevent any further processing (dialog closing etc.)
 private class EditingCanceller : IdeEventQueue.EventDispatcher {
@@ -1265,6 +1179,10 @@ interface ClientIdAwareEvent {
   val clientId: ClientId?
 }
 
+@TestOnly
+@Internal
+interface NakedRunnable: Runnable
+
 private class ComponentEventWithClientId(source: Component, id: Int, override val clientId: ClientId?) : ComponentEvent(source, id), ClientIdAwareEvent
 
 @Suppress("SpellCheckingInspection")
@@ -1284,4 +1202,17 @@ private fun abracadabraDaberBoreh(eventQueue: IdeEventQueue) {
     .findConstructor(aClass, MethodType.methodType(Void.TYPE, EventQueue::class.java))
   val postEventQueue = constructor.invoke(eventQueue)
   AppContext.getAppContext().put("PostEventQueue", postEventQueue)
+}
+
+private fun setImplicitThreadLocalRhizomeIfEnabled() {
+  if (isRhizomeAdEnabled) {
+    // It is a workaround on tricky `updateDbInTheEventDispatchThread()` where
+    // the thread local DB is reset by `fleet.kernel.DbSource.ContextElement.restoreThreadContext`
+    try {
+      ThreadLocalRhizomeDB.setThreadLocalDb(ThreadLocalRhizomeDB.lastKnownDb())
+    }
+    catch (e: Exception) {
+      Logs.LOG.error(e)
+    }
+  }
 }

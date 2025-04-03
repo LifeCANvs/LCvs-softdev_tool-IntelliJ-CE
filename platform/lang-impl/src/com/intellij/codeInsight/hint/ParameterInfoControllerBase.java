@@ -19,7 +19,6 @@ import com.intellij.openapi.editor.ex.util.EditorUtil;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.*;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
@@ -29,10 +28,12 @@ import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtilBase;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.Alarm;
+import com.intellij.util.ConcurrencyUtil;
 import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.util.text.CharArrayUtil;
 import com.intellij.util.ui.UIUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -56,6 +57,7 @@ public abstract class ParameterInfoControllerBase extends UserDataHolderBase imp
   protected final RangeMarker myLbraceMarker;
   private final CaretListener myEditorCaretListener;
 
+  @ApiStatus.Internal
   protected final @NotNull ParameterInfoControllerData myParameterInfoControllerData;
 
   protected final Alarm myAlarm = new Alarm();
@@ -84,11 +86,7 @@ public abstract class ParameterInfoControllerBase extends UserDataHolderBase imp
   }
 
   static List<ParameterInfoControllerBase> getAllControllers(@NotNull Editor editor) {
-    List<ParameterInfoControllerBase> array = editor.getUserData(ALL_CONTROLLERS_KEY);
-    if (array == null) {
-      array = ((UserDataHolderEx)editor).putUserDataIfAbsent(ALL_CONTROLLERS_KEY, new CopyOnWriteArrayList<>());
-    }
-    return array;
+    return ConcurrencyUtil.computeIfAbsent(editor, ALL_CONTROLLERS_KEY, () -> new CopyOnWriteArrayList<>());
   }
 
   public static boolean existsForEditor(@NotNull Editor editor) {
@@ -183,6 +181,7 @@ public abstract class ParameterInfoControllerBase extends UserDataHolderBase imp
     myParameterInfoControllerData.getHandler().syncUpdateOnCaretMove(new MyLazyUpdateParameterInfoContext());
   }
 
+  @ApiStatus.Internal
   protected @NotNull ParameterInfoControllerData createParameterInfoControllerData(@NotNull ParameterInfoHandler<PsiElement, Object> handler) {
     return new ParameterInfoControllerData(handler);
   }
@@ -362,9 +361,12 @@ public abstract class ParameterInfoControllerBase extends UserDataHolderBase imp
     throw new TimeoutException();
   }
 
+  /**
+   * @deprecated Always false
+   */
+  @Deprecated
   public static boolean areParameterTemplatesEnabledOnCompletion() {
-    return Registry.is("java.completion.argument.live.template") &&
-           !CodeInsightSettings.getInstance().SHOW_PARAMETER_NAME_HINTS_ON_COMPLETION;
+    return false;
   }
 
   public static @NotNull ParameterInfoControllerBase createParameterInfoController(@NotNull Project project,
@@ -555,6 +557,37 @@ public abstract class ParameterInfoControllerBase extends UserDataHolderBase imp
 
     public RawSignatureItem(String htmlText) {
       this.htmlText = htmlText;
+    }
+  }
+
+  @ApiStatus.Internal
+  protected static final class RawSignaturePresentationItem implements SignatureItemModel {
+    public final @NotNull List<@NotNull RawParameterPresentationItem> parameters;
+    public final int currentParameterIndex;
+    public final @NotNull String separator;
+    public final boolean isDeprecated;
+
+    public RawSignaturePresentationItem(@NotNull List<@NotNull RawParameterPresentationItem> parameters,
+                                        int currentParameterIndex,
+                                        @NotNull String separator,
+                                        boolean isDeprecated) {
+      this.parameters = parameters;
+      this.currentParameterIndex = currentParameterIndex;
+      this.separator = separator;
+      this.isDeprecated = isDeprecated;
+    }
+
+    @ApiStatus.Internal
+    public static class RawParameterPresentationItem {
+      public final @NotNull String nameAndTypeHtml;
+      public final @Nullable String defaultValueHtml;
+      public final boolean isMismatched;
+
+      public RawParameterPresentationItem(@NotNull String nameAndTypeHtml, @Nullable String defaultValueHtml, boolean isMismatched) {
+        this.nameAndTypeHtml = nameAndTypeHtml;
+        this.defaultValueHtml = defaultValueHtml;
+        this.isMismatched = isMismatched;
+      }
     }
   }
 

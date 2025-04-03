@@ -4,12 +4,13 @@ package com.intellij.vcs.commit
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.vcs.AbstractVcs
-import com.intellij.openapi.vcs.VcsBundle.message
+import com.intellij.openapi.vcs.VcsBundle
 import com.intellij.openapi.vcs.VcsConfiguration
 import com.intellij.openapi.vcs.ui.RefreshableOnComponent
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.dsl.builder.*
 import com.intellij.ui.layout.ComponentPredicate
+import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.UIUtil.removeMnemonic
 import org.jetbrains.annotations.Nls
@@ -17,12 +18,18 @@ import java.awt.BorderLayout
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.ScrollPaneConstants
+import javax.swing.border.Border
 import javax.swing.border.EmptyBorder
 
-class CommitOptionsPanel(private val project: Project,
-                         private val actionNameSupplier: () -> @Nls String,
-                         private val nonFocusable: Boolean,
-                         private val nonModalCommit: Boolean) : CommitOptionsUi {
+internal class CommitOptionsPanel(
+  private val project: Project,
+  private val actionNameSupplier: () -> @Nls String,
+  private val nonFocusable: Boolean,
+  private val nonModalCommit: Boolean,
+  private val contentBorder: Border = JBUI.Borders.empty()
+) : CommitOptionsUi {
+  @JvmField
   val component: JComponent
   private lateinit var placeholder: Placeholder
 
@@ -38,8 +45,13 @@ class CommitOptionsPanel(private val project: Project,
         placeholder = placeholder()
           .align(Align.FILL)
       }.resizableRow()
+    }.apply {
+      border = contentBorder
     }
-    component = ScrollPaneFactory.createScrollPane(panel, true)
+    component = ScrollPaneFactory.createScrollPane(panel,
+                                                   ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                                                   ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
+                                                   true)
   }
 
   override fun setOptions(options: CommitOptions) {
@@ -65,17 +77,17 @@ class CommitOptionsPanel(private val project: Project,
       val postCommitChecks = options.postCommitChecksOptions
       if (postCommitChecks.isNotEmpty()) {
         group(postCommitChecksGroupTitle(actionName)) {
-          if (nonModalCommit) {
-            appendNonModalCommitSettingsRow(actionName)
-            separator()
-          }
           appendOptionRows(postCommitChecks)
+          if (nonModalCommit) {
+            separator()
+            appendNonModalCommitSettingsRow(actionName)
+          }
         }
       }
 
       val afterOptions = options.afterOptions
       if (afterOptions.isNotEmpty()) {
-        group(message("border.standard.after.checkin.options.group", actionName)) {
+        group(VcsBundle.message("border.standard.after.checkin.options.group", actionName)) {
           appendOptionRows(afterOptions)
         }
       }
@@ -95,8 +107,8 @@ class CommitOptionsPanel(private val project: Project,
   private fun Panel.appendNonModalCommitSettingsRow(actionName: String) {
     val settings = VcsConfiguration.getInstance(project)
     row {
-      checkBox(message("settings.commit.postpone.slow.checks", actionName))
-        .comment(message("settings.commit.postpone.slow.checks.description.short"))
+      checkBox(VcsBundle.message("settings.commit.postpone.slow.checks", actionName))
+        .comment(VcsBundle.message("settings.commit.postpone.slow.checks.description.short"))
         .selected(settings.NON_MODAL_COMMIT_POSTPONE_SLOW_CHECKS)
         .onChanged { setRunSlowCommitChecksAfterCommit(project, it.isSelected) }
     }
@@ -143,7 +155,8 @@ class CommitOptionsPanel(private val project: Project,
   }
 
   companion object {
-    fun commitChecksGroupTitle(actionName: @Nls String): @Nls String = message("commit.checks.group", actionName)
-    fun postCommitChecksGroupTitle(actionName: @Nls String): @Nls String = message("commit.checks.group.post", actionName)
+    fun commitChecksGroupTitle(actionName: @Nls String): @Nls String = VcsBundle.message("commit.checks.group", actionName)
+
+    fun postCommitChecksGroupTitle(actionName: @Nls String): @Nls String = VcsBundle.message("commit.checks.group.post", actionName)
   }
 }

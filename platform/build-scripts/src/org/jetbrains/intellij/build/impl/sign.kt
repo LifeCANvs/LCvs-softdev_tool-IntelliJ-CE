@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplacePutWithAssignment")
 package org.jetbrains.intellij.build.impl
 
@@ -37,6 +37,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.exists
 import kotlin.io.path.extension
 import kotlin.io.path.name
+import kotlin.io.path.relativeTo
 
 internal fun isMacLibrary(name: String): Boolean =
   name.endsWith(".jnilib") ||
@@ -51,7 +52,7 @@ internal fun CoroutineScope.recursivelySignMacBinaries(root: Path,
   val binaries = mutableListOf<Path>()
 
   Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
-    override fun visitFile(file: Path, attrs: BasicFileAttributes?): FileVisitResult {
+    override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
       val relativePath = root.relativize(file)
       val name = file.fileName.toString()
       if (name.endsWith(".jar") || name.endsWith(".zip")) {
@@ -66,14 +67,14 @@ internal fun CoroutineScope.recursivelySignMacBinaries(root: Path,
     }
   })
 
-  launch {
+  launch(CoroutineName("signing macOS binaries")) {
     signMacBinaries(binaries.filter {
       isMacBinary(it) && !isSigned(it)
     }, context)
   }
 
   for (file in archives) {
-    launch {
+    launch(CoroutineName("signing macOS binaries in ${file.relativeTo(root)}")) {
       signAndRepackZipIfMacSignaturesAreMissing(file, context)
     }
   }
@@ -121,15 +122,15 @@ private suspend fun copyZipReplacing(origin: Path, entries: Map<String, Path>, c
     .setAttribute("zip", origin.toString())
     .setAttribute(AttributeKey.stringArrayKey("unsigned"), entries.keys.toList())
     .use {
-      transformZipUsingTempFile(origin) { zipWriter ->
-        val packageIndexBuilder = PackageIndexBuilder()
+      val packageIndexBuilder = PackageIndexBuilder()
+      transformZipUsingTempFile(file = origin, indexWriter = packageIndexBuilder.indexWriter) { zipWriter ->
         readZipFile(origin) { name, dataSupplier ->
           packageIndexBuilder.addFile(name)
           if (entries.containsKey(name)) {
-            zipWriter.file(name, entries.getValue(name), packageIndexBuilder.indexWriter)
+            zipWriter.file(name, entries.getValue(name))
           }
           else {
-            zipWriter.uncompressedData(name, dataSupplier(), packageIndexBuilder.indexWriter)
+            zipWriter.uncompressedData(name, dataSupplier())
           }
         }
         packageIndexBuilder.writePackageIndex(zipWriter)
@@ -239,7 +240,7 @@ internal suspend fun isSigned(byteChannel: SeekableByteChannel, binaryId: String
     val signatureData = try {
       binary.GetSignatureData()
     }
-    catch (ignored: InvalidDataException) {
+    catch (_: InvalidDataException) {
       return@all false
     }
 
@@ -250,7 +251,7 @@ internal suspend fun isSigned(byteChannel: SeekableByteChannel, binaryId: String
     val signedMessage = try {
       SignedMessage.CreateInstance(signatureData)
     }
-    catch (ignored: Exception) {
+    catch (_: Exception) {
       // assuming Signature=adhoc
       return@all false
     }

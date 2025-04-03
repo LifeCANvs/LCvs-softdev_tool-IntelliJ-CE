@@ -4,6 +4,7 @@ package com.intellij.openapi.application.impl
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.readAndWriteAction
+import com.intellij.openapi.application.useNestedLocking
 import com.intellij.openapi.progress.*
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.testFramework.junit5.TestApplication
@@ -69,6 +70,17 @@ class SuspendingReadAndWriteActionTest {
         Assertions.assertFalse(application.isReadAccessAllowed)
       }
 
+      fun assertNestedContext() {
+        Assertions.assertFalse(EDT.isCurrentThreadEdt())
+        Assertions.assertNotNull(Cancellation.currentJob())
+        Assertions.assertNull(ProgressManager.getGlobalProgressIndicator())
+        Assertions.assertFalse(application.isWriteAccessAllowed)
+        if (!useNestedLocking) {
+          // parallelization of a write lock is forbidden anyway
+          Assertions.assertTrue(application.isReadAccessAllowed)
+        }
+      }
+
       fun assertReadButNoWriteActionWithCurrentJob() {
         Assertions.assertFalse(EDT.isCurrentThreadEdt())
         Assertions.assertNotNull(Cancellation.currentJob())
@@ -106,7 +118,7 @@ class SuspendingReadAndWriteActionTest {
         runBlockingCancellable {
           assertReadButNoWriteActionWithoutCurrentJob() // TODO consider explicitly turning off RA inside runBlockingCancellable
           withContext(Dispatchers.Default) {
-            assertEmptyContext()
+            assertNestedContext()
           }
           assertReadButNoWriteActionWithoutCurrentJob()
         }
@@ -116,7 +128,7 @@ class SuspendingReadAndWriteActionTest {
           runBlockingCancellable {
             assertWriteActionWithoutCurrentJob() // TODO consider explicitly turning off RA inside runBlockingCancellable
             withContext(Dispatchers.Default) {
-              assertEmptyContext()
+              assertNestedContext()
             }
             assertWriteActionWithoutCurrentJob()
           }

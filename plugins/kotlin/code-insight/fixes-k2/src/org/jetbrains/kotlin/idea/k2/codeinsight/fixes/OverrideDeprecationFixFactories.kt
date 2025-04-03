@@ -22,18 +22,18 @@ import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 
 internal object OverrideDeprecationFixFactories {
 
-    val copyDeprecatedAnnotationFixFactory = KotlinQuickFixFactory.IntentionBased { diagnostic: KaFirDiagnostic.OverrideDeprecation ->
-        val overriddenSymbol = diagnostic.overridenSymbol as? KaAnnotated ?: return@IntentionBased emptyList()
+    val copyDeprecatedAnnotationFixFactory = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.OverrideDeprecation ->
+        val overriddenSymbol = diagnostic.overridenSymbol as? KaAnnotated ?: return@ModCommandBased emptyList()
         val deprecatedAnnotationClassId = StandardClassIds.Annotations.Deprecated
 
         val deprecatedAnnotation = overriddenSymbol.annotations.find {
             it.classId == deprecatedAnnotationClassId
-        } ?: return@IntentionBased emptyList()
+        } ?: return@ModCommandBased emptyList()
 
-        val sourceName = renderName(diagnostic.overridenSymbol) ?: return@IntentionBased emptyList()
-        val destinationName = renderName(diagnostic.psi.symbol) ?: return@IntentionBased emptyList()
+        val sourceName = renderName(diagnostic.overridenSymbol) ?: return@ModCommandBased emptyList()
+        val destinationName = renderName(diagnostic.psi.symbol) ?: return@ModCommandBased emptyList()
 
-        val argumentsData = prepareArgumentsData(deprecatedAnnotation) ?: return@IntentionBased emptyList()
+        val argumentsData = prepareArgumentsData(deprecatedAnnotation) ?: return@ModCommandBased emptyList()
 
         listOf(
             CopyDeprecatedAnnotationFix(
@@ -46,8 +46,7 @@ internal object OverrideDeprecationFixFactories {
     }
 }
 
-context(KaSession)
-private fun renderName(symbol: KaSymbol): String? {
+private fun KaSession.renderName(symbol: KaSymbol): String? {
     val containerPrefix = symbol.containingDeclaration?.name?.let { "${it.render()}." } ?: ""
     val name = symbol.name?.render() ?: return null
     return containerPrefix + name

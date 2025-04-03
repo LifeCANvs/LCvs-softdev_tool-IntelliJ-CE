@@ -11,9 +11,11 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.awt.*;
 
+import static com.intellij.util.ui.AnimatorKt.animatorCoroutineScope;
+
 /**
- * @author Kirill Kalishev
- * @author Konstantin Bulenkov
+ * NB: the Disposable contract is generally ignored by users and cannot be trusted
+ *     We rely on the 'isShowing()' to stop and start the animation instead.
  */
 public class AnimatedIcon extends JComponent implements Disposable {
   private final Icon[] icons;
@@ -28,6 +30,7 @@ public class AnimatedIcon extends JComponent implements Disposable {
   private boolean isRunning = true;
 
   protected final Animator animator;
+  private final HiddenAnimator hiddenAnimator;
 
   private final String name;
 
@@ -41,7 +44,8 @@ public class AnimatedIcon extends JComponent implements Disposable {
     this.passiveIcon = passiveIcon;
     preferredSize = calcPreferredSize();
 
-    animator = new Animator(name, icons.length, cycleLength, true, true, coroutineScope) {
+    CoroutineScope animatorScope = coroutineScope != null ? coroutineScope : animatorCoroutineScope(name);
+    animator = new Animator(name, icons.length, cycleLength, true, true, animatorScope) {
       @Override
       public void paintNow(int frame, int totalFrames, int cycle) {
         int len = AnimatedIcon.this.icons.length;
@@ -49,6 +53,7 @@ public class AnimatedIcon extends JComponent implements Disposable {
         paintImmediately(0, 0, getWidth(), getHeight());
       }
     };
+    hiddenAnimator = new HiddenAnimator(icons.length, cycleLength);
 
     emptyPassiveIcon = icons.length > 0 ? EmptyIcon.create(icons[0]) : EmptyIcon.ICON_0;
 
@@ -91,13 +96,23 @@ public class AnimatedIcon extends JComponent implements Disposable {
   }
 
   private boolean ensureAnimation(boolean running) {
-    boolean changes = animator.isRunning() != running;
+    var isShowing = isShowing();
+    var animatorShouldBeRunning = running && isShowing;
+    var hiddenAnimatorShouldBeRunning = running && !isShowing;
+    boolean changes = animator.isRunning() != animatorShouldBeRunning || hiddenAnimator.isRunning() != hiddenAnimatorShouldBeRunning;
 
-    if (running) {
+    if (animatorShouldBeRunning) {
       animator.resume();
     }
     else {
       animator.suspend();
+    }
+
+    if (hiddenAnimatorShouldBeRunning) {
+      hiddenAnimator.resume();
+    }
+    else {
+      hiddenAnimator.suspend();
     }
 
     return changes;
@@ -156,6 +171,9 @@ public class AnimatedIcon extends JComponent implements Disposable {
     if (animator.isRunning()) {
       icon = icons[currentIconIndex];
     }
+    else if (hiddenAnimator.isRunning()) {
+      icon = icons[hiddenAnimator.getCurrentFrame()];
+    }
     else {
       icon = getPassiveIcon();
     }
@@ -176,11 +194,53 @@ public class AnimatedIcon extends JComponent implements Disposable {
   }
 
   public boolean isRunning() {
-    return animator.isRunning();
+    return animator.isRunning() || hiddenAnimator.isRunning();
   }
 
   @Override
   public String toString() {
     return name + " isRunning=" + isRunning + " isOpaque=" + isOpaque() + " paintPassive=" + isPaintPassive;
+  }
+
+  private static class HiddenAnimator {
+    private boolean isRunning = false;
+    private boolean initialStep = true;
+    private final int totalFrames;
+    private final int cycleDuration;
+    private long startTime;
+    private long startDeltaTime;
+
+    HiddenAnimator(int totalFrames, int cycleDuration) {
+      this.totalFrames = totalFrames;
+      this.cycleDuration = cycleDuration;
+    }
+
+    void resume() {
+      isRunning = true;
+    }
+
+    void suspend() {
+      startDeltaTime = System.currentTimeMillis() - startTime;
+      initialStep = true;
+      isRunning = false;
+    }
+
+    boolean isRunning() {
+      return isRunning;
+    }
+
+    int getCurrentFrame() {
+      var now = System.currentTimeMillis();
+      if (initialStep) {
+        initialStep = false;
+        startTime = now - startDeltaTime;
+      }
+      var cycleTime = (double)(now - startTime);
+      var currentFrame = (long)(cycleTime * totalFrames / cycleDuration) % (long)totalFrames;
+      // protection against unexpected weirdness (e.g. abrupt time adjustments or simply bugs)
+      if (currentFrame < 0) currentFrame = 0;
+      if (currentFrame >= totalFrames) currentFrame = totalFrames - 1;
+      return (int)currentFrame;
+    }
   }
 }

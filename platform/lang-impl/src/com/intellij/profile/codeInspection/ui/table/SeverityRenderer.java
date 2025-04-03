@@ -20,13 +20,12 @@ import com.intellij.ui.render.RenderingUtil;
 import com.intellij.util.ui.ColorIcon;
 import com.intellij.util.ui.EmptyIcon;
 import com.intellij.util.ui.UIUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.MouseEvent;
 import java.util.ArrayList;
-import java.util.EventObject;
 import java.util.List;
 
 public final class SeverityRenderer extends ComboBoxTableRenderer<HighlightSeverity> {
@@ -38,6 +37,7 @@ public final class SeverityRenderer extends ComboBoxTableRenderer<HighlightSever
   private final ScopesAndSeveritiesTable myTable;
   private final @NotNull Project myProject;
 
+  @ApiStatus.Internal
   public SeverityRenderer(@NotNull InspectionProfileImpl inspectionProfile,
                           @NotNull Project project,
                           @NotNull Runnable onClose,
@@ -46,12 +46,18 @@ public final class SeverityRenderer extends ComboBoxTableRenderer<HighlightSever
     myOnClose = onClose;
     myTable = table;
     myProject = project;
+    withClickCount(1);
   }
 
   private static HighlightSeverity[] getSeverities(InspectionProfileImpl profile) {
     List<HighlightSeverity> list = new ArrayList<>(LevelChooserAction.getSeverities(profile.getProfileManager().getSeverityRegistrar()));
     list.add(EDIT_SEVERITIES);
     return list.toArray(new HighlightSeverity[0]);
+  }
+
+  @Override
+  protected int getPreferredSizeMaxValues() {
+    return 0; // there can be long values inside, and this makes the popup appearing on mouse hover unnecessarily large
   }
 
   public static Icon getIcon(@NotNull HighlightDisplayLevel level) {
@@ -89,11 +95,6 @@ public final class SeverityRenderer extends ComboBoxTableRenderer<HighlightSever
     return value == EDIT_SEVERITIES
            ? EmptyIcon.create(HighlightDisplayLevel.getEmptyIconDim())
            : HighlightDisplayLevel.find(value).getIcon();
-  }
-
-  @Override
-  public boolean isCellEditable(EventObject event) {
-    return !(event instanceof MouseEvent) || ((MouseEvent)event).getClickCount() >= 1;
   }
 
   @Override

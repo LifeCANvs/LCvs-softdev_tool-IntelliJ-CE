@@ -5,9 +5,8 @@ import com.intellij.debugger.SourcePosition
 import com.intellij.debugger.engine.*
 import com.intellij.debugger.jdi.ThreadReferenceProxyImpl
 import com.intellij.debugger.statistics.Engine
-import com.intellij.debugger.statistics.StatisticsStorage.Companion.createSteppingToken
-import com.intellij.debugger.statistics.SteppingAction
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.xdebugger.XSourcePosition
 import com.sun.jdi.Location
@@ -64,16 +63,26 @@ object DebuggerSteppingHelper {
                 if (context.frameProxy?.isOnSuspensionPoint() == true && nextLocationAfterResume != null) {
                     val filterThread = context.debugProcess.requestsManager.filterThread
                     // step till the next instruction after the resume location
-                    thisLogger().debug("Stepping to the resumeLocation in method ${context.location?.method()?.name()}, filterThread = $filterThread, resumeLocationCodeIndex = ${nextLocationAfterResume.codeIndex()}, currentIndex = ${context.location?.codeIndex()}")
+                    thisLogger().debug {
+                        "Stepping to the resumeLocation in method ${context.location}," +
+                                "filterThread = $filterThread," +
+                                "resumeLocationCodeIndex = ${nextLocationAfterResume.codeIndex()}," +
+                                "currentIndex = ${context.location?.codeIndex()}"
+                    }
                     val currentLocation = context.location ?: return super.getNextStepDepth(context)
                     // Make sure that we are stepping to the nextLocationAfterResume in the correct method.
                     if (nextLocationAfterResume.safeMethod() != currentLocation.safeMethod()) {
-                        thisLogger().debug("Expected to step in the resumed method ${nextLocationAfterResume.safeMethod()}, but currently stepping in ${currentLocation.safeMethod()}")
+                        thisLogger().debug {
+                            "Expected to step in the resumed method ${nextLocationAfterResume.safeMethod()}, " +
+                                    "but currently stepping in ${currentLocation.safeMethod()}"
+                        }
                         return StepRequest.STEP_OVER
                     }
                     if (currentLocation.codeIndex() < nextLocationAfterResume.codeIndex()) return StepRequest.STEP_OVER
                     if (currentLocation.codeIndex() == nextLocationAfterResume.codeIndex()) {
-                        thisLogger().debug("Reached resumeLocation, currentIndex = ${currentLocation.codeIndex()}, filterThread = $filterThread -> STOP")
+                        thisLogger().debug {
+                            "Reached resumeLocation, currentIndex = ${currentLocation.codeIndex()}, filterThread = $filterThread -> STOP"
+                        }
                         return STOP
                     }
                 }
@@ -84,7 +93,7 @@ object DebuggerSteppingHelper {
           return hint
         }
 
-        override fun createCommandToken() = createSteppingToken(SteppingAction.STEP_OVER, Engine.KOTLIN)
+        override fun getEngine() = Engine.KOTLIN
       }
     }
   }
@@ -145,6 +154,8 @@ object DebuggerSteppingHelper {
     return with(debugProcess) {
       object : DebugProcessImpl.RunToCursorCommand(suspendContext, position, ignoreBreakpoints) {
         val myThreadFilter = lazy { extractJobInfo(suspendContext) ?: super.getThreadFilterFromContext(suspendContext) }
+
+        override fun shouldExecuteRegardlessOfRequestWarnings() = true
 
         override fun contextAction(context: SuspendContextImpl) {
           // clear stepping through to allow switching threads in case of suspend thread context

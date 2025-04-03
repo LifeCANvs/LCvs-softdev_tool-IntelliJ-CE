@@ -4,6 +4,7 @@ package com.intellij.terminal;
 import com.intellij.ide.IdeBundle;
 import com.intellij.ide.actions.ShowContentAction;
 import com.intellij.idea.ActionsBundle;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.ActionManager;
 import com.intellij.openapi.actionSystem.IdeActions;
 import com.intellij.openapi.actionSystem.KeyboardShortcut;
@@ -24,6 +25,8 @@ import com.jediterm.terminal.TextStyle;
 import com.jediterm.terminal.ui.TerminalAction;
 import com.jediterm.terminal.ui.TerminalActionPresentation;
 import com.jediterm.terminal.ui.settings.DefaultSettingsProvider;
+import org.intellij.lang.annotations.Language;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -48,8 +51,15 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
     myUiSettingsManager = TerminalUiSettingsManager.getInstance();
   }
 
-  @NotNull TerminalUiSettingsManager getUiSettingsManager() {
+  @ApiStatus.Internal
+  @NotNull
+  protected Disposable getDisposable() {
     return myUiSettingsManager;
+  }
+
+  @ApiStatus.Internal
+  public void addUiSettingsListener(@NotNull TerminalUiSettingsListener listener) {
+    myUiSettingsManager.addListener(listener);
   }
 
   @NotNull EditorColorsScheme getColorsScheme() {
@@ -140,7 +150,7 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
   }
 
   public @NotNull TerminalAction getGotoNextSplitTerminalAction(@Nullable JBTerminalWidgetListener listener, boolean forward) {
-    String actionId = forward ? "Terminal.NextSplitter" : "Terminal.PrevSplitter";
+    @Language("devkit-action-id") String actionId = forward ? "Terminal.NextSplitter" : "Terminal.PrevSplitter";
     String text = UIUtil.removeMnemonic(getGotoNextSplitTerminalActionText(forward));
     return new TerminalAction(new TerminalActionPresentation(text, getKeyStrokesByActionId(actionId)), event -> {
       if (listener != null) {
@@ -150,7 +160,7 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
     });
   }
 
-  public static @NotNull List<KeyStroke> getKeyStrokesByActionId(@NotNull String actionId, @NotNull String failoverActionId) {
+  public static @NotNull List<KeyStroke> getKeyStrokesByActionId(@Language("devkit-action-id") @NotNull String actionId, @NotNull String failoverActionId) {
     List<KeyStroke> strokes = getKeyStrokesByActionId(actionId);
     if (strokes.isEmpty() && ActionManager.getInstance().getAction(actionId) == null) {
       strokes = getKeyStrokesByActionId(failoverActionId);
@@ -192,6 +202,10 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
   @Override
   public float getLineSpacing() {
     return getColorsScheme().getConsoleLineSpacing();
+  }
+
+  public float getColumnSpacing() {
+    return 1.0f;
   }
 
   @Override
@@ -236,6 +250,25 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
   @Override
   public float getTerminalFontSize() {
     return (float)myUiSettingsManager.getFontSize();
+  }
+
+  /**
+   * Same as getTerminalFontSize() but without rounding.
+   * @return the raw font size value
+   */
+  @ApiStatus.Internal
+  public float getTerminalFontSize2D() {
+    return myUiSettingsManager.getFontSize2D();
+  }
+
+  @ApiStatus.Internal
+  public void setTerminalFontSize(float fontSize) {
+    myUiSettingsManager.setFontSize(fontSize);
+  }
+
+  @ApiStatus.Internal
+  public void resetTerminalFontSize() {
+    myUiSettingsManager.resetFontSize();
   }
 
   @Override
@@ -309,15 +342,5 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
     return new TerminalActionPresentation("New Session", ClientSystemInfo.isMac()
                                                          ? KeyStroke.getKeyStroke(KeyEvent.VK_T, InputEvent.META_DOWN_MASK)
                                                          : KeyStroke.getKeyStroke(KeyEvent.VK_T, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
-  }
-
-  /**
-   * @deprecated use {@link org.jetbrains.plugins.terminal.JBTerminalSystemSettingsProvider#getCloseTabActionPresentation()} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull TerminalActionPresentation getCloseSessionActionPresentation() {
-    return new TerminalActionPresentation("Close Session", ClientSystemInfo.isMac()
-                                                           ? KeyStroke.getKeyStroke(KeyEvent.VK_W, InputEvent.META_DOWN_MASK)
-                                                           : KeyStroke.getKeyStroke(KeyEvent.VK_W, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
   }
 }

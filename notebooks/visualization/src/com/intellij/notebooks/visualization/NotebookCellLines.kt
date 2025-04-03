@@ -42,7 +42,8 @@ interface NotebookCellLines {
 
     val firstContentLine: Int
       get() =
-        if (markers.hasTopLine) lines.first + 1
+        if (markers.hasTopLine)
+          lines.first + 1
         else lines.first
 
     val lastContentLine: Int
@@ -52,7 +53,6 @@ interface NotebookCellLines {
 
     val contentLines: IntRange
       get() = firstContentLine..lastContentLine
-
 
     operator fun <V> get(key: Key<V>): V? = data.get(key)
 
@@ -67,21 +67,31 @@ interface NotebookCellLines {
 
     fun getContentRange(editor: Editor): TextRange {
       val document = editor.document
+      return getContentRange(document)
+    }
+
+    private fun getContentRange(document: Document): TextRange {
       val startOffset = document.getLineStartOffset(contentLines.first)
       val endOffset = document.getLineEndOffset(contentLines.last)
       return TextRange(startOffset, endOffset)
     }
 
     fun getContentText(editor: Editor): String {
-      val range = getContentRange(editor)
-      return editor.document.getText(range)
+      val document = editor.document
+      return getContentText(document).toString()
     }
 
-    fun getCellText(editor: Editor): String {
-      val range = getCellRange(editor)
-      return editor.document.getText(range)
+    fun getContentText(document: Document): CharSequence {
+      val first = firstContentLine
+      val last = lastContentLine
+      val charsSequence = document.charsSequence
+      return if (first <= last) {
+        charsSequence.subSequence(document.getLineStartOffset(first), document.getLineEndOffset(last))
+      }
+      else {
+        ""
+      }
     }
-
 
     fun getTopMarker(document: Document): String? =
       if (markers.hasTopLine) document.getLineText(lines.first) else null
@@ -104,6 +114,7 @@ interface NotebookCellLines {
      * Listener shouldn't throw exceptions
      */
     fun beforeDocumentChange(event: NotebookCellLinesEventBeforeChange) {}
+    fun bulkUpdateFinished() {}
   }
 
   fun intervalsIterator(startLine: Int = 0): ListIterator<Interval>

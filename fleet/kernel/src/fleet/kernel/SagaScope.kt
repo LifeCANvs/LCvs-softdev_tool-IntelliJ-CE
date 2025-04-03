@@ -3,15 +3,33 @@ package fleet.kernel
 
 import com.jetbrains.rhizomedb.*
 import com.jetbrains.rhizomedb.Entity
-import fleet.tracing.spannedScope
+import fleet.reporting.shared.tracing.spannedScope
 import fleet.util.async.*
 import fleet.util.logging.logger
 import kotlinx.coroutines.*
 import kotlin.coroutines.CoroutineContext
 
-object NoSupervisorForSagas : CoroutineContext.Element, CoroutineContext.Key<NoSupervisorForSagas> {
+/**
+ * Tests put it on top level coroutine context if they do not expect exceptions from the test body.
+ *
+ * Some exceptions are outside of our control, like IO.
+ * Some, like IllegalArgumentException, are not supposed to happen,
+ * yet production code will suppress them because they are not necessarily fatal.
+ * It makes sense to fail a test that experiences the exception though.
+ * If this is the case - check for presence of this element and change you strategy accordingly.
+ *
+ * For example:
+ * - [fleet.kernel.rete.launchOnEach] will run coroutines on un-supervised scope
+ *   and re-throw immediately if one of the matches fails.
+ * - [fleet.kernel.plugins.PluginScope] will be created with Job instead of SupervisorJob,
+ *   which means failure in any worker or action will terminate the application.
+ * */
+object FailFastMarker : CoroutineContext.Element, CoroutineContext.Key<FailFastMarker> {
   override val key: CoroutineContext.Key<*> get() = this
 }
+
+val CoroutineContext.shouldFailFast: Boolean
+  get() = this[FailFastMarker] != null
 
 data class SagaScopeEntity(override val eid: EID) : Entity {
   companion object : EntityType<SagaScopeEntity>(SagaScopeEntity::class, ::SagaScopeEntity) {
@@ -25,12 +43,12 @@ data class SagaScopeEntity(override val eid: EID) : Entity {
   val transactor by KernelAttr
 }
 
-suspend fun sagaScope(body: suspend CoroutineScope.(CoroutineScope) -> Unit) {
+suspend fun<T> sagaScope(body: suspend CoroutineScope.(CoroutineScope) -> T): T =
   coroutineScope {
     resource { cc ->
       spannedScope("sagaScope") {
         when {
-          coroutineContext[NoSupervisorForSagas] != null ->
+          coroutineContext[FailFastMarker] != null ->
             coroutineScope {
               cc(this)
             }
@@ -61,4 +79,3 @@ suspend fun sagaScope(body: suspend CoroutineScope.(CoroutineScope) -> Unit) {
       }
     }
   }
-}

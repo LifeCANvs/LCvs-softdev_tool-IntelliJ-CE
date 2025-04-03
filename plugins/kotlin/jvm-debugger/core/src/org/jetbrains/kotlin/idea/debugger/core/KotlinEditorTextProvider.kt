@@ -8,10 +8,10 @@ import com.intellij.debugger.impl.EditorTextProvider
 import com.intellij.openapi.util.Pair
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
+import com.intellij.psi.impl.source.tree.LeafPsiElement
 import com.intellij.psi.util.parents
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.TestOnly
-import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.resolution.*
 import org.jetbrains.kotlin.analysis.api.symbols.*
 import org.jetbrains.kotlin.config.LanguageFeature
@@ -19,6 +19,7 @@ import org.jetbrains.kotlin.idea.KotlinFileType
 import org.jetbrains.kotlin.idea.KotlinLanguage
 import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
 import org.jetbrains.kotlin.idea.base.util.registryFlag
+import org.jetbrains.kotlin.idea.debugger.base.util.runDumbAnalyze
 import org.jetbrains.kotlin.idea.references.mainReference
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.*
@@ -94,14 +95,18 @@ private object AnalysisApiBasedKotlinEditorTextProvider : KotlinEditorTextProvid
         }
 
         val isAllowed = when (target) {
-            is KtBinaryExpressionWithTypeRHS, is KtIsExpression -> true
-            is KtOperationExpression -> isReferenceAllowed(target.operationReference, allowMethodCalls)
+            is KtBinaryExpressionWithTypeRHS, is KtIsExpression, is KtDoubleColonExpression, is KtThisExpression -> true
+            is LeafPsiElement -> target.elementType == KtTokens.IDENTIFIER
             is KtReferenceExpression -> isReferenceAllowed(target, allowMethodCalls)
+            is KtOperationExpression -> {
+                isReferenceAllowed(target.operationReference, allowMethodCalls) &&
+                        allowMethodCalls // TODO: check operation arguments: allowMethodCalls || arguments.all { it.isSafe }
+            }
             is KtQualifiedExpression -> {
                 val selector = target.selectorExpression
                 selector is KtReferenceExpression && isReferenceAllowed(selector, allowMethodCalls)
             }
-            else -> true
+            else -> allowMethodCalls
         }
 
         return if (isAllowed) target else findEvaluationTarget(target.parent, allowMethodCalls)
@@ -120,7 +125,7 @@ private object AnalysisApiBasedKotlinEditorTextProvider : KotlinEditorTextProvid
             is KtObjectDeclaration -> if (candidate.isObjectLiteral()) candidate else null
             is KtDeclaration, is KtFile -> null
             is KtIfExpression -> if (candidate.`else` != null) candidate else null
-            is KtStatementExpression, is KtLabeledExpression -> null
+            is KtStatementExpression, is KtLabeledExpression, is KtLabelReferenceExpression -> null
             is KtStringTemplateExpression -> if (isStringTemplateAllowed(candidate, allowMethodCalls)) candidate else null
             is KtConstantExpression -> calculateCandidate(candidate.parent, allowMethodCalls)
             else -> when (val parent = candidate.parent) {
@@ -142,15 +147,15 @@ private object AnalysisApiBasedKotlinEditorTextProvider : KotlinEditorTextProvid
         }
     }
 
-    private fun isReferenceAllowed(reference: KtReferenceExpression, allowMethodCalls: Boolean): Boolean = analyze(reference) {
+    private fun isReferenceAllowed(reference: KtReferenceExpression, allowMethodCalls: Boolean): Boolean = runDumbAnalyze(reference, fallback = false) f@ {
         when {
-            reference is KtBinaryExpressionWithTypeRHS -> return true
-            reference is KtOperationReferenceExpression && reference.operationSignTokenType == KtTokens.ELVIS -> return true
-            reference is KtCollectionLiteralExpression -> return false
+            reference is KtBinaryExpressionWithTypeRHS -> return@f true
+            reference is KtOperationReferenceExpression && reference.operationSignTokenType == KtTokens.ELVIS -> return@f true
+            reference is KtCollectionLiteralExpression -> return@f false
             reference is KtCallExpression -> {
-                val callInfo = reference.resolveToCall() as? KaSuccessCallInfo ?: return false
+                val callInfo = reference.resolveToCall() as? KaSuccessCallInfo ?: return@f false
 
-                return when (val call = callInfo.call) {
+                return@f when (val call = callInfo.call) {
                     is KaAnnotationCall -> {
                         val languageVersionSettings = reference.languageVersionSettings
                         languageVersionSettings.supportsFeature(LanguageFeature.InstantiationOfAnnotationClasses)
@@ -168,7 +173,7 @@ private object AnalysisApiBasedKotlinEditorTextProvider : KotlinEditorTextProvid
             }
             else -> {
                 val symbol = reference.mainReference.resolveToSymbol()
-                return symbol == null || isSymbolAllowed(symbol, allowMethodCalls)
+                return@f symbol == null || isSymbolAllowed(symbol, allowMethodCalls)
             }
         }
     }

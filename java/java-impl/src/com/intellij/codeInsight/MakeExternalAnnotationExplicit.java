@@ -19,13 +19,12 @@ import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.JavaCodeStyleManager;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.PsiUtilCore;
-import com.intellij.util.ObjectUtils;
 import com.intellij.util.containers.ContainerUtil;
+import one.util.streamex.StreamEx;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Arrays;
 import java.util.List;
 
 public final class MakeExternalAnnotationExplicit implements ModCommandAction {
@@ -70,31 +69,29 @@ public final class MakeExternalAnnotationExplicit implements ModCommandAction {
     final Module module = ModuleUtilCore.findModuleForPsiElement(file);
     assert module != null;
 
-    ModCommandAwareExternalAnnotationsManager externalAnnotationsManager = ObjectUtils.tryCast(
-      ExternalAnnotationsManager.getInstance(project), ModCommandAwareExternalAnnotationsManager.class);
+    ModCommandAwareExternalAnnotationsManager externalAnnotationsManager = ModCommandAwareExternalAnnotationsManager.getInstance(project);
 
     PsiAnnotation[] annotations = getAnnotations(project, owner);
     return ModCommand.psiUpdate(modifierList, writableList -> {
       for (PsiAnnotation anno : annotations) {
         JavaCodeStyleManager.getInstance(project).shortenClassReferences(writableList.addAfter(anno, null));
       }
-    }).andThen(externalAnnotationsManager == null ? ModCommand.nop() : 
-               externalAnnotationsManager.deannotateModCommand(List.of(owner), ContainerUtil.map(annotations, PsiAnnotation::getQualifiedName)));
+    }).andThen(externalAnnotationsManager.deannotateModCommand(List.of(owner), ContainerUtil.map(annotations, PsiAnnotation::getQualifiedName)));
   }
 
   private static PsiAnnotation @NotNull [] getAnnotations(@NotNull Project project, PsiModifierListOwner owner) {
     PsiAnnotation[] annotations = ExternalAnnotationsManager.getInstance(project).findExternalAnnotations(owner);
-    if (annotations == null) {
+    if (annotations.length == 0) {
       return PsiAnnotation.EMPTY_ARRAY;
     }
     else {
       JavaPsiFacade facade = JavaPsiFacade.getInstance(project);
-      return Arrays.stream(annotations).filter(anno -> {
+      return StreamEx.of(annotations).filter(anno -> {
         String qualifiedName = anno.getQualifiedName();
         return qualifiedName != null &&
                facade.findClass(qualifiedName, owner.getResolveScope()) != null &&
                !owner.hasAnnotation(qualifiedName);
-      }).toArray(PsiAnnotation[]::new);
+      }).toArray(PsiAnnotation.EMPTY_ARRAY);
     }
   }
 

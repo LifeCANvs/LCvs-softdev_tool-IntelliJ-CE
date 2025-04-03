@@ -5,14 +5,17 @@ import com.intellij.ide.actions.runAnything.items.RunAnythingItem;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.util.text.Matcher;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.Collection;
 import java.util.List;
 
+@ApiStatus.Internal
 public abstract class RunAnythingGroupBase extends RunAnythingGroup {
-  public abstract @NotNull Collection<RunAnythingItem> getGroupItems(@NotNull DataContext dataContext, @NotNull String pattern);
+  public abstract @Unmodifiable @NotNull Collection<RunAnythingItem> getGroupItems(@NotNull DataContext dataContext, @NotNull String pattern);
 
   protected @Nullable Matcher getMatcher(@NotNull DataContext dataContext, @NotNull String pattern) {
     return null;

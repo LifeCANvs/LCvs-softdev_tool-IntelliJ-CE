@@ -7,13 +7,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
-import org.jetbrains.kotlin.config.JVMConfigurationKeys
 import org.jetbrains.kotlin.config.languageVersionSettings
 import org.jetbrains.kotlin.idea.KotlinFileType
-import org.jetbrains.kotlin.idea.actions.bytecode.BytecodeGenerationResult
-import org.jetbrains.kotlin.idea.actions.bytecode.KotlinBytecodeToolWindow
 import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
 import org.jetbrains.kotlin.idea.base.test.InTextDirectivesUtils
+import org.jetbrains.kotlin.idea.jvm.shared.bytecode.BytecodeGenerationResult
+import org.jetbrains.kotlin.idea.jvm.shared.bytecode.KotlinBytecodeToolWindow
 import org.jetbrains.kotlin.idea.test.KotlinLightCodeInsightFixtureTestCase
 import org.jetbrains.kotlin.idea.test.KotlinWithJdkAndRuntimeLightProjectDescriptor
 import org.jetbrains.kotlin.psi.KtFile
@@ -33,7 +32,6 @@ abstract class AbstractBytecodeToolWindowTest : KotlinLightCodeInsightFixtureTes
         val file = myFixture.file as KtFile
 
         val configuration = CompilerConfiguration().apply {
-            put(JVMConfigurationKeys.IR, true)
             if (InTextDirectivesUtils.getPrefixedBoolean(mainFileText, "// INLINE:") == false) {
                 put(CommonConfigurationKeys.DISABLE_INLINE, true)
             }

@@ -1,6 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.vfs.impl.local;
 
+import com.intellij.ReviseWhenPortedToJDK;
 import com.intellij.execution.process.OSProcessHandler;
 import com.intellij.execution.process.ProcessOutputTypes;
 import com.intellij.ide.IdeCoreBundle;
@@ -17,6 +18,7 @@ import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.openapi.vfs.local.FileWatcherNotificationSink;
 import com.intellij.openapi.vfs.local.PluggableFileWatcher;
 import com.intellij.openapi.vfs.newvfs.ManagingFS;
+import com.intellij.util.CurrentJavaVersion;
 import com.intellij.util.SmartList;
 import com.intellij.util.TimeoutUtil;
 import com.intellij.util.io.BaseDataReader;
@@ -307,8 +309,10 @@ public class NativeFileWatcherImpl extends PluggableFileWatcher {
   @SuppressWarnings("SpellCheckingInspection")
   private enum WatcherOp { GIVEUP, RESET, UNWATCHEABLE, REMAP, MESSAGE, CREATE, DELETE, STATS, CHANGE, DIRTY, RECDIRTY }
 
+  @ReviseWhenPortedToJDK(value = "21", description = "drop normalization")
   private final class MyProcessHandler extends OSProcessHandler {
     private final BufferedWriter myWriter;
+    private final boolean myNormalizePaths = SystemInfo.isMac && !CurrentJavaVersion.currentJavaVersion().isAtLeast(21);
     private WatcherOp myLastOp;
     private final List<String> myLines = new ArrayList<>();
 
@@ -433,7 +437,7 @@ public class NativeFileWatcherImpl extends PluggableFileWatcher {
         return;
       }
 
-      if (SystemInfo.isMac) {
+      if (myNormalizePaths) {
         path = Normalizer.normalize(path, Normalizer.Form.NFC);
       }
 

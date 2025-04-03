@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.k2.refactoring.introduce;
 
@@ -611,6 +611,11 @@ public abstract class K2IntroduceParameterTestGenerated extends AbstractK2Introd
             KotlinTestUtils.runTest(this::doIntroduceJavaParameterTest, this, testDataFilePath);
         }
 
+        @TestMetadata("javaConstructor.java")
+        public void testJavaConstructor() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/introduceJavaParameter/javaConstructor.java");
+        }
+
         @TestMetadata("javaMethod.java")
         public void testJavaMethod() throws Exception {
             runTest("../../idea/tests/testData/refactoring/introduceJavaParameter/javaMethod.java");
@@ -814,6 +819,11 @@ public abstract class K2IntroduceParameterTestGenerated extends AbstractK2Introd
             @TestMetadata("lambdaParamWithDefaultValue.kt")
             public void testLambdaParamWithDefaultValue() throws Exception {
                 runTest("../../idea/tests/testData/refactoring/introduceLambdaParameter/lambdaParamWithDefaultValue.kt");
+            }
+
+            @TestMetadata("noTypeParameters.kt")
+            public void testNoTypeParameters() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/introduceLambdaParameter/noTypeParameters.kt");
             }
 
             @TestMetadata("suspendCalls.kt")

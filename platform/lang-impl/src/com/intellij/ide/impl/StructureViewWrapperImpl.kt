@@ -1,16 +1,19 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.impl
 
+import com.intellij.codeWithMe.ClientId
+import com.intellij.codeWithMe.ClientId.Companion.withExplicitClientId
+import com.intellij.icons.AllIcons
 import com.intellij.ide.ActivityTracker
 import com.intellij.ide.DataManager
+import com.intellij.ide.IdeBundle
 import com.intellij.ide.projectView.impl.ProjectRootsUtil
-import com.intellij.ide.structureView.StructureView
-import com.intellij.ide.structureView.StructureViewBuilder
-import com.intellij.ide.structureView.StructureViewWrapper
-import com.intellij.ide.structureView.TextEditorBasedStructureViewModel
+import com.intellij.ide.structureView.*
 import com.intellij.ide.structureView.impl.StructureViewComposite
 import com.intellij.ide.structureView.impl.StructureViewComposite.StructureViewDescriptor
+import com.intellij.ide.structureView.impl.StructureViewState
 import com.intellij.ide.structureView.newStructureView.StructureViewComponent
+import com.intellij.idea.AppMode
 import com.intellij.lang.LangBundle
 import com.intellij.lang.PsiStructureViewFactory
 import com.intellij.openapi.Disposable
@@ -28,24 +31,28 @@ import com.intellij.openapi.module.ModuleType
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.openapi.project.impl.ProjectManagerImpl.Companion.isLight
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Comparing
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.vfs.PersistentFSConstants
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.vfs.NonPhysicalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.wm.IdeFocusManager
-import com.intellij.openapi.wm.ToolWindow
-import com.intellij.openapi.wm.ToolWindowId
+import com.intellij.openapi.vfs.isTooLargeForIntellijSense
+import com.intellij.openapi.wm.*
 import com.intellij.openapi.wm.ToolWindowManager.Companion.getInstance
+import com.intellij.openapi.wm.ex.ToolWindowManagerListener
+import com.intellij.openapi.wm.ex.ToolWindowManagerListener.ToolWindowManagerEventType
 import com.intellij.psi.PsiElement
 import com.intellij.ui.ExperimentalUI
 import com.intellij.ui.components.JBPanelWithEmptyText
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.content.ContentManagerEvent
+import com.intellij.ui.content.ContentManagerEvent.ContentOperation
 import com.intellij.ui.content.ContentManagerListener
 import com.intellij.ui.switcher.QuickActionProvider
-import com.intellij.util.BitUtil
+import com.intellij.util.PlatformUtils
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.messages.Topic
 import com.intellij.util.ui.TimerUtil
@@ -56,12 +63,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import org.jetbrains.annotations.ApiStatus
-import java.awt.BorderLayout
-import java.awt.Color
-import java.awt.Container
-import java.awt.KeyboardFocusManager
-import java.awt.event.HierarchyEvent
-import java.lang.Runnable
+import java.awt.*
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -70,9 +72,11 @@ import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
 @OptIn(FlowPreview::class)
-class StructureViewWrapperImpl(private val project: Project,
-                               private val myToolWindow: ToolWindow,
-                               private val coroutineScope: CoroutineScope) : StructureViewWrapper, Disposable {
+class StructureViewWrapperImpl(
+  private val project: Project,
+  private val myToolWindow: ToolWindow,
+  private val coroutineScope: CoroutineScope,
+) : StructureViewWrapper, Disposable {
   private var myFile: VirtualFile? = null
   private var myStructureView: StructureView? = null
   private var myFileEditor: FileEditor? = null
@@ -82,10 +86,12 @@ class StructureViewWrapperImpl(private val project: Project,
   private var myFirstRun = true
   private var myActivityCount = 0
   private val pendingRebuild = AtomicBoolean(false)
+  private val myActionGroup: DefaultActionGroup = getOrCopyViewOptionsGroup()
 
   private val rebuildRequests = MutableSharedFlow<RebuildDelay>(replay=1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
   init {
+    myToolWindow.setTitleActions(listOf(myActionGroup))
     val component = myToolWindow.component
 
     @Suppress("TestOnlyProblems")
@@ -93,18 +99,24 @@ class StructureViewWrapperImpl(private val project: Project,
       LOG.error("StructureViewWrapperImpl must be not created for light project.")
     }
 
+    val clientId = ClientId.current
+
     // to check on the next turn
     val timer = TimerUtil.createNamedTimer("StructureView", REFRESH_TIME) { _ ->
-      if (!component.isShowing) return@createNamedTimer
+      withExplicitClientId(clientId) { // TODO: IJPL-178436
+        if (!component.isShowing) return@withExplicitClientId
 
-      val count = ActivityTracker.getInstance().count
-      if (count == myActivityCount) return@createNamedTimer
+        val count = ActivityTracker.getInstance().count
+        if (count == myActivityCount) return@withExplicitClientId
 
-      val state = ModalityState.stateForComponent(component)
-      if (ModalityState.current().dominates(state)) return@createNamedTimer
+        val state = ModalityState.stateForComponent(component)
+        if (!ModalityState.current().accepts(state)) return@withExplicitClientId
 
-      val successful = loggedRun("check if update needed") { checkUpdate() }
-      if (successful) myActivityCount = count // to check on the next turn
+        val successful = WriteIntentReadAction.compute<Boolean, Throwable> {
+          loggedRun("check if update needed") { checkUpdate() }
+        }
+        if (successful) myActivityCount = count // to check on the next turn
+      }
     }
     LOG.debug("timer to check if update needed: add")
     timer.start()
@@ -112,34 +124,39 @@ class StructureViewWrapperImpl(private val project: Project,
       LOG.debug("timer to check if update needed: remove")
       timer.stop()
     }
-    component.addHierarchyListener { e ->
-      if (BitUtil.isSet(e.changeFlags, HierarchyEvent.DISPLAYABILITY_CHANGED.toLong())) {
-        val visible = myToolWindow.isVisible
-        LOG.debug("displayability changed: $visible")
-        if (visible) {
-          loggedRun("update file") { checkUpdate() }
-          scheduleRebuild()
-        }
-        else if (!project.isDisposed) {
-          myFile = null
-          rebuildNow("clear a structure on hide")
+    project.messageBus.connect(this).subscribe(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener {
+      override fun stateChanged(toolWindowManager: ToolWindowManager, toolWindow: ToolWindow, changeType: ToolWindowManagerEventType) {
+        if (toolWindow !== myToolWindow) return
+        when (changeType) {
+          ToolWindowManagerEventType.ShowToolWindow -> loggedRun("update file") { checkUpdate() }
+          ToolWindowManagerEventType.HideToolWindow -> if (!project.isDisposed) {
+            myFile = null
+            rebuildNow("clear a structure on hide")
+          }
+          else -> {}
         }
       }
-    }
+    })
+
     if (component.isShowing) {
       loggedRun("initial structure rebuild") { checkUpdate() }
       scheduleRebuild()
     }
     myToolWindow.contentManager.addContentManagerListener(object : ContentManagerListener {
+      var currentIndex = -1 // to distinguish event "another tab selected" from "contents were removed and added"
       override fun selectionChanged(event: ContentManagerEvent) {
         if (myStructureView is StructureViewComposite) {
           val views = (myStructureView as StructureViewComposite).structureViews
-          for (view in views) {
+          views.forEachIndexed { i, view ->
             if (view.title == event.content.tabName) {
               coroutineScope.launch {
                 updateHeaderActions(view.structureView)
               }
-              break
+              if (myToolWindow.contentManager.contentCount == 2 && i != currentIndex && event.operation == ContentOperation.add) {
+                if (i != -1) StructureViewEventsCollector.logTabSelected(view)
+                currentIndex = i
+              }
+              return@forEachIndexed
             }
           }
         }
@@ -153,6 +170,13 @@ class StructureViewWrapperImpl(private val project: Project,
     PsiStructureViewFactory.EP_NAME.addChangeListener({ clearCaches() }, this)
     StructureViewBuilder.EP_NAME.addChangeListener({ clearCaches() }, this)
     ApplicationManager.getApplication().messageBus.connect(this).subscribe(STRUCTURE_CHANGED, Runnable { clearCaches() })
+    ApplicationManager.getApplication().messageBus.connect(this).subscribe(ProjectCloseListener.TOPIC, object : ProjectCloseListener {
+      override fun projectClosingBeforeSave(project: Project) {
+        myToolWindow.contentManager.selectedContent?.tabName
+          ?.takeIf { it.isNotEmpty() }
+          ?.let { StructureViewState.getInstance(project).selectedTab = it }
+      }
+    })
 
     coroutineScope.launch {
       rebuildRequests
@@ -163,7 +187,7 @@ class StructureViewWrapperImpl(private val project: Project,
           }
         }
         .collectLatest {
-          rebuildImpl()
+            rebuildImpl()
         }
     }
   }
@@ -175,11 +199,14 @@ class StructureViewWrapperImpl(private val project: Project,
     }
     rebuildNow("clear caches")
   }
-
   private fun checkUpdate() {
     if (project.isDisposed) return
-    val owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
+    val owner = getFocusOwner()
+
     val insideToolwindow = SwingUtilities.isDescendingFrom(myToolWindow.component, owner)
+                           // On the remote backend focus could be set to IdeFrame
+                           // if the on the frontend focus set to a frontend-specific component
+                           && (AppMode.isRemoteDevHost() && owner !is IdeFrame)
     if (insideToolwindow) LOG.debug("inside structure view")
     if (!myFirstRun && (insideToolwindow || JBPopupFactory.getInstance().isPopupActive)) {
       return
@@ -195,7 +222,7 @@ class StructureViewWrapperImpl(private val project: Project,
     }
     else {
       val asyncDataContext = Utils.createAsyncDataContext(dataContext)
-      ReadAction.nonBlocking<VirtualFile?> { getTargetVirtualFile(asyncDataContext) }
+      ReadAction.nonBlocking<VirtualFile?> { getTargetVirtualFile(asyncDataContext, owner) }
         .coalesceBy(this, owner)
         .finishOnUiThread(ModalityState.defaultModalityState()) { file: VirtualFile? ->
           val firstRun = myFirstRun
@@ -228,6 +255,13 @@ class StructureViewWrapperImpl(private val project: Project,
   }
 
   private suspend fun setFile(file: VirtualFile?) {
+    if (file?.fileSystem is NonPhysicalFileSystem && PlatformUtils.isIdeaUltimate()) {
+      val notInEditor = withContext(Dispatchers.EDT) {
+        !project.serviceAsync<FileEditorManager>().selectedFiles.contains(file)
+      }
+      if (notInEditor) return
+    }
+
     suspend fun setFileAndRebuild() = withContext(Dispatchers.EDT) {
       // myFile access on EDT
       myFile = file
@@ -273,6 +307,7 @@ class StructureViewWrapperImpl(private val project: Project,
         project.serviceAsync<FileEditorManager>().getSelectedEditor(file) !== myFileEditor
       }
       if (editorIsDifferent) {
+        LOG.debug("Editor is different, rebuilding it")
         setFileAndRebuild()
         return
       }
@@ -339,23 +374,35 @@ class StructureViewWrapperImpl(private val project: Project,
     check(rebuildRequests.tryEmit(delay))
   }
 
-  private suspend fun rebuildImpl() = withContext(Dispatchers.EDT) {
+  private suspend fun rebuildImpl() {
+    if (myToolWindow.isDisposed) return
     val container: Container = myToolWindow.component
-    val wasFocused = UIUtil.isFocusAncestor(container)
-    if (myStructureView != null) {
-      myStructureView!!.storeState()
-      Disposer.dispose(myStructureView!!)
-      myStructureView = null
-      myFileEditor = null
-    }
-    if (myModuleStructureComponent != null) {
-      Disposer.dispose(myModuleStructureComponent!!)
-      myModuleStructureComponent = null
-    }
     val contentManager = myToolWindow.contentManager
-    contentManager.removeAllContents(true)
+    var wasFocused: Boolean
+    withContext(Dispatchers.EDT) {
+      wasFocused = UIUtil.isFocusAncestor(container)
+      if (myStructureView != null) {
+        LOG.debug("Removing all view options on structure view deletion")
+        myActionGroup.removeAll()
+        myStructureView!!.storeState()
+        contentManager.selectedContent?.tabName
+          ?.takeIf { it.isNotEmpty() }
+          ?.let { StructureViewState.getInstance(project).selectedTab = it }
+        Disposer.dispose(myStructureView!!)
+        myStructureView = null
+        myFileEditor = null
+      }
+      if (myModuleStructureComponent != null) {
+        Disposer.dispose(myModuleStructureComponent!!)
+        myModuleStructureComponent = null
+      }
+      if (!isStructureViewShowing) {
+        LOG.debug("updating Structure View on hidden window")
+        contentManager.removeAllContents(true)
+      }
+    }
     if (!isStructureViewShowing) {
-      return@withContext
+      return
     }
 
     val file = myFile ?: run {
@@ -376,9 +423,11 @@ class StructureViewWrapperImpl(private val project: Project,
         }
 
         if (module != null && !ModuleType.isInternal(module)) {
-          myModuleStructureComponent = ModuleStructureComponent(module)
-          createSinglePanel(myModuleStructureComponent!!.component!!)
-          Disposer.register(this@StructureViewWrapperImpl, myModuleStructureComponent!!)
+          withContext(Dispatchers.EDT) {
+            myModuleStructureComponent = ModuleStructureComponent(module)
+            createSinglePanel(myModuleStructureComponent!!.component!!)
+            Disposer.register(this@StructureViewWrapperImpl, myModuleStructureComponent!!)
+          }
         }
       }
       else {
@@ -386,61 +435,88 @@ class StructureViewWrapperImpl(private val project: Project,
         val structureViewBuilder = if (editor != null && editor.isValid)
           readAction { editor.structureViewBuilder } else createStructureViewBuilder(file)
         if (structureViewBuilder != null) {
-          writeIntentReadAction {
-            val structureView = structureViewBuilder.createStructureView(editor, project)
-            myStructureView = structureView
+          val structureView = structureViewBuilder.createStructureViewSuspend(editor, project)
+          withContext(Dispatchers.EDT) {
+            writeIntentReadAction {
+              myStructureView = structureView
 
-            myFileEditor = editor
-            Disposer.register(this@StructureViewWrapperImpl, structureView)
-            if (structureView is StructureViewComposite) {
-              val views: Array<StructureViewDescriptor> = structureView.structureViews
-              names = views.map { it.title }.toTypedArray()
-              panels = views.map { createContentPanel(it.structureView.component) }
+              myFileEditor = editor
+              Disposer.register(this@StructureViewWrapperImpl, structureView)
+              val previouslySelectedTab = StructureViewState.getInstance(project).selectedTab
+              if (structureView is StructureViewComposite) {
+                val views: Array<StructureViewDescriptor> = structureView.structureViews
+                names = views.map { it.title }.toTypedArray()
+                panels = views.map {
+                  if (previouslySelectedTab == it.title) {
+                    StructureViewEventsCollector.logBuildStructure(it)
+                  }
+                  createContentPanel(it.structureView.component)
+                }
+              }
+              else {
+                createSinglePanel(structureView.component)
+              }
+              structureView.restoreState()
+              structureView.centerSelectedRow()
             }
-            else {
-              createSinglePanel(structureView.component)
-            }
-            structureView.restoreState()
-            structureView.centerSelectedRow()
           }
         }
       }
     }
-    updateHeaderActions(myStructureView)
-    if (myModuleStructureComponent == null && myStructureView == null) {
-      val panel: JBPanelWithEmptyText = object : JBPanelWithEmptyText() {
-        override fun getBackground(): Color {
-          return UIUtil.getTreeBackground()
+    withContext(Dispatchers.EDT) {
+      contentManager.removeAllContents(true)
+      updateHeaderActions(myStructureView)
+      if (myModuleStructureComponent == null && myStructureView == null) {
+        val panel: JBPanelWithEmptyText = object : JBPanelWithEmptyText() {
+          override fun getBackground(): Color {
+            return UIUtil.getTreeBackground()
+          }
+        }
+        panel.emptyText.setText(LangBundle.message("panel.empty.text.no.structure"))
+        createSinglePanel(panel)
+      }
+      for (i in panels.indices) {
+        val content = ContentFactory.getInstance().createContent(panels[i], names[i], false)
+        contentManager.addContent(content)
+        val previouslySelectedTab = StructureViewState.getInstance(project).selectedTab
+        if (panels.size > 1 && names[i] == previouslySelectedTab) {
+          contentManager.setSelectedContent(content)
+        }
+        if (i == 0 && myStructureView != null) {
+          Disposer.register(content, myStructureView!!)
         }
       }
-      panel.emptyText.setText(LangBundle.message("panel.empty.text.no.structure"))
-      createSinglePanel(panel)
-    }
-    for (i in panels.indices) {
-      val content = ContentFactory.getInstance().createContent(panels[i], names[i], false)
-      contentManager.addContent(content)
-      if (i == 0 && myStructureView != null) {
-        Disposer.register(content, myStructureView!!)
+
+      pendingRebuild.set(false)
+      val pendingSelection = pendingSelectionFunc.getAndSet(null)
+      if (pendingSelection != null) {
+        pendingSelection()
+      }
+
+      if (wasFocused) {
+        val policy = container.focusTraversalPolicy
+        val component = policy?.getDefaultComponent(container)
+        if (component != null) IdeFocusManager.getInstance(project).requestFocusInProject(component, project)
       }
     }
+  }
 
-    pendingRebuild.set(false)
-    val pendingSelection = pendingSelectionFunc.getAndSet(null)
-    if (pendingSelection != null) {
-      pendingSelection()
+  @ApiStatus.Internal
+  fun queueUpdate() {
+    if (myStructureView is StructureViewComponent) {
+      (myStructureView as StructureViewComponent).queueUpdate()
     }
-
-    if (wasFocused) {
-      val policy = container.focusTraversalPolicy
-      val component = policy?.getDefaultComponent(container)
-      if (component != null) IdeFocusManager.getInstance(project).requestFocusInProject(component, project)
+    if (myStructureView is StructureViewComposite) {
+      ((myStructureView as StructureViewComposite).selectedStructureView as? StructureViewComponent)?.queueUpdate()
     }
   }
 
   private suspend fun updateHeaderActions(structureView: StructureView?) {
+    myActionGroup.removeAll()
     val titleActions: List<AnAction> = if (structureView is StructureViewComponent) {
       if (ExperimentalUI.isNewUI()) {
-        readAction { listOf(structureView.viewActions) }
+        readAction { structureView.getViewActions(myActionGroup) }
+        listOf(myActionGroup)
       }
       else {
         withContext(Dispatchers.EDT) { structureView.addExpandCollapseActions() }
@@ -467,7 +543,7 @@ class StructureViewWrapperImpl(private val project: Project,
   }
 
   private suspend fun createStructureViewBuilder(file: VirtualFile): StructureViewBuilder? {
-    if (file.length > PersistentFSConstants.getMaxIntellisenseFileSize()) return null
+    if (file.isTooLargeForIntellijSense()) return null
     val providers = getInstance().getProvidersAsync(project, file)
     val provider = (if (providers.isEmpty()) null else providers[0]) ?: return null
     if (provider is StructureViewFileEditorProvider) {
@@ -506,13 +582,15 @@ class StructureViewWrapperImpl(private val project: Project,
     @ApiStatus.Experimental
     @JvmField
     val STRUCTURE_VIEW_TARGET_FILE_KEY: DataKey<Optional<VirtualFile?>> = DataKey.create("STRUCTURE_VIEW_TARGET_FILE_KEY")
+    private val STRUCTURE_VIEW_SELECTED_TAB_KEY: Key<String> = Key.create("STRUCTURE_VIEW_SELECTED_TAB")
+    private const val STRUCTURE_VIEW_ACTION_GROUP_ID: String = "Structure.ViewOptions"
 
     private val LOG = Logger.getInstance(StructureViewWrapperImpl::class.java)
     private val WRAPPER_DATA_KEY = DataKey.create<StructureViewWrapper>("WRAPPER_DATA_KEY")
     private const val REFRESH_TIME = 100 // time to check if a context file selection is changed or not
     private const val REBUILD_TIME = 100L // time to wait and merge requests to rebuild a tree model
 
-    private fun getTargetVirtualFile(asyncDataContext: DataContext): VirtualFile? {
+    private fun getTargetVirtualFile(asyncDataContext: DataContext, focusOwner: Component?): VirtualFile? {
       val explicitlySpecifiedFile = STRUCTURE_VIEW_TARGET_FILE_KEY.getData(asyncDataContext)
       // explicitlySpecifiedFile == null           means no value was specified for this key
       // explicitlySpecifiedFile.isEmpty() == true means target virtual file (and structure view itself) is explicitly suppressed
@@ -520,7 +598,16 @@ class StructureViewWrapperImpl(private val project: Project,
         return explicitlySpecifiedFile.orElse(null)
       }
       val commonFiles = CommonDataKeys.VIRTUAL_FILE_ARRAY.getData(asyncDataContext)
-      return if (commonFiles != null && commonFiles.size == 1) commonFiles[0] else null
+      val project = CommonDataKeys.PROJECT.getData(asyncDataContext)
+      return when {
+        commonFiles != null && commonFiles.size == 1 -> commonFiles[0]
+        AppMode.isRemoteDevHost() && project != null && focusOwner is IdeFrame -> {
+          // In RD when focus is set to a frontend-component
+          // (e.g., tabs, editors, notification tool window) on the backend it will be set to `IdeFrame`
+          FileEditorManager.getInstance(project).selectedFiles.firstOrNull()
+        }
+        else -> null
+      }
     }
 
     private fun loggedRun(message: String, task: Runnable): Boolean {
@@ -542,5 +629,25 @@ class StructureViewWrapperImpl(private val project: Project,
         if (LOG.isTraceEnabled) LOG.trace("$message: finished in ${(System.nanoTime() - startTimeNs) / 1000000} ms")
       }
     }
+
+    /**
+     * Get a view options action group.
+     * It could be either a registered `Structure.ViewOption` action group or a dynamic unregistered action group.
+     *  * It will be the registered group if and only if the IDE is running in RemoteDev.
+     *    It allows synchronizing action between backend and frontend
+     *  * Otherwise, it will be the unregistered dynamic action group.
+     *    It forces IDE not to force actions (for CWM)
+     */
+    private fun getOrCopyViewOptionsGroup(): DefaultActionGroup =
+      if (AppMode.isRemoteDevHost())
+        ActionManager.getInstance().getAction(STRUCTURE_VIEW_ACTION_GROUP_ID) as DefaultActionGroup
+      else DefaultActionGroup(IdeBundle.message("group.view.options"), null, AllIcons.Actions.GroupBy)
+        .apply { isPopup = true }
+  }
+
+  private fun getFocusOwner(): Component? {
+    val focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
+    if (focusOwner != null || !AppMode.isRemoteDevHost()) return focusOwner
+    return FileEditorManager.getInstance(project).selectedTextEditor?.contentComponent
   }
 }

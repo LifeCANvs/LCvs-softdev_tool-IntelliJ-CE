@@ -6,7 +6,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.testFramework.junit5.TestApplication
-import io.kotest.common.runBlocking
 import io.kotest.mpp.atomics.AtomicReference
 import kotlinx.coroutines.*
 import kotlinx.coroutines.internal.intellij.IntellijCoroutines
@@ -68,9 +67,8 @@ class ImplicitBlockingContextTest {
   @Test
   fun invokeLater(): Unit = runBlockingWithCatchingExceptions {
     withContext(E()) {
-      val currentContext = coroutineContext
       ApplicationManager.getApplication().invokeLater {
-        assertContextRemainsOnFreeThread(currentContext)
+        assertContextRemainsOnFreeThread()
       }
     }
   }
@@ -78,9 +76,8 @@ class ImplicitBlockingContextTest {
   @Test
   fun executeOnPooledThread(): Unit = runBlockingWithCatchingExceptions {
     withContext(E()) {
-      val currentContext = coroutineContext
       ApplicationManager.getApplication().executeOnPooledThread {
-        assertContextRemainsOnFreeThread(currentContext)
+        assertContextRemainsOnFreeThread()
       }
     }
   }
@@ -91,7 +88,7 @@ class ImplicitBlockingContextTest {
       val currentContext = coroutineContext
       runBlockingCancellable {
         // the equality here holds up to skeleton, since Job and CoroutineId would be different
-        assertEquals(getContextSkeleton(currentContext.minusKey(ContinuationInterceptor)), getContextSkeleton(currentThreadContext()))
+        assertEquals(coroutineContext[E], currentContext[E])
       }
     }
   }
@@ -102,7 +99,7 @@ class ImplicitBlockingContextTest {
     withContext(E()) {
       val currentContext = coroutineContext
       runBlocking {
-        assertNotEquals(getContextSkeleton(currentContext), getContextSkeleton(currentThreadContext()))
+        assertNotEquals(coroutineContext[E], currentContext[E])
       }
     }
   }
@@ -184,9 +181,9 @@ class ImplicitBlockingContextTest {
     assertEquals(context.minusKey(ContinuationInterceptor), currentThreadContext())
   }
 
-  private fun assertContextRemainsOnFreeThread(context: CoroutineContext) {
+  private fun assertContextRemainsOnFreeThread() {
     assertNull(IntellijCoroutines.currentThreadCoroutineContext())
-    val list = currentThreadContext().fold(ArrayList<CoroutineContext.Element>(), { list, elem -> list.apply { add(elem) } })
-    assertEquals(list.single().key, E)
+    val set = currentThreadContext().fold(HashSet<CoroutineContext.Key<*>>(), { list, elem -> list.apply { add(elem.key) } })
+    assertTrue(set.contains(E))
   }
 }

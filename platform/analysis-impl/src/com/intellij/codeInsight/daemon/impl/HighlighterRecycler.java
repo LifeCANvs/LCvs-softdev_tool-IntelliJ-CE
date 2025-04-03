@@ -10,6 +10,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,7 +33,7 @@ final class HighlighterRecycler {
 
   // return true if RH is successfully recycled, false if race condition intervened
   synchronized void recycleHighlighter(@NotNull HighlightInfo info) {
-    RangeHighlighterEx highlighter = info.highlighter;
+    RangeHighlighterEx highlighter = info.getHighlighter();
     assert !(info.isFromHighlightVisitor() || info.isFromAnnotator() || info.isFromInspection() || info.isInjectionRelated()) : info;
     assert highlighter != null;
     if (UpdateHighlightersUtil.LOG.isDebugEnabled()) {
@@ -43,14 +44,13 @@ final class HighlighterRecycler {
   }
 
   // null means no highlighter found in the cache
-  @Nullable
-  synchronized RangeHighlighter pickupHighlighterFromGarbageBin(int startOffset, int endOffset, int layer) {
+  synchronized @Nullable RangeHighlighter pickupHighlighterFromGarbageBin(int startOffset, int endOffset, int layer) {
     long range = TextRangeScalarUtil.toScalarRange(startOffset, endOffset);
     List<HighlightInfo> collection = incinerator.get(range);
     if (collection != null) {
       for (int i = 0; i < collection.size(); i++) {
         HighlightInfo info = collection.get(i);
-        RangeHighlighterEx highlighter = info.highlighter;
+        RangeHighlighterEx highlighter = info.getHighlighter();
         if (highlighter.isValid() && highlighter.getLayer() == layer) {
           collection.remove(info);
           if (collection.isEmpty()) {
@@ -66,14 +66,13 @@ final class HighlighterRecycler {
     return null;
   }
   //
-  @NotNull
-  private synchronized Collection<? extends HighlightInfo> forAllInGarbageBin() {
+  private synchronized @NotNull @Unmodifiable Collection<? extends HighlightInfo> forAllInGarbageBin() {
     return ContainerUtil.flatten(incinerator.values());
   }
 
   @Nullable
   RangeHighlighter pickupFileLevelRangeHighlighter(int fileTextLength) {
-    return pickupHighlighterFromGarbageBin(0, fileTextLength, DaemonCodeAnalyzerEx.ANY_GROUP);
+    return pickupHighlighterFromGarbageBin(0, fileTextLength, DaemonCodeAnalyzerEx.FILE_LEVEL_FAKE_LAYER);
   }
 
   /**

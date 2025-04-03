@@ -3,100 +3,32 @@
 
 package com.intellij.platform.ijent.community.impl.nio
 
-import com.intellij.platform.ijent.fs.*
-import com.intellij.util.text.nullize
-import kotlinx.coroutines.Dispatchers
-import java.io.IOException
+import com.intellij.platform.eel.path.EelPath
+import kotlinx.coroutines.runBlocking
 import java.nio.file.*
-import kotlin.coroutines.Continuation
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.startCoroutine
 
-@Throws(FileSystemException::class)
-internal fun <T, E : IjentFsError> IjentFsResult<T, E>.getOrThrowFileSystemException(): T =
-  when (this) {
-    is IjentFsResult.Ok -> value
-    is IjentFsResult.Error -> error.throwFileSystemException()
-  }
-
-// TODO There's java.nio.file.FileSystemLoopException, so ELOOP should be added to all error codes for a decent support of all exceptions.
-@Throws(FileSystemException::class)
-internal fun IjentFsError.throwFileSystemException(): Nothing {
-  throw when (this) {
-    is IjentFsError.DoesNotExist -> NoSuchFileException(where.toString(), null, message.nullize())
-    is IjentFsError.NotFile -> FileSystemException(where.toString(), null, "Is a directory")
-    is IjentFsError.PermissionDenied -> AccessDeniedException(where.toString(), null, message.nullize())
-    is IjentFsError.NotDirectory -> NotDirectoryException(where.toString())
-    is IjentFsError.AlreadyExists -> FileAlreadyExistsException(where.toString())
-    is IjentFsError.UnknownFile -> IOException("File is not opened")
-    is IjentFsError.DirNotEmpty -> DirectoryNotEmptyException(where.toString())
-    is IjentFsError.NameTooLong -> IllegalArgumentException("Name is too long")
-    is IjentFsError.NotEnoughSpace -> FileSystemException(where.toString(), null, "Not enough space")
-    is IjentFsError.ReadOnlyFileSystem -> ReadOnlyFileSystemException()
-    is IjentOpenedFile.SeekError.InvalidValue -> IllegalArgumentException(message)
-    is IjentOpenedFile.Reader.ReadError.InvalidValue -> IllegalArgumentException(message)
-    is IjentOpenedFile.Writer.TruncateException.NegativeOffset,
-    is IjentOpenedFile.Writer.TruncateException.OffsetTooBig -> throw IllegalArgumentException(message)
-    is IjentOpenedFile.Writer.WriteError.InvalidValue -> throw IllegalArgumentException(message)
-    is IjentFileSystemApi.DeleteException.UnresolvedLink -> throw FileSystemException(where.toString(), null, message)
-    is IjentFsError.Other -> FileSystemException(where.toString(), null, message.nullize())
-  }
-}
-
-internal fun Path.toIjentPath(isWindows: Boolean): IjentPath =
+internal fun Path.toEelPath(): EelPath =
   when {
-    this is IjentNioPath -> ijentPath
-
-    isAbsolute -> throw InvalidPathException(toString(), "This path can't be converted to IjentPath")
-
-    else -> IjentPath.Relative.parse(toString()).getOrThrow()
+    this is AbsoluteIjentNioPath -> eelPath
+    else -> throw IllegalArgumentException("$this is not absolute IjentNioPath")
   }
-
-internal fun <T> fsBlocking(body: suspend () -> T): T = invokeSuspending(body)
 
 /**
- * Runs a suspending IO operation [block] in non-suspending code.
- * Normally, [kotlinx.coroutines.runBlocking] should be used in such cases,
- * but it has significant performance overhead: creation and installation of an [kotlinx.coroutines.EventLoop].
+ * We need to use a plain `runBlocking` here.
+ * The IO call is supposed to be fast (several milliseconds in the worst case),
+ * so the cost of spawning and destroying an additional thread in Dispatchers.Default would be too big.
+ * Also, IJent does not require any outer lock in its implementation, so a deadlock is not possible.
  *
- * Unfortunately, the execution of [block] may still launch coroutines, although they are very primitive.
- * To mitigate this, we use [Dispatchers.Unconfined] as an elementary event loop.
- * It does not change the final thread of execution,
- * as we are awaiting for a monitor on the same thread where [invokeSuspending] was called.
- *
- * We manage to save up to 30% (300 microseconds) of performance cost in comparison with [kotlinx.coroutines.runBlocking],
- * which is important in case of many short IO operations.
- *
- * The invoked operation is non-cancellable, as one can expect from regular native-based IO calls.
- *
- * @see com.intellij.openapi.application.impl.runSuspend
+ * In addition, we suppress work stealing in this `runBlocking`, as it should return as fast as it can on its own.
  */
-private fun <T> invokeSuspending(block: suspend () -> T): T {
-  val run = RunSuspend<T>()
-  block.startCoroutine(run)
-  return run.await()
+@Suppress("SSBasedInspection")
+internal fun <T> fsBlocking(body: suspend () -> T): T {
+  return runBlocking(NestedBlockingEventLoop(Thread.currentThread())) {
+    body()
+  }
 }
 
-private class RunSuspend<T> : Continuation<T> {
-  override val context: CoroutineContext = Dispatchers.Unconfined
-
-  var result: Result<T>? = null
-
-  override fun resumeWith(result: Result<T>) = synchronized(this) {
-    this.result = result
-    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN") (this as Object).notifyAll()
-  }
-
-  fun await(): T {
-    synchronized(this) {
-      while (true) {
-        when (val result = this.result) {
-          null -> @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN") (this as Object).wait()
-          else -> {
-            return result.getOrThrow() // throw up failure
-          }
-        }
-      }
-    }
-  }
+@Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE", "CANNOT_OVERRIDE_INVISIBLE_MEMBER", "ERROR_SUPPRESSION")
+private class NestedBlockingEventLoop(override val thread: Thread) : kotlinx.coroutines.EventLoopImplBase() {
+  override fun shouldBeProcessedFromContext(): Boolean = true
 }

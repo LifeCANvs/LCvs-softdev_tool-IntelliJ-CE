@@ -149,6 +149,11 @@
       "hoverSeparatorColor": "Gray8"
     },
 
+    "Badge": {
+      "greenOutlineForeground": "Green4",
+      "greenOutlineBorderColor": "Green6"
+    },
+
     "Bookmark": {
       "Mnemonic.iconForeground": "Gray1",
       "MnemonicAvailable.borderColor": "Gray9",
@@ -233,7 +238,13 @@
 
     "Shortcut": {
       "backgroundOpacity": 0,
-      "borderColor":"Gray8"
+      "borderColor":"Gray8",
+      "foreground": "Gray1"
+    },
+
+    "Abbreviation": {
+      "background": "#5A5D6B2E",
+      "foreground": "Gray1"
     },
 
     "ComboPopup.border": {
@@ -333,7 +344,10 @@
       "Gray": "#F0F1F5"
     },
 
-    "Label.errorForeground": "Red4",
+    "Label": {
+      "errorForeground": "Red4",
+      "warningForeground": "Yellow1"
+    },
 
     "Link": {
       "activeForeground": "Blue2",
@@ -772,6 +786,41 @@
       "errorForeground": "Red4"
     },
 
+    "TrialWidget": {
+      "Default": {
+        "foreground": "Gray12",
+        "background": "Gray2",
+        "borderColor": "Gray11",
+        "hoverForeground": "Gray12",
+        "hoverBackground": "Gray3",
+        "hoverBorderColor": "Gray10"
+      },
+      "Active": {
+        "foreground": "Green6",
+        "background": "#1E6B3320",
+        "borderColor": "Green7",
+        "hoverForeground": "Green6",
+        "hoverBackground": "#1E6B3340",
+        "hoverBorderColor": "Green7"
+      },
+      "Alert": {
+        "foreground": "Yellow4",
+        "background": "#A4670420",
+        "borderColor": "Yellow3",
+        "hoverForeground": "Yellow6",
+        "hoverBackground": "#A4670440",
+        "hoverBorderColor": "Yellow3"
+      },
+      "Expiring": {
+        "foreground": "Red12",
+        "background": "Red4",
+        "borderColor": "Red4",
+        "hoverForeground": "Red12",
+        "hoverBackground": "Red5",
+        "hoverBorderColor": "Red5"
+      }
+    },
+
     "MenuBar.borderColor": "Gray3",
 
     "VersionControl": {
@@ -1059,6 +1108,35 @@
       "LiveChart": {
         "horizontalAxisColor": "Gray9"
       }
+    },
+    "CompilationCharts": {
+      "background":{
+        "odd": "Gray13",
+        "even": "Gray12",
+        "default": "Gray13"
+      },
+      "test": {
+        "enabled": "Green7",
+        "disabled": "Green10",
+        "stroke": "Green5",
+        "selected": "Green6"
+      },
+      "production": {
+        "enabled": "Blue8",
+        "disabled": "Blue11",
+        "stroke": "Blue4",
+        "selected": "Blue5"
+      },
+      "memory": {
+        "background": "Blue10",
+        "stroke": "Blue5"
+      },
+      "cpu": {
+        "background": "Green9",
+        "stroke": "Green7"
+      },
+      "lineColor": "Gray12",
+      "textColor": "Gray2"
     },
     "FlameGraph.Tooltip": {
       "scaleBackground": "#EBECF0",

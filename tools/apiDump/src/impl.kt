@@ -12,7 +12,6 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.Type
 import org.objectweb.asm.tree.AnnotationNode
 import java.nio.file.Path
-import kotlin.collections.set
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.inputStream
 import kotlin.io.path.name
@@ -54,10 +53,13 @@ class ApiIndex private constructor(
     return classes[className]
   }
 
-  internal fun discoverPackages(packages: Map<String, ApiAnnotations>): ApiIndex {
+  internal fun discoverPackages(packages: Map<String, ApiAnnotations>, root: Path): ApiIndex {
     val builder = this.packages.builder()
     for ((packageName, packageAnnotations) in packages) {
-      check(this.packages[packageName] == null)
+      val existingAnnotations = this.packages[packageName]
+      if (existingAnnotations != null && existingAnnotations != packageAnnotations) {
+        error("$packageName has different annotations in different modules. The current root = $root")
+      }
       builder[packageName] = packageAnnotations
     }
     return ApiIndex(
@@ -66,11 +68,17 @@ class ApiIndex private constructor(
     )
   }
 
-  internal fun discoverClass(signature: ClassBinarySignature): ApiIndex {
+  internal fun discoverClass(signature: ClassBinarySignature, root: Path): ApiIndex {
     val className = signature.name
-    check(classes[className] == null) {
-      "Class already discovered $className"
+    if (className.endsWith("/package-info")) {
+      // ignore package-info.java
+      return this
     }
+
+    check(classes[className] == null) {
+      "$className already declared. The current root = $root"
+    }
+
     return ApiIndex(
       packages,
       classes = classes.put(className, signature),
@@ -86,6 +94,14 @@ class API internal constructor(
   val publicApi: List<ApiClass> by lazy {
     publicApi(index, signatures)
   }
+
+  private val stableAndExperimentalApi: Pair<List<ApiClass>, List<ApiClass>> by lazy {
+    stableAndExperimentalApi(publicApi)
+  }
+
+  val stableApi: List<ApiClass> get() = stableAndExperimentalApi.first
+
+  val experimentalApi: List<ApiClass> get() = stableAndExperimentalApi.second
 }
 
 /**
@@ -97,7 +113,7 @@ fun api(index: ApiIndex, root: Path): API {
   val classFilePaths: Sequence<Path> = classFilePaths(root)
 
   val packages: Map<String, ApiAnnotations> = classFilePaths.packages()
-  index = index.discoverPackages(packages)
+  index = index.discoverPackages(packages, root)
 
   val signatures: List<ClassBinarySignature> = classFilePaths
     .map { it.inputStream() }
@@ -111,7 +127,7 @@ fun api(index: ApiIndex, root: Path): API {
          * because the next [handleAnnotationsAndVisibility] call relies on it
          * to resolve the outer class name.
          */
-        index = index.discoverClass(it)
+        index = index.discoverClass(it, root)
       }
     }
   return API(index, signatures)
@@ -255,6 +271,40 @@ private fun publicApi(index: ApiIndex, classSignatures: List<ClassBinarySignatur
     )
   }
   return result
+}
+
+private fun stableAndExperimentalApi(classSignatures: List<ApiClass>): Pair<List<ApiClass>, List<ApiClass>> {
+  val stableClassSignatures = ArrayList<ApiClass>()
+  val experimentalClassSignatures = ArrayList<ApiClass>()
+  for (classSignature in classSignatures) {
+    if (classSignature.flags.annotationExperimental) {
+      // the whole class is experimental
+      experimentalClassSignatures.add(classSignature)
+      continue
+    }
+    val stableMembers = ArrayList<ApiMember>()
+    val experimentalMembers = ArrayList<ApiMember>()
+    for (member in classSignature.members) {
+      val memberList = if (member.flags.annotationExperimental) {
+        experimentalMembers
+      }
+      else {
+        stableMembers
+      }
+      memberList.add(member)
+    }
+    if (experimentalMembers.isEmpty()) {
+      // a stable class has only stable members
+      stableClassSignatures.add(classSignature)
+      continue
+    }
+    // keep only experimental members
+    experimentalClassSignatures.add(classSignature.copy(members = experimentalMembers))
+
+    // keep only stable members but also keep the signature in the stable list even if all members are experimental
+    stableClassSignatures.add(classSignature.copy(members = stableMembers))
+  }
+  return Pair(stableClassSignatures, experimentalClassSignatures)
 }
 
 @OptIn(ExperimentalPathApi::class)

@@ -24,6 +24,7 @@ import com.intellij.util.ObjectUtils;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
 import kotlinx.coroutines.Job;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -159,6 +160,7 @@ public abstract class RemoteProcessSupport<Target, EntryPoint, Parameters> {
   /**
    * @deprecated use acquire(Target, Parameters, ProgressIndicator)
    */
+  @ApiStatus.Internal
   @Deprecated
   public EntryPoint acquire(@NotNull Target target, @NotNull Parameters configuration) throws Exception {
     return acquire(target, configuration, null);
@@ -223,8 +225,7 @@ public abstract class RemoteProcessSupport<Target, EntryPoint, Parameters> {
     return port;
   }
 
-  @NotNull
-  public Future<?> release(@NotNull Target target, @Nullable Parameters configuration) {
+  public @NotNull Future<?> release(@NotNull Target target, @Nullable Parameters configuration) {
     List<Info> infos = new ArrayList<>();
     synchronized (myProcMap) {
       for (Pair<Target, Parameters> key : myProcMap.keySet()) {
@@ -263,8 +264,7 @@ public abstract class RemoteProcessSupport<Target, EntryPoint, Parameters> {
   private void startProcess(@NotNull Target target, @NotNull Parameters configuration, @NotNull Pair<Target, Parameters> key) {
     ProgramRunner<?> runner = new ProgramRunner<>() {
       @Override
-      @NotNull
-      public String getRunnerId() {
+      public @NotNull String getRunnerId() {
         return "MyRunner";
       }
 
@@ -361,7 +361,7 @@ public abstract class RemoteProcessSupport<Target, EntryPoint, Parameters> {
     return null;
   }
 
-  private ProcessListener getProcessListener(@NotNull final Pair<Target, Parameters> key) {
+  private ProcessListener getProcessListener(final @NotNull Pair<Target, Parameters> key) {
     return new ProcessListener() {
       @Override
       public void startNotified(@NotNull ProcessEvent event) {
@@ -401,19 +401,14 @@ public abstract class RemoteProcessSupport<Target, EntryPoint, Parameters> {
 
       @Override
       public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-
-        if (LOG.isDebugEnabled()) {
-          String out = "";
-          if (outputType == ProcessOutputTypes.STDOUT) {
-            out = "stdout";
-          }
-          if (outputType == ProcessOutputTypes.STDERR) {
-            out = "stderr";
-          }
-          if (outputType == ProcessOutputTypes.SYSTEM) {
-            out = "system";
-          }
-          LOG.debug("Remote process " + out + ":" + event.getText());
+        if (outputType == ProcessOutputTypes.STDOUT) {
+          LOG.debug("Remote process stdout:" + event.getText());
+        } else
+        if (outputType == ProcessOutputTypes.STDERR) {
+          LOG.warn("Remote process stderr:" + event.getText());
+        } else
+        if (outputType == ProcessOutputTypes.SYSTEM) {
+          LOG.info("Remote process system:" + event.getText());
         }
 
         String text = StringUtil.notNullize(event.getText());
@@ -499,8 +494,7 @@ public abstract class RemoteProcessSupport<Target, EntryPoint, Parameters> {
     return info != null;
   }
 
-  @Nullable
-  private EntryPoint acquireInProcess(@NotNull Target target, @NotNull Parameters configuration) throws Exception {
+  private @Nullable EntryPoint acquireInProcess(@NotNull Target target, @NotNull Parameters configuration) throws Exception {
     if (!RemoteObject.IN_PROCESS) return null;
     Pair<Target, Parameters> key = Pair.create(target, configuration);
     InProcessInfo<EntryPoint> info;
@@ -521,8 +515,7 @@ public abstract class RemoteProcessSupport<Target, EntryPoint, Parameters> {
     return result;
   }
 
-  @NotNull
-  protected ThrowableComputable<@Nullable EntryPoint, Exception> acquireInProcessFactory(Target target, Parameters configuration)
+  protected @NotNull ThrowableComputable<@Nullable EntryPoint, Exception> acquireInProcessFactory(Target target, Parameters configuration)
     throws Exception {
     return () -> null;
   }

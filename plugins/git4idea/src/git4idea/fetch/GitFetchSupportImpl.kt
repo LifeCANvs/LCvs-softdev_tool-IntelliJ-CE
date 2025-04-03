@@ -97,6 +97,10 @@ internal class GitFetchSupportImpl(private val project: Project) : GitFetchSuppo
     return fetch(listOf(RemoteRefCoordinates(repository, remote)))
   }
 
+  override fun fetchUnshallow(repository: GitRepository, remote: GitRemote): GitFetchResult {
+    return fetch(listOf(RemoteRefCoordinates(repository, remote, unshallow = true)))
+  }
+
   override fun fetch(repository: GitRepository, remote: GitRemote, refspec: @NonNls String): GitFetchResult {
     return fetch(listOf(RemoteRefCoordinates(repository, remote, refspec)))
   }
@@ -107,7 +111,11 @@ internal class GitFetchSupportImpl(private val project: Project) : GitFetchSuppo
 
   private fun fetch(arguments: List<RemoteRefCoordinates>): GitFetchResult {
     try {
-      fetchRequestCounter.incrementAndGet()
+      val counterAfterIncrement = fetchRequestCounter.incrementAndGet()
+      if (counterAfterIncrement == 1) {
+        project.messageBus.syncPublisher(GitFetchInProgressListener.TOPIC).fetchStarted()
+      }
+
       return withIndicator {
         val activity = VcsStatisticsCollector.FETCH_ACTIVITY.started(project)
 
@@ -130,7 +138,10 @@ internal class GitFetchSupportImpl(private val project: Project) : GitFetchSuppo
       }
     }
     finally {
-      fetchRequestCounter.decrementAndGet()
+      val counterAfterDecrement = fetchRequestCounter.decrementAndGet()
+      if (counterAfterDecrement == 0) {
+        project.messageBus.syncPublisher(GitFetchInProgressListener.TOPIC).fetchFinished()
+      }
     }
   }
 
@@ -152,7 +163,10 @@ internal class GitFetchSupportImpl(private val project: Project) : GitFetchSuppo
     val executor = AppExecutorUtil.createBoundedApplicationPoolExecutor("GitFetch pool", maxThreads)
     val commonIndicator = progressManager.progressIndicator ?: EmptyProgressIndicator()
     val authenticationGate = RestrictingAuthenticationGate()
-    for ((repository, remote, refspec) in remotes) {
+    for (fetchTarget in remotes) {
+      val repository = fetchTarget.repository
+      val remote = fetchTarget.remote
+
       LOG.debug("Fetching $remote in $repository")
       val future: Future<SingleRemoteResult> = executor.submit<SingleRemoteResult> {
         commonIndicator.checkCanceled()
@@ -161,7 +175,7 @@ internal class GitFetchSupportImpl(private val project: Project) : GitFetchSuppo
         ProgressManager.getInstance().executeProcessUnderProgress({
                                                                     commonIndicator.checkCanceled()
                                                                     result = fetchQueue.executeForRemote(repository, remote) {
-                                                                      doFetch(repository, remote, refspec, authenticationGate)
+                                                                      doFetch(fetchTarget, authenticationGate)
                                                                     }
                                                                   }, commonIndicator)
         result
@@ -229,9 +243,7 @@ internal class GitFetchSupportImpl(private val project: Project) : GitFetchSuppo
     }
   }
 
-  private fun doFetch(repository: GitRepository, remote: GitRemote, refspec: String?, authenticationGate: AuthenticationGate? = null)
-    : SingleRemoteResult {
-
+  private fun doFetch(fetchTarget: RemoteRefCoordinates, authenticationGate: AuthenticationGate?): SingleRemoteResult {
     val indicator = progressManager.progressIndicator
     val progressListener = GitLineHandlerListener { line, outputType ->
       if (indicator != null && outputType == ProcessOutputTypes.STDERR) {
@@ -241,8 +253,15 @@ internal class GitFetchSupportImpl(private val project: Project) : GitFetchSuppo
     }
 
     val recurseSubmodules = "--recurse-submodules=no"
-    val params = if (refspec == null) arrayOf(recurseSubmodules) else arrayOf(refspec, recurseSubmodules)
-    val result = git.fetch(repository, remote, listOf(progressListener), authenticationGate, *params)
+    val params = buildList {
+      if (fetchTarget.refspec != null) add(fetchTarget.refspec)
+      add(recurseSubmodules)
+      if (fetchTarget.unshallow) add("--unshallow")
+    }.toTypedArray()
+
+    val repository = fetchTarget.repository
+    val remote = fetchTarget.remote
+    val result = git.fetch(fetchTarget.repository, remote, listOf(progressListener), authenticationGate, *params)
     val pruned = result.output.mapNotNull { getPrunedRef(it) }
     if (result.success()) {
       BackgroundTaskUtil.syncPublisher(repository.project, GIT_AUTHENTICATION_SUCCESS).authenticationSucceeded(repository, remote)
@@ -257,7 +276,12 @@ internal class GitFetchSupportImpl(private val project: Project) : GitFetchSuppo
     return if (matcher.matches()) matcher.group(1) else null
   }
 
-  private data class RemoteRefCoordinates(val repository: GitRepository, val remote: GitRemote, val refspec: String? = null)
+  private data class RemoteRefCoordinates(
+    val repository: GitRepository,
+    val remote: GitRemote,
+    val refspec: String? = null,
+    val unshallow: Boolean = false,
+  )
 
   private class FetchTask(val repository: GitRepository, val remote: GitRemote, val future: Future<SingleRemoteResult>)
 

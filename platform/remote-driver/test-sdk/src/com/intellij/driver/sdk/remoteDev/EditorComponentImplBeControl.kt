@@ -2,7 +2,7 @@ package com.intellij.driver.sdk.remoteDev
 
 import com.intellij.driver.client.Driver
 import com.intellij.driver.sdk.Editor
-import com.intellij.driver.sdk.ui.components.EditorComponentImpl
+import com.intellij.driver.sdk.ui.components.common.EditorComponentImpl
 import com.intellij.driver.sdk.ui.remote.Component
 
 
@@ -24,4 +24,6 @@ class EditorComponentImplBeControl(
   override fun getEditor(): Editor {
     return frontendEditorComponentImpl.getEditor()
   }
+
+  override fun isEditable() = frontendEditorComponentImpl.isEditable()
 }

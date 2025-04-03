@@ -1,9 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.refactoring.changeSignature;
 
 import com.intellij.codeInsight.highlighting.HighlightManager;
 import com.intellij.ide.highlighter.HighlighterFactory;
 import com.intellij.lang.injection.InjectedLanguageManager;
+import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
@@ -30,10 +31,12 @@ import com.intellij.ui.treeStructure.Tree;
 import com.intellij.util.Alarm;
 import com.intellij.util.Consumer;
 import com.intellij.util.Query;
+import com.intellij.util.SlowOperations;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import javax.swing.*;
 import javax.swing.event.TreeSelectionEvent;
@@ -105,7 +108,11 @@ public abstract class CallerChooserBase<M extends PsiElement> extends DialogWrap
         if (path != null) {
           final MemberNodeBase<M> node = (MemberNodeBase)path.getLastPathComponent();
           myAlarm.cancelAllRequests();
-          myAlarm.addRequest(() -> updateEditorTexts(node), 300);
+          myAlarm.addRequest(() -> {
+            try (AccessToken ignore = SlowOperations.knownIssue("IJPL-162969")) {
+              updateEditorTexts(node);
+            }
+          }, 300);
         }
       }
     };
@@ -168,9 +175,9 @@ public abstract class CallerChooserBase<M extends PsiElement> extends DialogWrap
     return node;
   }
 
-  protected Collection<PsiElement> findElementsToHighlight(M caller, PsiElement callee) {
+  protected @Unmodifiable Collection<PsiElement> findElementsToHighlight(M caller, PsiElement callee) {
     Query<PsiReference> references = ReferencesSearch.search(callee, new LocalSearchScope(caller), false);
-    return ContainerUtil.mapNotNull(references, psiReference -> psiReference.getElement());
+    return ContainerUtil.mapNotNull(references.asIterable(), psiReference -> psiReference.getElement());
   }
 
   @Override

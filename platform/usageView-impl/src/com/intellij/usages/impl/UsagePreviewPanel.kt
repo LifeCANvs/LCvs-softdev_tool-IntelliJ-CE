@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.usages.impl
 
 import com.intellij.find.FindBundle
@@ -52,6 +52,7 @@ import com.intellij.usages.UsageContextPanel
 import com.intellij.usages.UsageView
 import com.intellij.usages.UsageViewPresentation
 import com.intellij.usages.similarity.clustering.ClusteringSearchSession
+import com.intellij.util.SlowOperations
 import com.intellij.util.concurrency.NonUrgentExecutor
 import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
@@ -167,9 +168,10 @@ open class UsagePreviewPanel @JvmOverloads constructor(project: Project,
         if (infos != myCachedSelectedUsageInfos // avoid moving viewport
             || !UsageViewPresentation.arePatternsEqual(myCachedSearchPattern, myPresentation.searchPattern)
             || myCachedReplaceString != myPresentation.replaceString || myCachedCaseSensitive != myPresentation.isCaseSensitive) {
-          //maybe readaction
-          WriteIntentReadAction.run {
-            highlight(infos, myEditor!!, project, myShowTooltipBalloon, HighlighterLayer.ADDITIONAL_SYNTAX)
+          SlowOperations.knownIssue("IJPL-162820").use {
+            ReadAction.run<RuntimeException> {
+              highlight(infos, myEditor!!, project, myShowTooltipBalloon, HighlighterLayer.ADDITIONAL_SYNTAX)
+            }
           }
           myCachedSelectedUsageInfos = infos
           myCachedSearchPattern = myPresentation.searchPattern
@@ -415,6 +417,9 @@ open class UsagePreviewPanel @JvmOverloads constructor(project: Project,
 
   @Internal
   companion object {
+
+    val DO_NOT_ADJUST_NAME_RANGE: Key<Boolean> = Key.create<Boolean>("UsageViewPanel.DO_NOT_ADJUST_NAME_RANGE")
+
     const val LINE_HEIGHT_PROPERTY = "UsageViewPanel.lineHeightProperty"
     private val LOG = Logger.getInstance(UsagePreviewPanel::class.java)
 
@@ -473,9 +478,13 @@ open class UsagePreviewPanel @JvmOverloads constructor(project: Project,
         if (infos.size == 1 && infoRange != null) {
           var balloonText: String? = null
           if (findModel != null) {
-            val replacementText =
+            val replacementText = try {
               FindManager.getInstance(project).getStringToReplace(editor.document.getText(rangeToHighlight), findModel,
                                                                   rangeToHighlight.startOffset, editor.document.text) ?: return
+            }
+            catch (_: MalformedReplacementStringException) {
+              return
+            }
             val previewText = createPreviewHtml(replacementText)
             if (previewText != findModel.stringToReplace || Registry.`is`("ide.find.show.replacement.hint.for.simple.regexp")) {
               balloonText = previewText
@@ -497,6 +506,8 @@ open class UsagePreviewPanel @JvmOverloads constructor(project: Project,
      */
     @JvmStatic
     fun getNameElementTextRange(psiElement: PsiElement): TextRange {
+      if (psiElement.getUserData(DO_NOT_ADJUST_NAME_RANGE) == true)
+        return psiElement.textRange
       val psiFile = psiElement.containingFile
       val nameElement = psiFile.findElementAt(psiElement.textOffset)
       return if (nameElement != null) {

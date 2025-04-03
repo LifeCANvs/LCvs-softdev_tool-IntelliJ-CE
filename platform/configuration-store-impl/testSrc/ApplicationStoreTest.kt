@@ -12,7 +12,6 @@ import com.intellij.openapi.project.ProjectBundle
 import com.intellij.openapi.util.io.BufferExposingByteArrayOutputStream
 import com.intellij.platform.settings.SettingsController
 import com.intellij.platform.settings.local.clearCacheStore
-import com.intellij.serviceContainer.ComponentManagerImpl
 import com.intellij.testFramework.*
 import com.intellij.testFramework.assertions.Assertions.assertThat
 import com.intellij.testFramework.rules.InMemoryFsRule
@@ -180,7 +179,7 @@ class ApplicationStoreTest {
         )
     }
     finally {
-      (ApplicationManager.getApplication() as ComponentManagerImpl).unregisterComponent(A::class.java)
+      (ApplicationManager.getApplication() as ComponentManagerEx).unregisterComponent(A::class.java)
     }
   }
 
@@ -226,7 +225,7 @@ class ApplicationStoreTest {
       )
     }
     finally {
-      (ApplicationManager.getApplication() as ComponentManagerImpl).unregisterComponent(Comp::class.java)
+      (ApplicationManager.getApplication() as ComponentManagerEx).unregisterComponent(Comp::class.java)
     }
   }
 
@@ -438,10 +437,11 @@ class ApplicationStoreTest {
     }
 
     val component = MyComponent()
-    assertThatThrownBy {
-      componentStore.initComponent(component, null, PluginManagerCore.CORE_ID)
-    }.hasMessage("Cannot init component state (componentName=Bad, componentClass=MyComponent) [Plugin: com.intellij]")
-
+    rethrowLoggedErrorsIn {
+      assertThatThrownBy {
+        componentStore.initComponent(component, null, PluginManagerCore.CORE_ID)
+      }.hasMessage("Cannot init component state (componentName=Bad, componentClass=MyComponent) [Plugin: com.intellij]")
+    }
     assertThat(componentStore.getComponents()).doesNotContainKey("Bad")
   }
 
@@ -642,10 +642,11 @@ class ApplicationStoreTest {
   }
 
   private class TestComponentStore(testAppConfigPath: Path) : ComponentStoreWithExtraComponents() {
-    override val serviceContainer: ComponentManagerImpl
-      get() = ApplicationManager.getApplication() as ComponentManagerImpl
+    override val serviceContainer: ComponentManagerEx
+      get() = ApplicationManager.getApplication() as ComponentManagerEx
 
     override val storageManager = ApplicationStateStorageManager(pathMacroManager = null, service<SettingsController>())
+    override val isStoreInitialized: Boolean = true
 
     init {
       setPath(testAppConfigPath)

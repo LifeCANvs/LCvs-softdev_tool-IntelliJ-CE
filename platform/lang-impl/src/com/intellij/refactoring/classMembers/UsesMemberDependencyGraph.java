@@ -10,12 +10,14 @@ import com.intellij.openapi.util.NlsContexts;
 import com.intellij.psi.NavigatablePsiElement;
 import com.intellij.psi.PsiElement;
 import com.intellij.refactoring.RefactoringBundle;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 
+@ApiStatus.Internal
 public final class UsesMemberDependencyGraph<T extends NavigatablePsiElement, C extends PsiElement, M extends MemberInfoBase<T>> implements MemberDependencyGraph<T, M> {
   private static final Logger LOG = Logger.getInstance(UsesMemberDependencyGraph.class);
   private final HashSet<T> mySelectedNormal;
@@ -55,7 +57,7 @@ public final class UsesMemberDependencyGraph<T extends NavigatablePsiElement, C 
 
   public @NlsContexts.Tooltip String getElementTooltip(T element) {
     final Set<? extends T> dependencies = getDependenciesOf(element);
-    if(dependencies == null || dependencies.size() == 0) return null;
+    if(dependencies == null || dependencies.isEmpty()) return null;
 
     String strings = dependencies.stream().map(NavigationItem::getName).collect(NlsMessages.joiningAnd());
     return RefactoringBundle.message("used.by.0", strings);

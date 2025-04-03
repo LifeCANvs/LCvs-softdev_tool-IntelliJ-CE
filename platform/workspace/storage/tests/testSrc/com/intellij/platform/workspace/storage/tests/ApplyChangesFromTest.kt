@@ -8,12 +8,13 @@ import com.intellij.platform.workspace.storage.impl.ImmutableEntityStorageImpl
 import com.intellij.platform.workspace.storage.impl.MutableEntityStorageImpl
 import com.intellij.platform.workspace.storage.impl.assertConsistency
 import com.intellij.platform.workspace.storage.impl.exceptions.ApplyChangesFromException
-import com.intellij.platform.workspace.storage.impl.external.ExternalEntityMappingImpl
+import com.intellij.platform.workspace.storage.impl.external.AbstractExternalEntityMappingImpl
 import com.intellij.platform.workspace.storage.impl.url.VirtualFileUrlManagerImpl
 import com.intellij.platform.workspace.storage.testEntities.entities.*
 import com.intellij.platform.workspace.storage.toBuilder
 import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
 import com.intellij.testFramework.UsefulTestCase.assertOneElement
+import com.intellij.testFramework.assertErrorLogged
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.RepetitionInfo
@@ -314,7 +315,7 @@ class ApplyChangesFromTest {
       children = emptyList()
     }
 
-    assertThrowsLogError<ApplyChangesFromException> {
+    assertErrorLogged<ApplyChangesFromException> {
       source.applyChanges(target)
     }
   }
@@ -332,7 +333,7 @@ class ApplyChangesFromTest {
       this.myName = "Name"
     }
 
-    assertThrowsLogError<ApplyChangesFromException> {
+    assertErrorLogged<ApplyChangesFromException> {
       source.applyChanges(target)
     }
   }
@@ -354,7 +355,7 @@ class ApplyChangesFromTest {
 
     target.applyChangesFrom(source)
 
-    val externalMapping = target.getExternalMapping(externalMappingName) as ExternalEntityMappingImpl<Any>
+    val externalMapping = target.getExternalMapping(externalMappingName) as AbstractExternalEntityMappingImpl<Any>
     assertEquals(1, externalMapping.index.size)
   }
 

@@ -1,209 +1,317 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.base.analysis.api.utils
 
+import com.intellij.openapi.extensions.impl.ExtensionPointImpl
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiMember
+import com.intellij.psi.PsiField
+import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.PsiShortNamesCache
-import com.intellij.util.SmartList
+import com.intellij.util.Processor
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
-import org.jetbrains.kotlin.analysis.api.analyze
+import org.jetbrains.kotlin.analysis.api.components.KaBuiltinTypes
 import org.jetbrains.kotlin.analysis.api.symbols.*
-import org.jetbrains.kotlin.analysis.api.types.KaClassType
-import org.jetbrains.kotlin.analysis.api.types.KaFlexibleType
-import org.jetbrains.kotlin.analysis.api.types.KaType
-import org.jetbrains.kotlin.analysis.api.types.KaTypeNullability
+import org.jetbrains.kotlin.analysis.api.types.*
 import org.jetbrains.kotlin.base.analysis.isExcludedFromAutoImport
-import org.jetbrains.kotlin.psi.psiUtil.isExpectDeclaration
 import org.jetbrains.kotlin.idea.base.psi.kotlinFqName
 import org.jetbrains.kotlin.idea.stubindex.*
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.platform.isCommon
 import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.psiUtil.isExpectDeclaration
+import org.jetbrains.kotlin.psi.psiUtil.isExtensionDeclaration
 import org.jetbrains.kotlin.serialization.deserialization.METADATA_FILE_EXTENSION
-import org.jetbrains.kotlin.utils.yieldIfNotNull
 
-@OptIn(KaExperimentalApi::class)
-class KtSymbolFromIndexProvider private constructor(
-    private val useSiteFile: KtFile,
-    private val scope: GlobalSearchScope,
+class KtSymbolFromIndexProvider(
+    private val file: KtFile,
 ) {
+
     private val project: Project
-        get() = useSiteFile.project
+        get() = file.project
 
     context(KaSession)
-    private fun useSiteFilter(element: PsiElement): Boolean {
-        if (element.kotlinFqName?.isExcludedFromAutoImport(project, useSiteFile) == true) return false
+    private fun <T : PsiElement> T.isAcceptable(psiFilter: (T) -> Boolean): Boolean {
+        if (!psiFilter(this)) return false
 
-        val isCommon = useSiteModule.targetPlatform.isCommon()
-        return isCommon || (element as? KtDeclaration)?.isExpectDeclaration() != true
+        if (kotlinFqName?.isExcludedFromAutoImport(project, file) == true) return false
+        
+        if (this !is KtDeclaration) {
+            // no more checks for non-kotlin elements
+            return true
+        }
+
+        if (isExpectDeclaration() && !useSiteModule.targetPlatform.isCommon()) {
+            // filter out expect declarations outside of common modules
+            return false
+        }
+        
+        if (isFromKotlinMetadataOrBuiltins()) {
+            return false
+        }
+
+        return true
     }
 
     context(KaSession)
+    @OptIn(KaExperimentalApi::class)
     fun getKotlinClassesByName(
         name: Name,
+        scope: GlobalSearchScope = analysisScope,
         psiFilter: (KtClassLikeDeclaration) -> Boolean = { true },
     ): Sequence<KaClassLikeSymbol> {
-        val valueFilter: (KtClassLikeDeclaration) -> Boolean = { psiFilter(it) && useSiteFilter(it) }
         val resolveExtensionScope = resolveExtensionScopeWithTopLevelDeclarations
 
         return getClassLikeSymbols(
-            classDeclarations = KotlinClassShortNameIndex.getAllElements(name.asString(), project, scope, valueFilter),
-            typeAliasDeclarations = KotlinTypeAliasShortNameIndex.getAllElements(name.asString(), project, scope, valueFilter),
+            classDeclarations = KotlinClassShortNameIndex.getAllElements(name.asString(), project, scope) {
+                it.isAcceptable(psiFilter)
+            },
+            typeAliasDeclarations = KotlinTypeAliasShortNameIndex.getAllElements(name.asString(), project, scope) {
+                it.isAcceptable(psiFilter)
+            },
             declarationsFromExtension = resolveExtensionScope.classifiers(name).filterIsInstance<KaClassLikeSymbol>(),
         )
     }
 
     context(KaSession)
+    @OptIn(KaExperimentalApi::class)
     fun getKotlinClassesByNameFilter(
         nameFilter: (Name) -> Boolean,
+        scope: GlobalSearchScope = analysisScope,
         psiFilter: (KtClassLikeDeclaration) -> Boolean = { true },
     ): Sequence<KaClassLikeSymbol> {
         val keyFilter: (String) -> Boolean = { nameFilter(getShortName(it)) }
-        val valueFilter: (KtClassLikeDeclaration) -> Boolean = { psiFilter(it) && useSiteFilter(it) }
         val resolveExtensionScope = resolveExtensionScopeWithTopLevelDeclarations
 
         return getClassLikeSymbols(
-            classDeclarations = KotlinFullClassNameIndex.getAllElements(project, scope, keyFilter, valueFilter),
-            typeAliasDeclarations = KotlinTypeAliasShortNameIndex.getAllElements(project, scope, keyFilter, valueFilter),
+            classDeclarations = KotlinFullClassNameIndex.getAllElements(project, scope, keyFilter) {
+                it.isAcceptable(psiFilter)
+            },
+            typeAliasDeclarations = KotlinTypeAliasShortNameIndex.getAllElements(project, scope, keyFilter) {
+                it.isAcceptable(psiFilter)
+            },
             declarationsFromExtension = resolveExtensionScope.classifiers(nameFilter).filterIsInstance<KaClassLikeSymbol>(),
         )
     }
 
     context(KaSession)
     private fun getClassLikeSymbols(
-        classDeclarations: List<KtClassOrObject>,
-        typeAliasDeclarations: List<KtTypeAlias>,
+        classDeclarations: Sequence<KtClassOrObject>,
+        typeAliasDeclarations: Sequence<KtTypeAlias>,
         declarationsFromExtension: Sequence<KaClassLikeSymbol>
-    ): Sequence<KaClassLikeSymbol> = sequence {
-        for (ktClassOrObject in classDeclarations) {
-            yieldIfNotNull(ktClassOrObject.namedClassSymbol)
-        }
-        for (typeAlias in typeAliasDeclarations) {
-            yield(typeAlias.symbol)
-        }
-        yieldAll(declarationsFromExtension)
-    }
+    ): Sequence<KaClassLikeSymbol> =
+        classDeclarations.mapNotNull { it.namedClassSymbol } +
+                typeAliasDeclarations.map { it.symbol } +
+                declarationsFromExtension
+
+    /**
+     * Collects [KaClassSymbol]s of objects with non-trivial base classes.
+     *
+     * @see KotlinSubclassObjectNameIndex
+     */
+    context(KaSession)
+    fun getKotlinSubclassObjectsByNameFilter(
+        nameFilter: (Name) -> Boolean,
+        scope: GlobalSearchScope = analysisScope,
+        psiFilter: (KtObjectDeclaration) -> Boolean = { true },
+    ): Sequence<KaClassSymbol> = KotlinSubclassObjectNameIndex.getAllElements<KtObjectDeclaration>(
+        project,
+        scope,
+        keyFilter = { nameFilter(getShortName(it)) },
+    ) { it.isAcceptable(psiFilter) }
+        .map { it.symbol }
+
+    context(KaSession)
+    fun getKotlinEnumEntriesByNameFilter(
+        nameFilter: (Name) -> Boolean,
+        scope: GlobalSearchScope = analysisScope,
+        psiFilter: (KtEnumEntry) -> Boolean = { true },
+    ): Sequence<KaEnumEntrySymbol> = KotlinFullClassNameIndex.getAllElements<KtEnumEntry>(
+        project = project,
+        scope = scope,
+        keyFilter = { nameFilter(getShortName(it)) },
+    ) { it.isAcceptable(psiFilter) }
+        .map { it.symbol }
+
+    context(KaSession)
+    fun getKotlinEnumEntriesByName(
+        name: Name,
+        scope: GlobalSearchScope = analysisScope,
+        psiFilter: (KtEnumEntry) -> Boolean = { true },
+    ): Sequence<KaEnumEntrySymbol> = KotlinClassShortNameIndex.getAllElements(
+        key = name.asString(),
+        project = project,
+        scope = scope,
+    ) { it is KtEnumEntry && it.isAcceptable(psiFilter) }
+        .map { (it as KtEnumEntry).symbol }
 
     context(KaSession)
     fun getJavaClassesByNameFilter(
         nameFilter: (Name) -> Boolean,
+        scope: GlobalSearchScope = analysisScope,
         psiFilter: (PsiClass) -> Boolean = { true }
     ): Sequence<KaNamedClassSymbol> {
         val names = buildSet {
-            forEachNonKotlinCache { cache ->
-                cache.processAllClassNames({ nameString ->
-                    if (!Name.isValidIdentifier(nameString)) return@processAllClassNames true
-                    val name = Name.identifier(nameString)
-                    if (nameFilter(name)) { add(name) }
-                    true
-                }, scope, null)
+            val processor = createNamesProcessor(nameFilter)
+
+            nonKotlinNamesCaches.forEach {
+                it.processAllClassNames(processor, scope, null)
             }
         }
 
-        return sequence {
-            names.forEach { name ->
-                yieldAll(getJavaClassesByName(name, psiFilter))
-            }
-        }
+        return names.asSequence()
+            .flatMap { getJavaClassesByName(it, scope, psiFilter) }
     }
-
 
     context(KaSession)
     fun getJavaClassesByName(
         name: Name,
+        scope: GlobalSearchScope = analysisScope,
         psiFilter: (PsiClass) -> Boolean = { true }
     ): Sequence<KaNamedClassSymbol> {
         val nameString = name.asString()
 
-        return sequence {
-            forEachNonKotlinCache { cache ->
-                yieldAll(cache.getClassesByName(nameString, scope).iterator())
-            }
-        }
-            .filter { psiFilter(it) && useSiteFilter(it) }
+        return nonKotlinNamesCaches.flatMap { cache ->
+            cache.getClassesByName(nameString, scope).asSequence()
+        }.filter { it.isAcceptable(psiFilter) }
             .mapNotNull { it.namedClassSymbol }
     }
 
     context(KaSession)
+    @OptIn(KaExperimentalApi::class)
+    fun getKotlinCallableSymbolsByNameFilter(
+        nameFilter: (Name) -> Boolean,
+        scope: GlobalSearchScope = analysisScope,
+        psiFilter: (KtCallableDeclaration) -> Boolean = { true },
+    ): Sequence<KaCallableSymbol> = sequenceOf(
+        KotlinFunctionShortNameIndex,
+        KotlinPropertyShortNameIndex,
+    ).flatMap { index ->
+        index.getAllElements<KtCallableDeclaration>(
+            project = project,
+            scope = scope,
+            keyFilter = { nameFilter(getShortName(it)) },
+        ) { declaration ->
+            declaration.isAcceptable(psiFilter)
+                    && !declaration.isExtensionDeclaration()
+        }
+    }.map { it.symbol }
+        .filterIsInstance<KaCallableSymbol>() +
+            resolveExtensionScopeWithTopLevelDeclarations.callables(nameFilter)
+
+    context(KaSession)
+    @OptIn(KaExperimentalApi::class)
     fun getKotlinCallableSymbolsByName(
         name: Name,
+        scope: GlobalSearchScope = analysisScope,
         psiFilter: (KtCallableDeclaration) -> Boolean = { true },
+    ): Sequence<KaCallableSymbol> = sequenceOf(
+        KotlinFunctionShortNameIndex,
+        KotlinPropertyShortNameIndex,
+    ).flatMap { helper ->
+        val processor = CancelableCollectFilterProcessor { declaration: KtNamedDeclaration ->
+            declaration is KtCallableDeclaration
+                    && declaration.isAcceptable(psiFilter)
+        }
+
+        helper.processElements(
+            key = name.asString(),
+            project = project,
+            scope = scope,
+            processor = processor,
+        )
+
+        processor.results
+    }.map { it.symbol }
+        .filterIsInstance<KaCallableSymbol>() +
+            resolveExtensionScopeWithTopLevelDeclarations.callables(name)
+
+    context(KaSession)
+    fun getJavaFieldsByNameFilter(
+        nameFilter: (Name) -> Boolean,
+        scope: GlobalSearchScope = analysisScope,
+        psiFilter: (PsiField) -> Boolean = { true }
     ): Sequence<KaCallableSymbol> {
-        val nameString = name.asString()
+        val names = buildSet {
+            val processor = createNamesProcessor(nameFilter)
 
-        val values = SmartList<KtNamedDeclaration>()
-        val processor = CancelableCollectFilterProcessor(values) {
-            it is KtCallableDeclaration && psiFilter(it) && useSiteFilter(it) && !it.isKotlinBuiltins()
-        }
-        KotlinFunctionShortNameIndex.processElements(nameString, project, scope, processor)
-        KotlinPropertyShortNameIndex.processElements(nameString, project, scope, processor)
-
-        return sequence {
-            for (callableDeclaration in values) {
-                yieldIfNotNull(callableDeclaration.symbol as? KaCallableSymbol)
+            nonKotlinNamesCaches.forEach {
+                it.processAllFieldNames(processor, scope, null)
             }
-            yieldAll(
-                resolveExtensionScopeWithTopLevelDeclarations.callables(name)
-            )
         }
+
+        return names.asSequence()
+            .flatMap { getJavaFieldsByName(it, scope, psiFilter) }
     }
 
     context(KaSession)
-    fun getJavaCallableSymbolsByName(
+    fun getJavaMethodsByName(
         name: Name,
-        psiFilter: (PsiMember) -> Boolean = { true }
-    ): Sequence<KaCallableSymbol> {
-        val nameString = name.asString()
+        scope: GlobalSearchScope = analysisScope,
+        psiFilter: (PsiMethod) -> Boolean = { true },
+    ): Sequence<KaCallableSymbol> = nonKotlinNamesCaches.flatMap {
+        it.getMethodsByName(name.asString(), scope).asSequence()
+    }.filter { it.isAcceptable(psiFilter) }
+        .mapNotNull { it.callableSymbol }
 
-        return sequence {
-            forEachNonKotlinCache { cache -> yieldAll(cache.getMethodsByName(nameString, scope).iterator()) }
-            forEachNonKotlinCache { cache -> yieldAll(cache.getFieldsByName(nameString, scope).iterator()) }
-        }
-            .filter { psiFilter(it) && useSiteFilter(it) }
-            .mapNotNull { it.callableSymbol }
-
-    }
-
+    context(KaSession)
+    fun getJavaFieldsByName(
+        name: Name,
+        scope: GlobalSearchScope = analysisScope,
+        psiFilter: (PsiField) -> Boolean = { true },
+    ): Sequence<KaCallableSymbol> = nonKotlinNamesCaches.flatMap {
+        it.getFieldsByName(name.asString(), scope).asSequence()
+    }.filter { it.isAcceptable(psiFilter) }
+        .mapNotNull { it.callableSymbol }
 
     /**
      *  Returns top-level callables, excluding extensions. To obtain extensions use [getExtensionCallableSymbolsByNameFilter].
      */
     context(KaSession)
+    @OptIn(KaExperimentalApi::class)
     fun getTopLevelCallableSymbolsByNameFilter(
         nameFilter: (Name) -> Boolean,
+        scope: GlobalSearchScope = analysisScope,
         psiFilter: (KtCallableDeclaration) -> Boolean = { true }
-    ): Sequence<KaCallableSymbol> {
-        val values = SmartList<KtCallableDeclaration>()
-        val processor = CancelableCollectFilterProcessor(values) {
-            psiFilter(it) && useSiteFilter(it) && !it.isKotlinBuiltins() && it.receiverTypeReference == null
+    ): Sequence<KaCallableSymbol> = sequenceOf(
+        KotlinTopLevelFunctionFqnNameIndex,
+        KotlinTopLevelPropertyFqnNameIndex,
+    ).flatMap { helper ->
+        val processor = CancelableCollectFilterProcessor { declaration: KtCallableDeclaration ->
+            declaration.isAcceptable(psiFilter)
+                    && declaration.receiverTypeReference == null
         }
 
-        val keyFilter: (String) -> Boolean = { nameFilter(getShortName(it)) }
-        KotlinTopLevelFunctionFqnNameIndex.processAllElements(project, scope, keyFilter, processor)
-        KotlinTopLevelPropertyFqnNameIndex.processAllElements(project, scope, keyFilter, processor)
+        helper.processAllElements(
+            project = project,
+            scope = scope,
+            filter = { nameFilter(getShortName(it)) },
+            processor = processor,
+        )
 
-        return sequence {
-            for (callableDeclaration in values) {
-                yieldIfNotNull(callableDeclaration.symbol as? KaCallableSymbol)
-            }
-            yieldAll(
-                resolveExtensionScopeWithTopLevelDeclarations.callables(nameFilter).filter { !it.isExtension }
-            )
-        }
-    }
+        processor.results
+    }.map { it.symbol }
+        .filterIsInstance<KaCallableSymbol>() +
+            resolveExtensionScopeWithTopLevelDeclarations.callables(nameFilter)
+                .filterNot { it.isExtension }
 
     context(KaSession)
+    @OptIn(KaExperimentalApi::class)
     fun getExtensionCallableSymbolsByName(
         name: Name,
         receiverTypes: List<KaType>,
-        psiFilter: (KtCallableDeclaration) -> Boolean,
+        scope: GlobalSearchScope = analysisScope,
+        psiFilter: (KtCallableDeclaration) -> Boolean = { true },
     ): Sequence<KaCallableSymbol> {
-        val receiverTypeNames = receiverTypes.flatMapTo(hashSetOf()) { findAllNamesForType(it) }
+        val receiverTypeNames = findAllNamesForTypes(
+            project = project,
+            types = receiverTypes,
+            scope = scope,
+            builtinTypes = builtinTypes,
+        )
         if (receiverTypeNames.isEmpty()) return emptySequence()
 
         val values = receiverTypeNames.asSequence()
@@ -214,10 +322,8 @@ class KtSymbolFromIndexProvider private constructor(
                 ).flatMap { indexHelper ->
                     val key = KotlinExtensionsByReceiverTypeStubIndexHelper.Companion.Key(receiverTypeName, name)
 
-                    indexHelper.getAllElements(key.key, project, scope) {
-                        psiFilter(it)
-                                && useSiteFilter(it)
-                                && !it.isKotlinBuiltins()
+                    indexHelper.getAllElements(key.key, project, scope) { declaration ->
+                                declaration.isAcceptable(psiFilter)
                     }
                 }
             }.map { it.symbol }
@@ -230,12 +336,19 @@ class KtSymbolFromIndexProvider private constructor(
     }
 
     context(KaSession)
+    @OptIn(KaExperimentalApi::class)
     fun getExtensionCallableSymbolsByNameFilter(
         nameFilter: (Name) -> Boolean,
         receiverTypes: List<KaType>,
+        scope: GlobalSearchScope = analysisScope,
         psiFilter: (KtCallableDeclaration) -> Boolean = { true },
     ): Sequence<KaCallableSymbol> {
-        val receiverTypeNames = receiverTypes.flatMapTo(hashSetOf()) { findAllNamesForType(it) }
+        val receiverTypeNames = findAllNamesForTypes(
+            project = project,
+            types = receiverTypes,
+            scope = scope,
+            builtinTypes = builtinTypes,
+        )
         if (receiverTypeNames.isEmpty()) return emptySequence()
 
         val keyFilter: (String) -> Boolean = { key ->
@@ -248,10 +361,8 @@ class KtSymbolFromIndexProvider private constructor(
             KotlinTopLevelExtensionsByReceiverTypeIndex,
             KotlinExtensionsInObjectsByReceiverTypeIndex,
         ).flatMap { index ->
-            index.getAllElements(project, scope, keyFilter) {
-                psiFilter(it)
-                        && useSiteFilter(it)
-                        && !it.isKotlinBuiltins()
+            index.getAllElements(project, scope, keyFilter) { declaration: KtCallableDeclaration ->
+                declaration.isAcceptable(psiFilter)
             }
         }.map { it.symbol }
             .filterIsInstance<KaCallableSymbol>()
@@ -274,61 +385,98 @@ class KtSymbolFromIndexProvider private constructor(
         }
     }
 
-    private inline fun forEachNonKotlinCache(action: (cache: PsiShortNamesCache) -> Unit) {
-        for (cache in PsiShortNamesCache.EP_NAME.getExtensions(project)) {
-            if (cache::class.java.name == "org.jetbrains.kotlin.idea.caches.KotlinShortNamesCache") continue
-            action(cache)
-        }
-    }
+    private inline val nonKotlinNamesCaches: Sequence<PsiShortNamesCache>
+        get() = PsiShortNamesCache.EP_NAME // PsiShortNamesCache should have been a project-level EP
+            .getPoint(project) // could have been ::lazySequence in this case
+            .let { it as ExtensionPointImpl<PsiShortNamesCache> }
+            .filterNot { it::class.java.name == "org.jetbrains.kotlin.idea.caches.KotlinShortNamesCache" }
 
     private fun getShortName(fqName: String) = Name.identifier(fqName.substringAfterLast('.'))
 
-    context(KaSession)
-    private fun findAllNamesForType(type: KaType): Set<Name> = buildSet {
-        if (type is KaFlexibleType) {
-            return findAllNamesForType(type.lowerBound)
+}
+
+private fun findAllNamesForTypes(
+    project: Project,
+    types: List<KaType>,
+    scope: GlobalSearchScope,
+    builtinTypes: KaBuiltinTypes,
+): Set<Name> {
+    fun findAllNamesForType(type: KaType): Set<Name> = when (type) {
+        is KaFlexibleType -> findAllNamesForType(type.lowerBound)
+
+        is KaIntersectionType -> findAllNamesForTypes(project, type.conjuncts, scope, builtinTypes)
+
+        is KaTypeParameterType -> {
+            // when no explicit upper bounds, we consider `Any` to be an upper bound
+            val upperBounds = type.symbol
+                .upperBounds
+                .ifEmpty { listOf(builtinTypes.any) }
+
+            findAllNamesForTypes(project, upperBounds, scope, builtinTypes)
         }
-        if (type !is KaClassType) return@buildSet
 
-        val typeName = type.classId
-            .shortClassName
-            .takeUnless { it.isSpecial }
-            ?: return@buildSet
+        is KaClassType -> {
+            val typeName = type.classId
+                .shortClassName
 
-        add(typeName)
-        addAll(getPossibleTypeAliasExpansionNames(typeName))
+            if (typeName.isSpecial)
+                emptySet()
+            else
+                buildSet {
+                    add(typeName)
+                    addAll(getPossibleTypeAliasExpansionNames(project, typeName, scope))
 
-        val superTypes = (type.symbol as? KaClassSymbol)?.superTypes
-        superTypes?.forEach { superType ->
-            addAll(findAllNamesForType(superType))
+                    (type.symbol as? KaClassSymbol)
+                        ?.superTypes
+                        ?.asSequence()
+                        ?.flatMap { findAllNamesForType(it) }
+                        ?.forEach { add(it) }
+                }
         }
+
+        else -> emptySet()
     }
 
-    private fun getPossibleTypeAliasExpansionNames(originalTypeName: Name): Set<Name> = buildSet {
-        fun searchRecursively(typeName: Name) {
-            ProgressManager.checkCanceled()
-            KotlinTypeAliasByExpansionShortNameIndex[typeName.identifier, project, scope]
-                .asSequence()
-                .mapNotNull { it.nameAsName }
-                .filter(::add)
-                .forEach(::searchRecursively)
-        }
-
-        searchRecursively(originalTypeName)
-    }
-
-    companion object {
-        fun createForElement(useSiteKtElement: KtElement): KtSymbolFromIndexProvider = analyze(useSiteKtElement) {
-            KtSymbolFromIndexProvider(useSiteKtElement.containingKtFile, analysisScope)
-        }
+    return types.flatMapTo(mutableSetOf()) {
+        findAllNamesForType(it)
     }
 }
 
-private val KotlinBuiltins = setOf("kotlin/ArrayIntrinsicsKt", "kotlin/internal/ProgressionUtilKt")
-fun KtCallableDeclaration.isKotlinBuiltins(): Boolean {
+private fun getPossibleTypeAliasExpansionNames(
+    project: Project,
+    originalTypeName: Name,
+    scope: GlobalSearchScope,
+): Set<Name> = buildSet {
+    fun searchRecursively(typeName: Name) {
+        ProgressManager.checkCanceled()
+        KotlinTypeAliasByExpansionShortNameIndex[typeName.identifier, project, scope]
+            .asSequence()
+            .mapNotNull { it.nameAsName }
+            .filter(::add)
+            .forEach(::searchRecursively)
+    }
+
+    searchRecursively(originalTypeName)
+}
+
+private val KotlinBuiltins = setOf(
+    "kotlin/ArrayIntrinsicsKt",
+    "kotlin/internal/ProgressionUtilKt",
+)
+
+private fun KtDeclaration.isFromKotlinMetadataOrBuiltins(): Boolean {
     val file = containingKtFile
     val virtualFile = file.virtualFile
     if (virtualFile.extension == METADATA_FILE_EXTENSION) return true
     if (this !is KtNamedFunction) return false
     return file.packageFqName.asString().replace(".", "/") + "/" + virtualFile.nameWithoutExtension in KotlinBuiltins
+}
+
+private fun MutableSet<Name>.createNamesProcessor(
+    nameFilter: (Name) -> Boolean,
+) = Processor { name: String ->
+    Name.identifierIfValid(name)
+        ?.takeIf(nameFilter)
+        ?.let(this@createNamesProcessor::add)
+    true
 }

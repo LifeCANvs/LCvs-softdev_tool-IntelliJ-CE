@@ -7,8 +7,10 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiFile;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
+@ApiStatus.Internal
 public final class SliceForwardAction extends CodeInsightAction {
 
   @Override
@@ -24,6 +26,6 @@ public final class SliceForwardAction extends CodeInsightAction {
 
   @Override
   protected boolean isValidForFile(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
-    return LanguageSlicing.getProvider(file) != null;
+    return LanguageSlicing.getProvider(file) != null && !editor.getSelectionModel().hasSelection();
   }
 }

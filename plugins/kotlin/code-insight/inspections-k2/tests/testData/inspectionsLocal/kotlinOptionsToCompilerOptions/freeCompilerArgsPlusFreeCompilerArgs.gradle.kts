@@ -1,4 +1,6 @@
 // FIX: Replace 'kotlinOptions' with 'compilerOptions'
+// DISABLE_K2_ERRORS
+// TODO: KTIJ-32773
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -23,7 +25,7 @@ kotlin {
     jvmToolchain(8)
 }
 
-tasks.withType<KotlinCompile<*>> {
+tasks.withType<KotlinCompile> {
     <caret>kotlinOptions {
         freeCompilerArgs = freeCompilerArgs + "-Xopt-in=kotlin.RequiresOptIn"
     }

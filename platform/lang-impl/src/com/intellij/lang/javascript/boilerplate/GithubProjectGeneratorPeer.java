@@ -6,6 +6,7 @@ import com.intellij.CommonBundle;
 import com.intellij.ide.IdeBundle;
 import com.intellij.ide.util.projectWizard.SettingsStep;
 import com.intellij.lang.LangBundle;
+import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.util.text.StringUtil;
@@ -37,7 +38,7 @@ public final class GithubProjectGeneratorPeer implements WebProjectGenerator.Gen
 
         List<GithubTagInfo> sortedTags = createSortedTagList(tags);
         GithubTagInfo selectedItem = getSelectedValue();
-        if (selectedItem == null && sortedTags.size() > 0) {
+        if (selectedItem == null && !sortedTags.isEmpty()) {
           selectedItem = sortedTags.get(0);
         }
         myComboBox.removeAllItems();
@@ -156,7 +157,7 @@ public final class GithubProjectGeneratorPeer implements WebProjectGenerator.Gen
 
 
   @Override
-  public @NotNull JComponent getComponent() {
+  public @NotNull JComponent getComponent(@NotNull TextFieldWithBrowseButton myLocationField, @NotNull Runnable checkValid) {
     return myComponent;
   }
 

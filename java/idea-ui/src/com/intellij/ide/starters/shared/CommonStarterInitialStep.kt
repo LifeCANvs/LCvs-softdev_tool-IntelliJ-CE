@@ -143,7 +143,7 @@ abstract class CommonStarterInitialStep(
     row(JavaUiBundle.message("label.project.wizard.new.project.jdk")) {
       projectWizardJdkComboBox(
         this, sdkProperty, sdkDownloadTaskProperty,
-        { location },
+        locationProperty,
         { sdk -> wizardContext.projectJdk = sdk },
         wizardContext.disposable,
         wizardContext.projectJdk,
@@ -236,9 +236,8 @@ abstract class CommonStarterInitialStep(
   }
 
   private fun Row.projectLocationField(locationProperty: GraphProperty<String>, wizardContext: WizardContext): Cell<TextFieldWithBrowseButton> {
-    val fileChooserDescriptor = FileChooserDescriptorFactory.createSingleLocalFileDescriptor()
+    val fileChooserDescriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor()
       .withTitle(message("title.select.project.file.directory", wizardContext.presentationName))
-      .withFileFilter { it.isDirectory }
       .withPathToTextConvertor(::getPresentablePath)
       .withTextToPathConvertor(::getCanonicalPath)
     val property = locationProperty.transform(::getPresentablePath, ::getCanonicalPath)

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.template.impl;
 
 import com.intellij.codeInsight.template.ExpressionContext;
@@ -60,6 +60,7 @@ public class TemplateStateBase {
     myPredefinedVariableValues = predefinedVariableValues;
   }
 
+  @ApiStatus.Internal
   protected void setTemplate(TemplateBase template) {
     myTemplate = template;
   }
@@ -95,7 +96,8 @@ public class TemplateStateBase {
     return new TextResult(text.subSequence(start, end).toString());
   }
 
-  boolean isDisposed() {
+  @ApiStatus.Internal
+  public boolean isDisposed() {
     return myDocument == null;
   }
 
@@ -119,6 +121,7 @@ public class TemplateStateBase {
     });
   }
 
+  @ApiStatus.Internal
   protected TemplateBase getTemplate() {
     return myTemplate;
   }

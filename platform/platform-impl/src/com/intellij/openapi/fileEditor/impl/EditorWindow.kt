@@ -83,6 +83,7 @@ class EditorWindow internal constructor(
     internal val DRAG_START_LOCATION_HASH_KEY: Key<Int> = KeyWithDefaultValue.create("drag start editor location hash", 0)
 
     // Metadata to support editor tab drag&drop process: initial 'pinned' state
+    @JvmField
     internal val DRAG_START_PINNED_KEY: Key<Boolean> = Key.create("drag start editor pinned state")
 
     @JvmStatic
@@ -139,6 +140,7 @@ class EditorWindow internal constructor(
     LOG.assertTrue(isValid, "EditorWindow not in collection")
   }
 
+  @get:JvmName("isValid")
   internal val isValid: Boolean
     get() = owner.containsWindow(this)
 
@@ -151,6 +153,7 @@ class EditorWindow internal constructor(
     get() = currentCompositeFlow.value
 
   @Suppress("DEPRECATION")
+  @ApiStatus.ScheduledForRemoval
   @Deprecated("Use getSelectedComposite", ReplaceWith("getSelectedComposite(ignorePopup)"), level = DeprecationLevel.ERROR)
   fun getSelectedEditor(@Suppress("UNUSED_PARAMETER") ignorePopup: Boolean): EditorWithProviderComposite? {
     return selectedComposite as EditorWithProviderComposite?
@@ -422,7 +425,9 @@ class EditorWindow internal constructor(
         withContext(Dispatchers.EDT) {
           if (tab.tabPaneActions != tabActions) {
             tab.setTabPaneActions(tabActions)
-            tabbedPane.editorTabs.updateEntryPointToolbar(tabActionGroup = tabActions)
+            if (tab == tabbedPane.editorTabs.selectedInfo) {
+              tabbedPane.editorTabs.updateEntryPointToolbar(tabActionGroup = tabActions)
+            }
           }
         }
       }
@@ -588,6 +593,7 @@ class EditorWindow internal constructor(
   @Deprecated("Use getSiblings()", ReplaceWith("getSiblings()"))
   fun findSiblings(): Array<EditorWindow> = siblings().toList().toTypedArray()
 
+  @JvmName("getSiblings")
   internal fun getSiblings(): List<EditorWindow> = siblings().toList()
 
   @RequiresEdt
@@ -878,6 +884,7 @@ class EditorWindow internal constructor(
     }
   }
 
+  @JvmName("unsplit")
   internal fun unsplit(setCurrent: Boolean) {
     checkConsistency()
     val splitter = component.parent as? Splitter ?: return

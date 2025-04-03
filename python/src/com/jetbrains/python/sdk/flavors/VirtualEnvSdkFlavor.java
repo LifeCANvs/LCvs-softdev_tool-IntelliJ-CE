@@ -11,12 +11,11 @@ import com.jetbrains.python.icons.PythonIcons;
 import com.jetbrains.python.sdk.BasePySdkExtKt;
 import com.jetbrains.python.sdk.PySdkExtKt;
 import com.jetbrains.python.sdk.PythonSdkUtil;
-import com.jetbrains.python.sdk.VirtualEnvReader;
+import com.jetbrains.python.venvReader.VirtualEnvReader;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -70,18 +69,17 @@ public final class VirtualEnvSdkFlavor extends CPythonSdkFlavor<PyFlavorData.Emp
     });
   }
 
-  @NotNull
-  public static Path getDefaultLocation() {
+  public static @NotNull Path getDefaultLocation() {
     return VirtualEnvReader.getInstance().getVEnvRootDir();
   }
 
   @Override
-  public boolean isValidSdkPath(@NotNull Path path) {
-    if (!super.isValidSdkPath(path)) {
+  public boolean isValidSdkPath(@NotNull String pathStr) {
+    if (!super.isValidSdkPath(pathStr)) {
       return false;
     }
 
-    return PythonSdkUtil.getVirtualEnvRoot(path.toString()) != null;
+    return PythonSdkUtil.getVirtualEnvRoot(pathStr) != null;
   }
 
   @Override

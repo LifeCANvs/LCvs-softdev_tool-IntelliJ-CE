@@ -96,11 +96,9 @@ import pydevd_tracing
 from _pydevd_bundle import pydevd_xml
 from _pydevd_bundle import pydevd_vm_type
 from _pydevd_bundle.smart_step_into import find_stepping_variants
-from pydevd_file_utils import get_abs_path_real_path_and_base_from_frame, norm_file_to_client, is_real_file
+from pydevd_file_utils import get_abs_path_real_path_and_base_from_frame, norm_file_to_client, is_real_file, is_jupyter_cell
 import pydevd_file_utils
-import os
 import sys
-import inspect
 import traceback
 from _pydevd_bundle.pydevd_utils import quote_smart as quote, compare_object_attrs_key, to_string, \
     get_non_pydevd_threads, is_pandas_container, is_numpy_container
@@ -426,7 +424,7 @@ def start_server(port):
         # closing server socket is not necessary but we don't need it
         try:
             s.shutdown(SHUT_RDWR)
-        except OSError:
+        except:
             pass
         finally:
             s.close()
@@ -735,9 +733,13 @@ class NetCommandFactory:
                         curr_frame = curr_frame.f_back
                         continue
 
-                my_file = abs_path_real_path_and_base[0]
+                is_jup_cell = is_jupyter_cell(curr_frame)
+                if is_jup_cell:
+                    my_file = abs_path_real_path_and_base
+                else:
+                    my_file = abs_path_real_path_and_base[0]
 
-                if is_real_file(my_file):
+                if is_real_file(my_file) and not is_jup_cell:
                     # if filename is Jupyter cell id
                     my_file = pydevd_file_utils.norm_file_to_client(abs_path_real_path_and_base[0])
 

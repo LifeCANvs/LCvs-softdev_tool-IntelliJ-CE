@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk.add.v2
 
 import com.intellij.openapi.application.ApplicationManager
@@ -6,6 +6,7 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.components.service
+import com.intellij.openapi.module.Module
 import com.intellij.openapi.observable.properties.PropertyGraph
 import com.intellij.openapi.observable.util.and
 import com.intellij.openapi.observable.util.notEqualsTo
@@ -13,41 +14,48 @@ import com.intellij.openapi.observable.util.or
 import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.projectRoots.Sdk
+import com.intellij.openapi.ui.popup.Balloon
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.ui.validation.WHEN_PROPERTY_CHANGED
 import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
-import com.intellij.ui.dsl.builder.AlignX
-import com.intellij.ui.dsl.builder.Panel
-import com.intellij.ui.dsl.builder.TopGap
-import com.intellij.ui.dsl.builder.bindText
+import com.intellij.ui.JBColor
+import com.intellij.ui.awt.RelativePoint
+import com.intellij.ui.dsl.builder.*
+import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.showingScope
 import com.jetbrains.python.PyBundle.message
+import com.jetbrains.python.Result
+import com.jetbrains.python.errorProcessing.ErrorSink
+import com.jetbrains.python.errorProcessing.PyError
+import com.jetbrains.python.errorProcessing.asPythonResult
+import com.jetbrains.python.getOrThrow
 import com.jetbrains.python.newProject.collector.InterpreterStatisticsInfo
+import com.jetbrains.python.newProjectWizard.projectPath.ProjectPathFlows
 import com.jetbrains.python.sdk.ModuleOrProject
-import com.jetbrains.python.sdk.add.PySdkCreator
 import com.jetbrains.python.sdk.add.v2.PythonInterpreterSelectionMode.*
+import com.jetbrains.python.sdk.add.v2.PythonSupportedEnvironmentManagers.UV
 import com.jetbrains.python.statistics.InterpreterCreationMode
 import com.jetbrains.python.statistics.InterpreterTarget
 import com.jetbrains.python.statistics.InterpreterType
-import com.jetbrains.python.util.ErrorSink
 import com.jetbrains.python.util.ShowingMessageErrorSync
+import com.jetbrains.python.venvReader.VirtualEnvReader
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.nio.file.Path
-
+import kotlinx.coroutines.withContext
 
 /**
  * If `onlyAllowedInterpreterTypes` then only these types are displayed. All types displayed otherwise
  */
-class PythonAddNewEnvironmentPanel(val projectPath: StateFlow<Path>, onlyAllowedInterpreterTypes: Set<PythonInterpreterSelectionMode>? = null, private val errorSink: ErrorSink) : PySdkCreator {
-
-  companion object {
-    private const val VENV_DIR = ".venv"
-  }
-
+internal class PythonAddNewEnvironmentPanel(
+  val projectPathFlows: ProjectPathFlows,
+  onlyAllowedInterpreterTypes: Set<PythonInterpreterSelectionMode>? = null,
+  private val errorSink: ErrorSink,
+) : PySdkCreator {
   private val propertyGraph = PropertyGraph()
   private val allowedInterpreterTypes = (onlyAllowedInterpreterTypes ?: PythonInterpreterSelectionMode.entries).also {
     assert(it.isNotEmpty()) {
@@ -66,23 +74,32 @@ class PythonAddNewEnvironmentPanel(val projectPath: StateFlow<Path>, onlyAllowed
   private lateinit var pythonBaseVersionComboBox: PythonInterpreterComboBox
   private var initialized = false
 
-  private fun updateVenvLocationHint() {
+  // PY-79134: an anchor to display the promo notification on
+  // TODO: remove after promo ends
+  private lateinit var popupAnchor: Cell<*>
+
+  private suspend fun updateVenvLocationHint(): Unit = withContext(Dispatchers.EDT) {
     val get = selectedMode.get()
-    if (get == PROJECT_VENV) venvHint.set(message("sdk.create.simple.venv.hint", projectPath.value.resolve(VENV_DIR).toString()))
+    if (get == PROJECT_VENV) venvHint.set(message("sdk.create.simple.venv.hint", projectPathFlows.projectPathWithDefault.first().resolve(VirtualEnvReader.DEFAULT_VIRTUALENV_DIRNAME).toString()))
     else if (get == BASE_CONDA && PROJECT_VENV in allowedInterpreterTypes) venvHint.set(message("sdk.create.simple.conda.hint"))
   }
 
   private lateinit var custom: PythonAddCustomInterpreter
   private lateinit var model: PythonMutableTargetAddInterpreterModel
 
-  fun buildPanel(outerPanel: Panel) {
+  fun buildPanel(outerPanel: Panel, coroutineScope: CoroutineScope) {
     //presenter = PythonAddInterpreterPresenter(state, uiContext = Dispatchers.EDT + ModalityState.current().asContextElement())
-    model = PythonLocalAddInterpreterModel(PyInterpreterModelParams(service<PythonAddSdkService>().coroutineScope,
-                                                                    Dispatchers.EDT + ModalityState.current().asContextElement(), projectPath))
+    model = PythonLocalAddInterpreterModel(
+      PyInterpreterModelParams(
+        coroutineScope,
+        Dispatchers.EDT + ModalityState.current().asContextElement(),
+        projectPathFlows
+      )
+    )
     model.navigator.selectionMode = selectedMode
     //presenter.controller = model
 
-    custom = PythonAddCustomInterpreter(model, projectPath = projectPath, errorSink = ShowingMessageErrorSync)
+    custom = PythonAddCustomInterpreter(model, errorSink = ShowingMessageErrorSync)
 
     val validationRequestor = WHEN_PROPERTY_CHANGED(selectedMode)
 
@@ -93,6 +110,7 @@ class PythonAddNewEnvironmentPanel(val projectPath: StateFlow<Path>, onlyAllowed
         row(message("sdk.create.interpreter.type")) {
           segmentedButton(allowedInterpreterTypes) { text = message(it.nameKey) }
             .bind(selectedMode)
+          popupAnchor = label("\u00A0") // nbsp character; empty label to act as an anchor
         }.topGap(TopGap.MEDIUM)
       }
 
@@ -117,7 +135,7 @@ class PythonAddNewEnvironmentPanel(val projectPath: StateFlow<Path>, onlyAllowed
       row("") {
         comment("").bindText(venvHint).apply {
           component.showingScope("Update hint") {
-            projectPath.collect {
+            projectPathFlows.projectPathWithDefault.collect {
               updateVenvLocationHint()
             }
           }
@@ -128,7 +146,11 @@ class PythonAddNewEnvironmentPanel(val projectPath: StateFlow<Path>, onlyAllowed
         custom.buildPanel(this, validationRequestor)
       }.visibleIf(_custom)
     }
-    selectedMode.afterChange { updateVenvLocationHint() }
+    selectedMode.afterChange {
+      model.scope.launch {
+        updateVenvLocationHint()
+      }
+    }
   }
 
 
@@ -143,6 +165,35 @@ class PythonAddNewEnvironmentPanel(val projectPath: StateFlow<Path>, onlyAllowed
           updateVenvLocationHint()
           model.navigator.restoreLastState(allowedInterpreterTypes)
           initialized = true
+
+          val state = PythonAddNewEnvironmentState.getInstance()
+
+          if (state.isFirstVisit) {
+            JBPopupFactory.getInstance()
+              .createHtmlTextBalloonBuilder(
+                message("sdk.create.custom.uv.promo"),
+                null,
+                JBColor.namedColor("GotItTooltip.foreground"),
+                JBColor.namedColor("GotItTooltip.background"),
+                null,
+              )
+              .setBorderColor(JBColor.namedColor("GotItTooltip.borderColor"))
+              .setFadeoutTime(15_000)
+              .setClickHandler(
+                {
+                  selectedMode.set(CUSTOM)
+                  custom.newInterpreterManager.set(UV)
+                },
+                true
+              )
+              .createBalloon()
+              .show(
+                RelativePoint.getCenterOf(popupAnchor.component),
+                Balloon.Position.atRight
+              )
+
+            state.isFirstVisit = false
+          }
         }
       }
     }
@@ -158,26 +209,33 @@ class PythonAddNewEnvironmentPanel(val projectPath: StateFlow<Path>, onlyAllowed
     }
     else {
       runBlockingCancellable { getSdk(moduleOrProject) }
-    }.getOrThrow()
+    }.getOrThrow().first
   }
 
-  override suspend fun getSdk(moduleOrProject: ModuleOrProject): Result<Sdk> {
-    model.navigator.saveLastState()
+  override suspend fun createPythonModuleStructure(module: Module): Result<Unit, PyError> {
     return when (selectedMode.get()) {
-      PROJECT_VENV -> {
-        val projectPath = projectPath.value
-        model.setupVirtualenv(projectPath.resolve(VENV_DIR), // todo just keep venv path, all the rest is in the model
-                              projectPath
-          //pythonBaseVersion.get()!!)
-        )
-      }
-      BASE_CONDA -> model.selectCondaEnvironment(base = true)
-      CUSTOM -> custom.currentSdkManager.getOrCreateSdk(moduleOrProject)
+      CUSTOM -> custom.currentSdkManager.createPythonModuleStructure(module)
+      else -> Result.success(Unit)
     }
   }
 
+  override suspend fun getSdk(moduleOrProject: ModuleOrProject): Result<Pair<Sdk, InterpreterStatisticsInfo>, PyError> {
+    model.navigator.saveLastState()
+    val sdk = when (selectedMode.get()) {
+      PROJECT_VENV -> {
+        val projectPath = projectPathFlows.projectPathWithDefault.first()
+        // todo just keep venv path, all the rest is in the model
+        model.setupVirtualenv(projectPath.resolve(VirtualEnvReader.DEFAULT_VIRTUALENV_DIRNAME), projectPath)
+      }
+      BASE_CONDA -> model.selectCondaEnvironment(base = true).asPythonResult()
+      CUSTOM -> custom.currentSdkManager.getOrCreateSdk(moduleOrProject)
+    }.getOr { return it }
+    val statistics = withContext(Dispatchers.EDT) { createStatisticsInfo() }
+    return Result.success(Pair(sdk, statistics))
+  }
 
-  override fun createStatisticsInfo(): InterpreterStatisticsInfo = when (selectedMode.get()) {
+  @RequiresEdt
+  fun createStatisticsInfo(): InterpreterStatisticsInfo = when (selectedMode.get()) {
     PROJECT_VENV -> InterpreterStatisticsInfo(InterpreterType.VIRTUALENV,
                                               InterpreterTarget.LOCAL,
                                               false,

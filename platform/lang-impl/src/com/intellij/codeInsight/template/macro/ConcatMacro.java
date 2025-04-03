@@ -6,9 +6,11 @@ import com.intellij.codeInsight.template.ExpressionContext;
 import com.intellij.codeInsight.template.Result;
 import com.intellij.codeInsight.template.TextResult;
 import com.intellij.openapi.util.text.StringUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@ApiStatus.Internal
 public final class ConcatMacro extends MacroBase {
   public ConcatMacro() {
     super("concat", "concat(expressions...)");
@@ -23,6 +25,6 @@ public final class ConcatMacro extends MacroBase {
         result.append(StringUtil.notNullize(paramResult.toString()));
       }
     }
-    return result.length() != 0 ? new TextResult(result.toString()) : null;
+    return !result.isEmpty() ? new TextResult(result.toString()) : null;
   }
 }

@@ -2,11 +2,14 @@
 package com.intellij.gradle.toolingExtension.impl.model.dependencyModel.auxiliary;
 
 import org.assertj.core.api.Assertions.assertThat
+import org.gradle.api.artifacts.component.ComponentIdentifier
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import java.io.File
+import java.util.*
 import java.util.stream.Stream
 
 /**
@@ -19,6 +22,38 @@ class AuxiliaryConfigurationArtifactsTest {
   lateinit var tempDir: File
 
   private fun testFile(name: String) = File(tempDir, name)
+
+  @Test
+  fun `choose javadoc artifact`() {
+    val identifier = TestComponentIdentifier()
+    val main = testFile("foo-bar.jar")
+    val javadoc = testFile("foo-bar-javadoc.jar")
+    val sources = testFile("foo-bar-sources.jar")
+
+    val stub = AuxiliaryConfigurationArtifacts(
+      mapOf(identifier to setOf(sources)),
+      mapOf(identifier to setOf(javadoc))
+    )
+
+    val file = stub.getJavadoc(identifier, main)
+    assertEquals(javadoc, file)
+  }
+
+  @Test
+  fun `choose sources artifact`() {
+    val identifier = TestComponentIdentifier()
+    val main = testFile("foo-bar.jar")
+    val javadoc = testFile("foo-bar-javadoc.jar")
+    val sources = testFile("foo-bar-sources.jar")
+
+    val stub = AuxiliaryConfigurationArtifacts(
+      mapOf(identifier to setOf(sources)),
+      mapOf(identifier to setOf(javadoc))
+    )
+
+    val file = stub.getSources(identifier, main)
+    assertEquals(sources, file)
+  }
 
   @Test
   fun `choose auxiliary artifact file when there is none to choose from`() {
@@ -88,5 +123,9 @@ class AuxiliaryConfigurationArtifactsTest {
           input.appendSuffixes(".jar", "-sources.src.jar"))
       }.stream()
     }
+  }
+
+  private class TestComponentIdentifier : ComponentIdentifier {
+    override fun getDisplayName(): String = UUID.randomUUID().toString()
   }
 }

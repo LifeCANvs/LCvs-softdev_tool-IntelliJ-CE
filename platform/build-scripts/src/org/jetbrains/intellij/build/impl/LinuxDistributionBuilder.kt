@@ -1,16 +1,20 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.impl
 
 import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.util.io.NioFiles
+import com.intellij.platform.buildData.productInfo.ProductInfoLaunchData
 import io.opentelemetry.api.trace.Span
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.jetbrains.intellij.build.*
 import org.jetbrains.intellij.build.impl.OsSpecificDistributionBuilder.Companion.suffix
 import org.jetbrains.intellij.build.impl.client.ADDITIONAL_EMBEDDED_CLIENT_VM_OPTIONS
-import org.jetbrains.intellij.build.impl.client.createJetBrainsClientContextForLaunchers
+import org.jetbrains.intellij.build.impl.client.createFrontendContextForLaunchers
 import org.jetbrains.intellij.build.impl.productInfo.*
 import org.jetbrains.intellij.build.impl.qodana.generateQodanaLaunchData
 import org.jetbrains.intellij.build.impl.support.RepairUtilityBuilder
@@ -23,7 +27,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import kotlin.io.path.exists
 import kotlin.io.path.name
-import kotlin.io.path.nameWithoutExtension
+import kotlin.io.path.readText
 import kotlin.time.Duration.Companion.minutes
 
 private const val NO_RUNTIME_SUFFIX = "-no-jbr"
@@ -39,6 +43,10 @@ class LinuxDistributionBuilder(
   init {
     val iconPng = (if (context.applicationInfo.isEAP) customizer.iconPngPathForEAP else null) ?: customizer.iconPngPath
     iconPngPath = if (iconPng.isNullOrEmpty()) null else Path.of(iconPng)
+  }
+
+  companion object {
+    private val BuildSnapSemaphore = Semaphore(Integer.getInteger("intellij.build.unix.snaps.concurrency", 1))
   }
 
   override val targetOs: OsFamily
@@ -64,7 +72,7 @@ class LinuxDistributionBuilder(
         }
         writeVmOptions(distBinDir)
         generateScripts(distBinDir, arch)
-        createJetBrainsClientContextForLaunchers(context)?.let { clientContext ->
+        createFrontendContextForLaunchers(context)?.let { clientContext ->
           writeLinuxVmOptions(distBinDir, clientContext)
           generateLauncherScript(distBinDir, arch, nonCustomizableJvmArgs = ADDITIONAL_EMBEDDED_CLIENT_VM_OPTIONS, clientContext)
         }
@@ -78,11 +86,11 @@ class LinuxDistributionBuilder(
   override suspend fun buildArtifacts(osAndArchSpecificDistPath: Path, arch: JvmArchitecture) {
     copyFilesForOsDistribution(osAndArchSpecificDistPath, arch)
     setLastModifiedTime(osAndArchSpecificDistPath, context)
-    val executableFileMatchers = generateExecutableFilesMatchers(true, arch).keys
+    val executableFileMatchers = generateExecutableFilesMatchers(includeRuntime = true, arch).keys
     updateExecutablePermissions(osAndArchSpecificDistPath, executableFileMatchers)
     context.executeStep(spanBuilder("Build Linux artifacts").setAttribute("arch", arch.name), BuildOptions.LINUX_ARTIFACTS_STEP) {
       if (customizer.buildArtifactWithoutRuntime) {
-        launch(Dispatchers.IO) {
+        launch(Dispatchers.IO + CoroutineName("Build Linux $arch .tar.gz without bundled Runtime")) {
           context.executeStep(
             spanBuilder("Build Linux .tar.gz without bundled Runtime")
               .setAttribute("arch", arch.name)
@@ -109,14 +117,8 @@ class LinuxDistributionBuilder(
       ) { _ ->
         buildTarGz(arch, runtimeDir, osAndArchSpecificDistPath, suffix(arch))
       }
-      launch(Dispatchers.IO) {
-        if (arch == JvmArchitecture.x64) {
-          buildSnapPackage(runtimeDir, osAndArchSpecificDistPath, arch)
-        }
-        else {
-          // TODO: Add snap for aarch64
-          Span.current().addEvent("skip building Snap packages for non-x64 arch")
-        }
+      launch(Dispatchers.IO + CoroutineName("build Snap package")) {
+        buildSnapPackage(runtimeDir, osAndArchSpecificDistPath, arch)
       }
 
       if (tarGzPath != null ) {
@@ -134,9 +136,7 @@ class LinuxDistributionBuilder(
     }
   }
 
-  override suspend fun writeProductInfoFile(targetDir: Path, arch: JvmArchitecture) {
-    generateProductJson(targetDir, arch)
-  }
+  override suspend fun writeProductInfoFile(targetDir: Path, arch: JvmArchitecture): Path = writeProductJsonFile(targetDir, arch)
 
   override fun writeVmOptions(distBinDir: Path): Path = writeLinuxVmOptions(distBinDir, context)
 
@@ -162,7 +162,7 @@ class LinuxDistributionBuilder(
     get() = customizer.getRootDirectoryName(context.applicationInfo, context.buildNumber)
 
   private val launcherFileName: String
-    get() = "${context.productProperties.baseFileName}${if (customizer.useXPlatLauncher) "" else ".sh"}"
+    get() = context.productProperties.baseFileName
 
   private suspend fun buildTarGz(arch: JvmArchitecture, runtimeDir: Path?, unixDistPath: Path, suffix: String): Path = withContext(Dispatchers.IO) {
     val tarRoot = rootDirectoryName
@@ -177,7 +177,7 @@ class LinuxDistributionBuilder(
     }
 
     val productJsonDir = context.paths.tempDir.resolve("linux.dist.product-info.json${suffix}")
-    generateProductJson(productJsonDir, arch, withRuntime = runtimeDir != null)
+    writeProductJsonFile(productJsonDir, arch, withRuntime = runtimeDir != null)
     dirs.add(productJsonDir)
 
     spanBuilder("build Linux tar.gz")
@@ -185,7 +185,7 @@ class LinuxDistributionBuilder(
       .use(Dispatchers.IO) {
         val executableFileMatchers = generateExecutableFilesMatchers(includeRuntime = runtimeDir != null, arch).keys
         tar(tarPath, tarRoot, dirs, executableFileMatchers, context.options.buildDateInSeconds)
-        checkInArchive(tarPath, tarRoot, context)
+        validateProductJson(tarPath, tarRoot, context)
         context.notifyArtifactBuilt(tarPath)
         checkExecutablePermissions(tarPath, rootDirectoryName, includeRuntime = runtimeDir != null, arch)
       }
@@ -198,33 +198,40 @@ class LinuxDistributionBuilder(
     "${appInfo.majorVersion}.${appInfo.minorVersion}${if (versionSuffix.isEmpty()) "" else "-${versionSuffix}"}"
   }
 
-  private val snapArtifactName: String? by lazy {
-    "${customizer.snapName ?: return@lazy null}_${snapVersion}_amd64.snap"
+  private fun getSnapArchName(arch: JvmArchitecture) = when (arch) {
+    JvmArchitecture.x64 -> "amd64"
+    JvmArchitecture.aarch64 -> "arm64"
   }
 
-  private suspend fun buildSnapPackage(runtimeDir: Path, unixDistPath: Path, arch: JvmArchitecture) {
-    val snapName = customizer.snapName
-    val snapArtifactName = this.snapArtifactName
-    if (snapName == null || snapArtifactName == null) {
-      Span.current().addEvent("Linux .snap package build skipped because of missing snapName in ${customizer::class.java.simpleName}")
-      return
-    }
+  private fun getSnapArtifactName(arch: JvmArchitecture): String? {
+    val snapName = customizer.snapName ?: return null
+    return "${snapName}_${snapVersion}_${getSnapArchName(arch)}.snap"
+  }
+
+  private suspend fun buildSnapPackage(runtimeDir: Path, unixDistPath: Path, arch: JvmArchitecture) = BuildSnapSemaphore.withPermit {
     if (!context.options.buildUnixSnaps) {
       Span.current().addEvent("Linux .snap package build is disabled")
       return
     }
+    val snapName = customizer.snapName
+    val snapArtifactName = this.getSnapArtifactName(arch)
+    check(snapName != null && snapArtifactName != null) {
+      "Linux .snap package build requires 'snapName' in ${customizer::class.java.simpleName}"
+    }
 
-    val snapDir = context.paths.buildOutputDir.resolve("dist.snap")
+    val architecture = getSnapArchName(arch)
+    val snapDir = context.paths.buildOutputDir.resolve("dist.snap.${architecture}")
+
     spanBuilder("build Linux .snap package")
       .setAttribute("snapName", snapName)
+      .setAttribute("arch", arch.name)
       .use { span ->
-        if (SystemInfoRt.isWindows) {
-          span.addEvent(".snap cannot be built on Windows, skipped")
-          return@use
+        check(!SystemInfoRt.isWindows) {
+          ".snap package cannot be built on Windows"
         }
-        check(Docker.isAvailable) { "Docker is required to build snaps" }
-        check(iconPngPath != null) { context.messages.error("'iconPngPath' not set") }
-        check(!customizer.snapDescription.isNullOrBlank()) { context.messages.error("'snapDescription' not set") }
+        check(Docker.isAvailable) { "Docker is required to build .snap package" }
+        check(iconPngPath != null) { "'iconPngPath' not set" }
+        check(!customizer.snapDescription.isNullOrBlank()) { "'snapDescription' not set" }
 
         span.addEvent("prepare files")
         val appInfo = context.applicationInfo
@@ -266,15 +273,10 @@ class LinuxDistributionBuilder(
           |# </${snapcraftConfig.name}>
         """.trimMargin()
         )
-        val productJsonDir = context.paths.tempDir.resolve("linux.dist.snap.product-info.json")
-        val jsonText = generateProductJson(productJsonDir, arch)
-        validateProductJson(
-          jsonText,
-          relativePathToProductJson = "",
-          installationDirectories = listOf(context.paths.distAllDir, unixDistPath, runtimeDir),
-          installationArchives = listOf(),
-          context
-        )
+        val productJsonDir = context.paths.tempDir.resolve("linux.dist.snap.product-info.json.$architecture")
+        val productJsonFile = writeProductJsonFile(productJsonDir, arch)
+        val installationDirectories = listOf(context.paths.distAllDir, unixDistPath, runtimeDir)
+        validateProductJson(jsonText = productJsonFile.readText(), installationDirectories, installationArchives = emptyList(), context)
         val resultDir = snapDir.resolve("result")
         Files.createDirectories(resultDir)
 
@@ -293,30 +295,24 @@ class LinuxDistributionBuilder(
             "--workdir=/build",
             context.options.snapDockerImage,
             "snapcraft",
-            "snap", "-o", "result/$snapArtifactName"
+            "snap",
+            "--build-for=$architecture",
+            "-o", "result/$snapArtifactName"
           ),
           workingDir = snapDir,
           timeout = context.options.snapDockerBuildTimeoutMin.minutes,
         )
         val snapArtifactPath = moveFileToDir(resultDir.resolve(snapArtifactName), context.paths.artifactDir)
         context.notifyArtifactBuilt(snapArtifactPath)
-        checkExecutablePermissions(unSquashSnap(snapArtifactPath), root = "", includeRuntime = true, arch)
+        checkExecutablePermissions(snapArtifactPath, root = "", includeRuntime = true, arch)
       }
-  }
-
-  private suspend fun unSquashSnap(snap: Path): Path {
-    val unSquashed = context.paths.tempDir.resolve("unSquashed-${snap.nameWithoutExtension}")
-    NioFiles.deleteRecursively(unSquashed)
-    Files.createDirectories(unSquashed)
-    runProcess(listOf("unsquashfs", "$snap"), workingDir = unSquashed, inheritOut = true)
-    return unSquashed.resolve("squashfs-root")
   }
 
   override fun distributionFilesBuilt(arch: JvmArchitecture): List<Path> {
     val archSuffix = suffix(arch)
     return sequenceOf("${archSuffix}.tar.gz", "${NO_RUNTIME_SUFFIX}${archSuffix}.tar.gz")
       .map { suffix -> context.productProperties.getBaseArtifactName(context) + suffix }
-      .plus(snapArtifactName)
+      .plus(getSnapArtifactName(arch))
       .filterNotNull()
       .map(context.paths.artifactDir::resolve)
       .filter { it.exists() }
@@ -325,8 +321,8 @@ class LinuxDistributionBuilder(
 
   override fun isRuntimeBundled(file: Path): Boolean = !file.name.contains(NO_RUNTIME_SUFFIX)
 
-  private suspend fun generateProductJson(targetDir: Path, arch: JvmArchitecture, withRuntime: Boolean = true): String {
-    val jetbrainsClientCustomLaunchData = generateJetBrainsClientLaunchData(arch, OsFamily.LINUX, context) {
+  private suspend fun writeProductJsonFile(targetDir: Path, arch: JvmArchitecture, withRuntime: Boolean = true): Path {
+    val embeddedFrontendLaunchData = generateEmbeddedFrontendLaunchData(arch, OsFamily.LINUX, context) {
       "bin/${it.productProperties.baseFileName}64.vmoptions"
     }
     val qodanaCustomLaunchData = generateQodanaLaunchData(context, arch, OsFamily.LINUX)
@@ -334,23 +330,24 @@ class LinuxDistributionBuilder(
       relativePathToBin = "bin",
       builtinModules = context.builtinModule,
       launch = listOf(
-        ProductInfoLaunchData(
+        ProductInfoLaunchData.create(
           OsFamily.LINUX.osName,
           arch.dirName,
           launcherPath = "bin/${launcherFileName}",
           javaExecutablePath = if (withRuntime) "jbr/bin/java" else null,
           vmOptionsFilePath = "bin/${context.productProperties.baseFileName}64.vmoptions",
-          startupWmClass = getLinuxFrameClass(context),
           bootClassPathJarNames = context.bootClassPathJarNames,
           additionalJvmArguments = context.getAdditionalJvmArguments(OsFamily.LINUX, arch),
           mainClass = context.ideMainClassName,
-          customCommands = listOfNotNull(jetbrainsClientCustomLaunchData, qodanaCustomLaunchData)
+          startupWmClass = getLinuxFrameClass(context),
+          customCommands = listOfNotNull(embeddedFrontendLaunchData, qodanaCustomLaunchData)
         )
       ),
       context
     )
-    writeProductInfoJson(targetFile = targetDir.resolve(PRODUCT_INFO_FILE_NAME), json = json, context = context)
-    return json
+    val file = targetDir.resolve(PRODUCT_INFO_FILE_NAME)
+    writeProductInfoJson(file, json, context)
+    return file
   }
 
   private fun generateVersionMarker(unixDistPath: Path) {
@@ -378,11 +375,9 @@ class LinuxDistributionBuilder(
   }
 
   private suspend fun addNativeLauncher(distBinDir: Path, targetPath: Path, arch: JvmArchitecture) {
-    if (customizer.useXPlatLauncher) {
-      val (execPath, licensePath) = NativeBinaryDownloader.getLauncher(context, OsFamily.LINUX, arch)
-      copyFile(execPath, distBinDir.resolve(context.productProperties.baseFileName))
-      copyFile(licensePath, targetPath.resolve("license/launcher-third-party-libraries.html"))
-    }
+    val (execPath, licensePath) = NativeBinaryDownloader.getLauncher(context, OsFamily.LINUX, arch)
+    copyFile(execPath, distBinDir.resolve(context.productProperties.baseFileName))
+    copyFile(licensePath, targetPath.resolve("license/launcher-third-party-libraries.html"))
   }
 
   private fun generateLauncherScript(distBinDir: Path, arch: JvmArchitecture, nonCustomizableJvmArgs: List<String>, context: BuildContext) {
@@ -402,17 +397,11 @@ class LinuxDistributionBuilder(
       classPath += "\nCLASS_PATH=\"\$CLASS_PATH:\$IDE_HOME/lib/${classPathJars[i]}\""
     }
 
-    val additionalJvmArguments = context.getAdditionalJvmArguments(OsFamily.LINUX, arch, isScript = true).toMutableList()
-    additionalJvmArguments.addAll(nonCustomizableJvmArgs)
-    if (!context.xBootClassPathJarNames.isEmpty()) {
-      val bootCp = context.xBootClassPathJarNames.joinToString(separator = ":") { "\$IDE_HOME/lib/${it}" }
-      additionalJvmArguments.add("\"-Xbootclasspath/a:$bootCp\"")
-    }
-    val additionalJvmArgs = additionalJvmArguments.joinToString(separator = " ")
+    val additionalJvmArguments = context.getAdditionalJvmArguments(OsFamily.LINUX, arch, isScript = true) + nonCustomizableJvmArgs
     val additionalTemplateValues = listOf(
       Pair("vm_options", context.productProperties.baseFileName),
       Pair("system_selector", context.systemSelector),
-      Pair("ide_jvm_args", additionalJvmArgs),
+      Pair("ide_jvm_args", additionalJvmArguments.joinToString(separator = " ")),
       Pair("ide_default_xmx", defaultXmxParameter.trim()),
       Pair("class_path", classPath),
       Pair("main_class_name", context.ideMainClassName),
@@ -444,8 +433,8 @@ class LinuxDistributionBuilder(
   private fun writeLinuxVmOptions(distBinDir: Path, context: BuildContext): Path {
     val vmOptionsPath = distBinDir.resolve("${context.productProperties.baseFileName}64.vmoptions")
     @Suppress("SpellCheckingInspection")
-    val vmOptions = VmOptionsGenerator.computeVmOptions(context).asSequence() + sequenceOf("-Dsun.tools.attach.tmp.only=true", "-Dawt.lock.fair=true")
-    writeVmOptions(vmOptionsPath, vmOptions, separator = "\n")
+    val vmOptions = VmOptionsGenerator.generate(context).asSequence() + sequenceOf("-Dsun.tools.attach.tmp.only=true", "-Dawt.lock.fair=true")
+    VmOptionsGenerator.writeVmOptions(vmOptionsPath, vmOptions, separator = "\n")
     return vmOptionsPath
   }
 }

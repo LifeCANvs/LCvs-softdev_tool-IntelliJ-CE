@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplacePutWithAssignment")
 
 package com.intellij.openapi.wm.impl
@@ -15,6 +15,7 @@ import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.application.impl.LaterInvocator
 import com.intellij.openapi.application.impl.RawSwingDispatcher
 import com.intellij.openapi.editor.impl.EditorComponentImpl
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.impl.ProjectLoadingCancelled
 import com.intellij.openapi.ui.AbstractPainter
 import com.intellij.openapi.ui.Divider
@@ -33,8 +34,8 @@ import com.intellij.ui.ComponentUtil
 import com.intellij.util.awaitCancellationAndInvoke
 import com.intellij.util.ui.*
 import kotlinx.coroutines.*
+import org.jetbrains.annotations.ApiStatus
 import java.awt.*
-import java.awt.datatransfer.StringSelection
 import java.awt.event.*
 import java.util.*
 import javax.swing.*
@@ -58,7 +59,7 @@ class IdeGlassPaneImpl : JComponent, IdeGlassPaneEx, IdeEventQueue.EventDispatch
   private var prevPressEvent: MouseEvent? = null
 
   @Suppress("MemberVisibilityCanBePrivate")
-  internal var windowShadowPainter: AbstractPainter? = null
+  internal @JvmField var windowShadowPainter: AbstractPainter? = null
   private var paintersInstalled = false
   private var loadingIndicator: IdePaneLoadingLayer? = null
 
@@ -131,6 +132,13 @@ class IdeGlassPaneImpl : JComponent, IdeGlassPaneEx, IdeEventQueue.EventDispatch
       val iconSize = icon.preferredSize
       icon.setBounds((width - iconSize.width) / 2, (height - iconSize.height) / 2, iconSize.width, iconSize.height)
     }
+  }
+
+  @ApiStatus.Experimental
+  @ApiStatus.Internal
+  fun addFallbackBackgroundPainter(fallbackBackgroundPainter : Painter) {
+    installPainters()
+    IdeBackgroundUtil.addFallbackBackgroundPainter(this, fallbackBackgroundPainter)
   }
 
   internal fun installPainters() {
@@ -319,7 +327,9 @@ class IdeGlassPaneImpl : JComponent, IdeGlassPaneEx, IdeEventQueue.EventDispatch
       if (event.isAltDown && SwingUtilities.isLeftMouseButton(event) && event.id == MouseEvent.MOUSE_PRESSED) {
         val c = SwingUtilities.getDeepestComponentAt(e.component, e.x, e.y)
         val component = ComponentUtil.findParentByCondition(c) { ClientProperty.isTrue(it, UIUtil.TEXT_COPY_ROOT) }
-        component?.toolkit?.systemClipboard?.setContents(StringSelection(UIUtil.getDebugText(component)), EmptyClipboardOwner.INSTANCE)
+        if (component != null) {
+          CopyPasteManager.copyTextToClipboard(UIUtil.getDebugText(component))
+        }
       }
 
       if (!IdeGlassPaneUtil.canBePreprocessed(e)) {
@@ -344,7 +354,7 @@ class IdeGlassPaneImpl : JComponent, IdeGlassPaneEx, IdeEventQueue.EventDispatch
       if (eventRootPane === pane) {
         if (!listenerToCursor.isEmpty()) {
           val cursor = listenerToCursor.values.iterator().next()
-          val point = SwingUtilities.convertPoint(e.component, e.point, pane.contentPane)
+          val point = SwingUtilities.convertPoint(e.component, e.point, pane.contentPane.parent)
           var target = SwingUtilities.getDeepestComponentAt(pane.contentPane.parent, point.x, point.y)
           if (canProcessCursorFor(target)) {
             target = getCompWithCursor(target)
@@ -457,6 +467,7 @@ class IdeGlassPaneImpl : JComponent, IdeGlassPaneEx, IdeEventQueue.EventDispatch
   }
 
   @Suppress("MemberVisibilityCanBePrivate")
+  @JvmName("getNamedPainters")
   internal fun getNamedPainters(name: String): PainterHelper {
     return namedPainters.computeIfAbsent(name) { PainterHelper(this) }
   }
@@ -568,11 +579,9 @@ internal interface FrameLoadingState {
 }
 
 internal fun executeOnCancelInEdt(coroutineScope: CoroutineScope, task: () -> Unit) {
-  coroutineScope.launch {
-    awaitCancellationAndInvoke {
-      withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
-        task()
-      }
+  coroutineScope.awaitCancellationAndInvoke {
+    withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
+      task()
     }
   }
 }

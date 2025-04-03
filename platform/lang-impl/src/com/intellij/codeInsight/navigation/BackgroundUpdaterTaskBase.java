@@ -18,16 +18,18 @@ import com.intellij.usages.impl.UsageViewImpl;
 import com.intellij.util.Alarm;
 import com.intellij.util.SmartList;
 import com.intellij.util.concurrency.ThreadingAssertions;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
+@ApiStatus.Internal
 public abstract class BackgroundUpdaterTaskBase<T> extends Task.Backgroundable {
   protected JBPopup myPopup;
   private GenericListComponentUpdater<T> myUpdater;
   private Ref<? extends UsageView> myUsageView;
-  private final Collection<T> myData;
+  protected final Collection<T> myData;
 
   private final Alarm myAlarm = new Alarm();
   private final Object lock = new Object();
@@ -110,6 +112,10 @@ public abstract class BackgroundUpdaterTaskBase<T> extends Task.Backgroundable {
     return false;
   }
 
+  protected boolean addElementToMyData(T element) {
+    return myData.add(element);
+  }
+
   public boolean updateComponent(@NotNull T element) {
     if (tryAppendUsage(element)) return true;
 
@@ -117,7 +123,7 @@ public abstract class BackgroundUpdaterTaskBase<T> extends Task.Backgroundable {
     if (myPopup.isDisposed()) return false;
 
     synchronized (lock) {
-      if (!myData.add(element)) return true;
+      if (!addElementToMyData(element)) return true;
     }
 
     myAlarm.addRequest(() -> WriteIntentReadAction.run((Runnable)() -> {

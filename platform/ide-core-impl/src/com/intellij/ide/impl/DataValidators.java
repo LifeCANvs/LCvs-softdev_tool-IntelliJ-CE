@@ -32,19 +32,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+@ApiStatus.Internal
 public abstract class DataValidators {
   private static final Logger LOG = Logger.getInstance(DataValidators.class);
 
   public static final ExtensionPointName<DataValidators> EP_NAME = ExtensionPointName.create("com.intellij.dataValidators");
 
-  public abstract void collectValidators(@NotNull Registry registry);
+  protected abstract void collectValidators(@NotNull ValidatorRegistry registry);
 
   public interface Validator<T> {
     boolean checkValid(@NotNull T data, @NotNull String dataId, @NotNull Object source);
   }
 
   @ApiStatus.NonExtendable
-  public interface Registry {
+  protected interface ValidatorRegistry {
     <T> void register(@NotNull DataKey<T> key, @NotNull Validator<? super T> validator);
   }
 
@@ -159,7 +160,7 @@ public abstract class DataValidators {
       return null;
     }
     Map<String, List<Validator<?>>> map = FactoryMap.create(__ -> new ArrayList<>());
-    Registry registry = new Registry() {
+    ValidatorRegistry registry = new ValidatorRegistry() {
       @Override
       public <T> void register(@NotNull DataKey<T> key,
                                @NotNull Validator<? super T> validator) {

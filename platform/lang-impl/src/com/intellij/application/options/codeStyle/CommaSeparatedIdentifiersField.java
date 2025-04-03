@@ -7,11 +7,13 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.components.fields.ExpandableTextField;
 import com.intellij.ui.components.fields.valueEditors.TextFieldValueEditor;
 import com.intellij.ui.components.fields.valueEditors.ValueEditor;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 
+@ApiStatus.Internal
 public final class CommaSeparatedIdentifiersField extends ExpandableTextField {
 
   private final @NotNull MyValueEditor myValueEditor;
@@ -44,7 +46,7 @@ public final class CommaSeparatedIdentifiersField extends ExpandableTextField {
         String identifier = chunk.trim();
         if (!StringUtil.isEmpty(identifier)) {
           if (StringUtil.isJavaIdentifier(identifier)) {
-            if (result.length() > 0) {
+            if (!result.isEmpty()) {
               result.append(',');
             }
             result.append(identifier);

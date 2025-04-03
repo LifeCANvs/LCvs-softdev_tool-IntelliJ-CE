@@ -12,6 +12,7 @@ import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.util.NlsContexts
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ContextHelpLabel
+import com.intellij.ui.ExperimentalUI
 import com.intellij.ui.JBIntSpinner
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.UIBundle
@@ -23,14 +24,15 @@ import com.intellij.ui.dsl.builder.components.DslLabel
 import com.intellij.ui.dsl.builder.components.DslLabelType
 import com.intellij.ui.dsl.gridLayout.UnscaledGaps
 import com.intellij.ui.dsl.gridLayout.UnscaledGapsY
-import com.intellij.ui.dsl.gridLayout.VerticalGaps
 import com.intellij.ui.layout.ComponentPredicate
 import com.intellij.util.Function
 import com.intellij.util.IconUtil
 import com.intellij.util.MathUtil
-import com.intellij.util.ui.*
+import com.intellij.util.ui.JBEmptyBorder
+import com.intellij.util.ui.JBFont
+import com.intellij.util.ui.ThreeStateCheckBox
+import com.intellij.util.ui.UIUtil
 import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.Nls
 import java.awt.event.ActionEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -56,18 +58,16 @@ internal open class RowImpl(private val dialogPanelConfig: DialogPanelConfig,
   var topGap: TopGap? = null
     private set
 
-  /**
-   * Used if topGap is not set, skipped for first row
-   */
-  var internalTopGap: Int = 0
-
   var bottomGap: BottomGap? = null
     private set
 
   /**
-   * Used if bottomGap is not set, skipped for last row
+   * Top is used if topGap is not set, skipped for first row
+   * Bottom is used if bottomGap is not set, skipped for last row
    */
-  var internalBottomGap: Int = 0
+  var internalGaps: UnscaledGapsY = UnscaledGapsY.EMPTY
+
+  var customGaps: UnscaledGapsY? = null
 
   val cells: MutableList<CellBaseImpl<*>?> = mutableListOf()
 
@@ -213,21 +213,7 @@ internal open class RowImpl(private val dialogPanelConfig: DialogPanelConfig,
     return result
   }
 
-  override fun <T> segmentedButton(items: Collection<T>, renderer: (T) -> @Nls String): SegmentedButton<T> {
-    return segmentedButtonImpl(items) {
-      text = renderer.invoke(it)
-    }
-  }
-
   override fun <T> segmentedButton(items: Collection<T>, renderer: SegmentedButton.ItemPresentation.(T) -> Unit): SegmentedButton<T> {
-    return segmentedButtonImpl(items, renderer)
-  }
-
-  // Work around https://youtrack.jetbrains.com/issue/KT-62048
-  private fun <T> segmentedButtonImpl(
-    items: Collection<T>,
-    renderer: SegmentedButton.ItemPresentation.(T) -> Unit,
-  ): SegmentedButtonImpl<T> {
     val result = SegmentedButtonImpl(dialogPanelConfig, this, renderer)
     result.items = items
     cells.add(result)
@@ -390,8 +376,16 @@ internal open class RowImpl(private val dialogPanelConfig: DialogPanelConfig,
 
   override fun <T> comboBox(model: ComboBoxModel<T>, renderer: ListCellRenderer<in T?>?): Cell<ComboBox<T>> {
     val component = ComboBox(model)
-    // todo check usage of com.intellij.ui.dsl.builder.UtilsKt#listCellRenderer here
-    component.renderer = renderer ?: SimpleListCellRenderer.create("") { it.toString() }
+
+    if (renderer == null) {
+      if (!ExperimentalUI.isNewUI()) {
+        component.renderer = SimpleListCellRenderer.create("") { it.toString() }
+      }
+    }
+    else {
+      component.renderer = renderer
+    }
+
     return cell(component)
   }
 
@@ -399,15 +393,8 @@ internal open class RowImpl(private val dialogPanelConfig: DialogPanelConfig,
     return comboBox(DefaultComboBoxModel(Vector(items)), renderer)
   }
 
-  override fun customize(customRowGaps: VerticalGaps): Row {
-    return customize(UnscaledGapsY(JBUI.unscale(customRowGaps.top), JBUI.unscale(customRowGaps.bottom)))
-  }
-
   override fun customize(customRowGaps: UnscaledGapsY): Row {
-    internalTopGap = customRowGaps.top
-    internalBottomGap = customRowGaps.bottom
-    topGap = null
-    bottomGap = null
+    customGaps = customRowGaps
 
     return this
   }

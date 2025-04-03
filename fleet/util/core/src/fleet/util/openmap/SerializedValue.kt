@@ -49,4 +49,11 @@ class SerializedValue private constructor(private var state: State) {
 
   override fun hashCode(): Int =
     json.hashCode()
+
+  override fun toString(): String =
+    "SerializedValue(${
+      runCatching { json.toString() }.getOrElse { 
+        "Failed to serialize value ${(state as State.Deserialized<*>).value} due to $it"
+      }
+    })"
 }

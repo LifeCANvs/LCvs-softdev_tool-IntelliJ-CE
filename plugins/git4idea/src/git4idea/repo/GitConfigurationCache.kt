@@ -1,27 +1,20 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.repo
 
-import com.intellij.concurrency.ConcurrentCollectionFactory
+import com.github.benmanes.caffeine.cache.AsyncCache
 import com.intellij.dvcs.repo.VcsRepositoryManager
 import com.intellij.dvcs.repo.VcsRepositoryMappingListener
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.progress.ProcessCanceledException
-import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.VcsException
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import com.intellij.util.messages.MessageBusConnection
 import git4idea.config.GitConfigUtil
-import git4idea.config.GitExecutableListener
-import git4idea.config.GitExecutableManager
+import git4idea.util.CaffeineUtil
 import org.jetbrains.annotations.ApiStatus
-import java.util.concurrent.CancellationException
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ExecutionException
 
 @ApiStatus.Experimental
 @Service(Service.Level.APP)
@@ -48,7 +41,7 @@ class GitProjectConfigurationCache(val project: Project) : GitConfigurationCache
   }
 
   @RequiresBackgroundThread
-  fun <T> readRepositoryConfig(repository: GitRepository, key: String): String? {
+  fun readRepositoryConfig(repository: GitRepository, key: String): String? {
     return computeCachedValue(RepoConfigKey(repository, key)) {
       try {
         GitConfigUtil.getValue(repository.getProject(), repository.getRoot(), key)
@@ -60,9 +53,15 @@ class GitProjectConfigurationCache(val project: Project) : GitConfigurationCache
     }
   }
 
+  fun clearForRepo(repository: GitRepository) {
+    cache.asMap().keys.removeIf {
+      it is GitRepositoryConfigKey && it.repository == repository
+    }
+  }
+
   private fun clearInvalidKeys() {
-    cache.keys.removeIf {
-      it is GitRepositoryConfigKey && it.repository.isDisposed()
+    cache.asMap().keys.removeIf {
+      it is GitRepositoryConfigKey && it.repository.isDisposed
     }
   }
 
@@ -70,59 +69,20 @@ class GitProjectConfigurationCache(val project: Project) : GitConfigurationCache
 }
 
 abstract class GitConfigurationCacheBase : Disposable {
-  protected val cache: MutableMap<GitConfigKey<*>, CompletableFuture<*>> = ConcurrentCollectionFactory.createConcurrentMap()
-
-  init {
-    val connection: MessageBusConnection = ApplicationManager.getApplication().messageBus.connect(this)
-    connection.subscribe<GitExecutableListener>(GitExecutableManager.TOPIC, GitExecutableListener { clearCache() })
-  }
+  protected val cache: AsyncCache<GitConfigKey<*>, Any?> = CaffeineUtil
+    .withIoExecutor()
+    .buildAsync()
 
   @RequiresBackgroundThread
-  fun <T> computeCachedValue(configKey: GitConfigKey<T>, computeValue: () -> T): T {
-    val future = CompletableFuture<T>()
-
-    @Suppress("UNCHECKED_CAST")
-    val oldFuture = cache.putIfAbsent(configKey, future) as CompletableFuture<T>?
-    if (oldFuture != null) {
-      try {
-        return oldFuture.get()
-      }
-      catch (e: ExecutionException) {
-        throw e.cause ?: e
-      }
-      catch (e: CancellationException) {
-        if (oldFuture.isCancelled) {
-          ProgressManager.checkCanceled()
-          return computeValue() // another progress was cancelled, compute without cache
-        }
-        else {
-          throw e
-        }
-      }
-    }
-    else {
-      try {
-        val result = computeValue()
-        future.complete(result)
-        return result
-      }
-      catch (e: ProcessCanceledException) {
-        cache.remove(configKey, future)
-        future.cancel(true)
-        throw e
-      }
-      catch (e: Throwable) {
-        future.completeExceptionally(e)
-        throw e
-      }
-    }
-  }
+  @Suppress("UNCHECKED_CAST")
+  fun <T> computeCachedValue(configKey: GitConfigKey<T>, computeValue: () -> T): T = cache.get(configKey) { computeValue() }.get() as T
 
   fun clearCache() {
-    cache.clear()
+    cache.synchronous().invalidateAll()
   }
 
   override fun dispose() {
+    clearCache()
   }
 }
 

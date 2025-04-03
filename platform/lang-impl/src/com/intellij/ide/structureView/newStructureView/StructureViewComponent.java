@@ -1,13 +1,15 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.structureView.newStructureView;
 
-import com.intellij.icons.AllIcons;
 import com.intellij.ide.*;
 import com.intellij.ide.dnd.aware.DnDAwareTree;
 import com.intellij.ide.structureView.*;
 import com.intellij.ide.structureView.customRegions.CustomRegionTreeElement;
 import com.intellij.ide.structureView.impl.StructureViewFactoryImpl;
 import com.intellij.ide.structureView.impl.common.PsiTreeElementBase;
+import com.intellij.ide.structureView.logical.LogicalStructureDataKeys;
+import com.intellij.ide.structureView.logical.impl.LogicalStructureViewModel;
+import com.intellij.ide.structureView.logical.impl.LogicalStructureViewTreeElement;
 import com.intellij.ide.structureView.symbol.DelegatingPsiElementWithSymbolPointer;
 import com.intellij.ide.ui.UISettingsListener;
 import com.intellij.ide.ui.customization.CustomizationUtil;
@@ -42,6 +44,7 @@ import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.ui.*;
+import com.intellij.ui.components.JBLayeredPane;
 import com.intellij.ui.popup.HintUpdateSupply;
 import com.intellij.ui.tree.AsyncTreeModel;
 import com.intellij.ui.tree.StructureTreeModel;
@@ -58,10 +61,7 @@ import com.intellij.util.containers.JBTreeTraverser;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.tree.TreeModelAdapter;
 import com.intellij.util.ui.tree.TreeUtil;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.*;
 import org.jetbrains.concurrency.AsyncPromise;
 import org.jetbrains.concurrency.CancellablePromise;
 import org.jetbrains.concurrency.Promise;
@@ -70,13 +70,15 @@ import org.jetbrains.concurrency.Promises;
 import javax.accessibility.AccessibleContext;
 import javax.swing.*;
 import javax.swing.event.TreeModelEvent;
+import javax.swing.event.TreeSelectionEvent;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 import java.awt.*;
 import java.awt.event.MouseEvent;
-import java.util.List;
 import java.util.*;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -173,7 +175,10 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
       myTreeModelWrapper.removeModelListener(modelListener);
     });
 
-    setContent(ScrollPaneFactory.createScrollPane(myTree));
+    boolean isLogical = structureViewModel instanceof LogicalStructureViewModel;
+    myTree.setBorder(BorderFactory.createEmptyBorder(0, isLogical ? 2 * UIUtil.getTreeFont().getSize() : 0, 0, 0));
+    JScrollPane content = ScrollPaneFactory.createScrollPane(myTree);
+    setContent(new MyLayeredPane(content));
 
     myAutoScrollToSourceHandler = new MyAutoScrollToSourceHandler();
     myAutoScrollFromSourceHandler = new MyAutoScrollFromSourceHandler(myProject, this);
@@ -238,6 +243,7 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
 
     addTreeKeyListener();
     addTreeMouseListeners();
+    addTreeSelectionListener();
     restoreState();
   }
 
@@ -289,6 +295,19 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
   private void addTreeKeyListener() {
     EditSourceOnEnterKeyHandler.install(getTree());
     getTree().addKeyListener(new PsiCopyPasteManager.EscapeHandler());
+  }
+
+  private void addTreeSelectionListener() {
+    if (Registry.is("logical.structure.actions.on.hover", false)) return;
+    getTree().addTreeSelectionListener((TreeSelectionEvent e) -> {
+      Optional.ofNullable(e.getPath())
+        .map(path -> getTree().getPathBounds(path))
+        .ifPresent(pathBounds -> {
+          if (getContent() instanceof MyLayeredPane myLayeredPane) {
+            myLayeredPane.repaintFloatingToolbar(pathBounds.y);
+          }
+        });
+    });
   }
 
   @Override
@@ -356,16 +375,13 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
   }
 
   @ApiStatus.Internal
-  public final DefaultActionGroup getViewActions() {
-    DefaultActionGroup result = new DefaultActionGroup(IdeBundle.message("group.view.options"), null, AllIcons.Actions.GroupBy);
-    result.setPopup(true);
+  public final void getViewActions(@NotNull DefaultActionGroup result) {
     result.addSeparator(StructureViewBundle.message("structureview.subgroup.sort"));
     result.addAll(sortActionsByName(getSortActions()));
     result.addSeparator(StructureViewBundle.message("structureview.subgroup.filter"));
     result.addAll(sortActionsByName(getFilterActions()));
     result.addSeparator(StructureViewBundle.message("structureview.subgroup.group"));
     addGroupByActions(result);
-    return result;
   }
 
   private @NotNull List<AnAction> getSortActions() {
@@ -767,6 +783,23 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
         .filter(Symbol.class)
         .toList();
     });
+    sink.lazy(LogicalStructureDataKeys.STRUCTURE_TREE_ELEMENT, () -> {
+      if (Registry.is("logical.structure.actions.on.hover", false)) {
+        return Optional.of(myTree)
+          .filter(tree -> tree instanceof MyTree)
+          .map(tree -> ((MyTree) tree).getLastHoveredPath())
+          .map(path -> path.getLastPathComponent())
+          .map(component -> {
+            return getStructureTreeElement(component);
+          })
+          .orElse(null);
+      }
+      for (Object o : selection) {
+        StructureViewTreeElement element = getStructureTreeElement(o);
+        if (element != null) return element;
+      }
+      return null;
+    });
   }
 
   @Override
@@ -804,6 +837,13 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
     return provider == null ? 2 : provider.getMinimumAutoExpandDepth();
   }
 
+  private static StructureViewTreeElement getStructureTreeElement(Object pathComponent) {
+    if (!(pathComponent instanceof DefaultMutableTreeNode node)) return null;
+    if (!(node.getUserObject() instanceof AbstractTreeNode<?> abstractTreeNode)) return null;
+    if (!(abstractTreeNode.getValue() instanceof StructureViewTreeElement treeElement)) return null;
+    return treeElement;
+  }
+
   private static final class MyNodeWrapper extends TreeElementWrapper
     implements NodeDescriptorProvidingKey, ValidateableNode {
 
@@ -817,7 +857,8 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
     @Override
     public FileStatus getFileStatus() {
       if (myTreeModel instanceof StructureViewModel model &&
-          getValue() instanceof StructureViewTreeElement value) {
+          getValue() instanceof StructureViewTreeElement value &&
+          !(value instanceof LogicalStructureViewTreeElement)) {
         return model.getElementStatus(value.getValue());
       }
       return FileStatus.NOT_CHANGED;
@@ -941,7 +982,10 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
     }
   }
 
-  private static final class MyTree extends DnDAwareTree implements PlaceProvider {
+  private final class MyTree extends DnDAwareTree implements PlaceProvider {
+
+    private volatile TreePath lastHoveredPath = null;
+
     MyTree(javax.swing.tree.TreeModel model) {
       super(model);
       ClientProperty.put(this, DefaultTreeUI.AUTO_EXPAND_FILTER, node -> !isSmartExpand(node));
@@ -956,7 +1000,79 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
     @Override
     public void processMouseEvent(MouseEvent event) {
       if (event.getID() == MouseEvent.MOUSE_PRESSED) requestFocus();
-      super.processMouseEvent(event);
+      if (myTreeModel instanceof StructureViewModel.ActionHandler || myTreeModel instanceof StructureViewModel.ClickHandler) {
+        processCustomEventHandler(myTreeModel, event)
+          .whenComplete((Boolean handled, Throwable t) -> {
+            if (handled != null && handled)
+              event.consume();
+            else
+              super.processMouseEvent(event);
+          });
+      }
+      else super.processMouseEvent(event);
+    }
+
+    @Override
+    protected void processEvent(AWTEvent e) {
+      if (!Registry.is("logical.structure.actions.on.hover", false) || e.getID() != MouseEvent.MOUSE_MOVED) {
+        super.processEvent(e);
+        return;
+      }
+      if (e instanceof MouseEvent event) {
+        if (!(getContent() instanceof MyLayeredPane myLayeredPane)) return;
+        TreePath path = getClosestPathForLocation(event.getX(), event.getY());
+        if (path == null || path.equals(lastHoveredPath)) return;
+        Rectangle pathBounds = getPathBounds(path);
+        if (pathBounds == null) return;
+        lastHoveredPath = path;
+        myLayeredPane.repaintFloatingToolbar(pathBounds.y);
+        repaint();
+      }
+    }
+
+    public TreePath getLastHoveredPath() {
+      return lastHoveredPath;
+    }
+
+    @Override
+    public boolean isFileColorsEnabled() {
+      return Registry.is("logical.structure.actions.on.hover", false);
+    }
+
+    @Override
+    public @Nullable Color getFileColorForPath(@NotNull TreePath path) {
+      if (lastHoveredPath != null && lastHoveredPath.equals(path)) {
+        return UIUtil.getTreeSelectionBackground(myTree.getSelectionPath() == path);
+      }
+      return super.getFileColorForPath(path);
+    }
+
+    private CompletableFuture<Boolean> processCustomEventHandler(
+      StructureViewModel handler, MouseEvent event
+    ) {
+      if (event.getClickCount() != 1 || event.getID() != MouseEvent.MOUSE_PRESSED) return CompletableFuture.completedFuture(false);
+      TreePath path = getPathForLocation(event.getX(), event.getY());
+      if (path == null) return CompletableFuture.completedFuture(false);
+      Object lastPathComponent = path.getLastPathComponent();
+      StructureViewTreeElement treeElement = getStructureTreeElement(lastPathComponent);
+      if (treeElement == null) return CompletableFuture.completedFuture(false);
+
+      Rectangle pathBounds = getPathBounds(path);
+      if (pathBounds == null) return CompletableFuture.completedFuture(false);
+      int dx = event.getX() - (int) pathBounds.getX();
+      if (dx < 0 || dx > pathBounds.width) return CompletableFuture.completedFuture(false);
+
+      Component component = this.cellRenderer.getTreeCellRendererComponent(this, lastPathComponent, false, false, true, getRowForPath(path), false);
+      if (!(component instanceof SimpleColoredComponent simpleColoredComponent)) return CompletableFuture.completedFuture(false);
+      int fragmentIndex = simpleColoredComponent.findFragmentAt(dx);
+      if (fragmentIndex < 0)
+        return CompletableFuture.completedFuture(false);
+      else if (handler instanceof StructureViewModel.ActionHandler actionHandler)
+        return CompletableFuture.completedFuture(actionHandler.handleClick(treeElement, fragmentIndex));
+      else if (handler instanceof StructureViewModel.ClickHandler actionHandler)
+        return actionHandler.handleClick(new StructureViewClickEvent(treeElement, fragmentIndex));
+      else
+        return CompletableFuture.completedFuture(false);
     }
 
     @Override
@@ -1059,6 +1175,7 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
     return new MyNodeWrapper(project, value, treeModel);
   }
 
+  @Contract(mutates = "param1")
   private static @NotNull List<AnAction> sortActionsByName(@NotNull List<AnAction> actions) {
     actions.sort(Comparator.comparing(action -> action.getTemplateText()));
     return actions;
@@ -1099,7 +1216,17 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
     void expandLater(@NotNull TreePath parentPath, @NotNull Object o) {
       ApplicationManager.getApplication().invokeLater(() -> {
         if (!tree.isVisible(parentPath) || !tree.isExpanded(parentPath)) return;
-        tree.expandPath(parentPath.pathByAddingChild(o));
+        try {
+          if (tree instanceof Tree jbTree) {
+            jbTree.suspendExpandCollapseAccessibilityAnnouncements();
+          }
+          tree.expandPath(parentPath.pathByAddingChild(o));
+        }
+        finally {
+          if (tree instanceof Tree jbTree) {
+            jbTree.resumeExpandCollapseAccessibilityAnnouncements();
+          }
+        }
       });
     }
 
@@ -1124,6 +1251,48 @@ public class StructureViewComponent extends SimpleToolWindowPanel implements Tre
       // expand root node & its immediate children
       NodeDescriptor<?> parent = nodeDescriptor.getParentDescriptor();
       return parent == null || parent.getParentDescriptor() == null;
+    }
+  }
+
+  private class MyLayeredPane extends JBLayeredPane {
+
+    private final JScrollPane mainComponent;
+    private final StructureViewFloatingToolbar floatingToolbar;
+
+    MyLayeredPane(JScrollPane mainComponent) {
+      this.mainComponent = mainComponent;
+
+      add(mainComponent, DEFAULT_LAYER);
+      if (Registry.is("logical.structure.actions.enabled", true)) {
+        floatingToolbar = new StructureViewFloatingToolbar(this, StructureViewComponent.this);
+        add(floatingToolbar, POPUP_LAYER);
+        mainComponent.getVerticalScrollBar().addAdjustmentListener(event -> floatingToolbar.setScrollingDy(event.getValue()));
+      }
+      else {
+        floatingToolbar = null;
+      }
+    }
+
+    @Override
+    public void doLayout() {
+      Rectangle bounds = getBounds();
+      for (Component component : getComponents()) {
+        if (component == mainComponent) {
+          component.setBounds(0, 0, bounds.width, bounds.height);
+        }
+      }
+    }
+
+    public void repaintFloatingToolbar(int y) {
+      if (floatingToolbar != null) {
+        int scrollDy = mainComponent.getVerticalScrollBar().getValue();
+        floatingToolbar.repaintOnYWithDy(y, scrollDy);
+      }
+    }
+
+    @Override
+    public Dimension getPreferredSize() {
+      return mainComponent.getPreferredSize();
     }
   }
 }

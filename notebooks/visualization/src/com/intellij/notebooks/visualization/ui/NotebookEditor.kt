@@ -5,7 +5,9 @@ import com.intellij.openapi.util.Key
 import com.intellij.notebooks.visualization.NotebookCellLines
 
 interface NotebookEditor {
-  fun inlayClicked(clickedCell: NotebookCellLines.Interval, ctrlPressed: Boolean, shiftPressed: Boolean)
+  val mouseOverCell: EditorCellView?
+  fun inlayClicked(clickedCell: NotebookCellLines.Interval, ctrlPressed: Boolean, shiftPressed: Boolean, mouseButton: Int)
+  val editorPositionKeeper: NotebookPositionKeeper
 }
 
 internal val notebookEditorKey = Key.create<NotebookEditor>(NotebookEditor::class.java.name)

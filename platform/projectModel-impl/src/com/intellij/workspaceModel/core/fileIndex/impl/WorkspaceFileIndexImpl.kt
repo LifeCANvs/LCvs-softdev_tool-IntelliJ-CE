@@ -1,11 +1,10 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.workspaceModel.core.fileIndex.impl
 
 import com.intellij.injected.editor.VirtualFileWindow
 import com.intellij.notebook.editor.BackedVirtualFile
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.diagnostic.ThrottledLogger
 import com.intellij.openapi.diagnostic.thisLogger
@@ -41,6 +40,10 @@ class WorkspaceFileIndexImpl(private val project: Project) : WorkspaceFileIndexE
 
   private val indexDataReference = AtomicReference<WorkspaceFileIndexData>(EmptyWorkspaceFileIndexData.NOT_INITIALIZED)
   private val throttledLogger = ThrottledLogger(thisLogger(), MINUTES.toMillis(1))
+  
+  constructor(project: Project, indexData: WorkspaceFileIndexData) : this(project) {
+    indexDataReference.set(indexData)
+  }
 
   override var indexData: WorkspaceFileIndexData
     get() = indexDataReference.get()
@@ -225,9 +228,31 @@ class WorkspaceFileIndexImpl(private val project: Project) : WorkspaceFileIndexE
     }
   }
 
+  override fun findFileSets(file: VirtualFile,
+                            honorExclusion: Boolean,
+                            includeContentSets: Boolean,
+                            includeExternalSets: Boolean,
+                            includeExternalSourceSets: Boolean,
+                            includeCustomKindSets: Boolean): List<WorkspaceFileSet> {
+    val info = getFileInfo(
+      file = file,
+      honorExclusion = honorExclusion,
+      includeContentSets = includeContentSets,
+      includeExternalSets = includeExternalSets,
+      includeExternalSourceSets = includeExternalSourceSets,
+      includeCustomKindSets = includeCustomKindSets
+    )
+    return when (info) {
+      is WorkspaceFileSetImpl -> listOf(info)
+      is MultipleWorkspaceFileSets -> info.fileSets
+      else -> emptyList()
+    }
+  }
+
   override suspend fun initialize() {
-    readAction {
-      initializeBlocking()
+    if (indexData is EmptyWorkspaceFileIndexData) {
+      val contributors = EP_NAME.extensionList
+      indexData = WorkspaceFileIndexDataImpl(contributorList = contributors, project = project, parentDisposable = this)
     }
   }
 
@@ -254,6 +279,25 @@ class WorkspaceFileIndexImpl(private val project: Project) : WorkspaceFileIndexE
     return result as? WorkspaceFileSetWithCustomData<D>
   }
 
+  override fun <D : WorkspaceFileSetData> findFileSetsWithCustomData(
+    file: VirtualFile,
+    honorExclusion: Boolean,
+    includeContentSets: Boolean,
+    includeExternalSets: Boolean,
+    includeExternalSourceSets: Boolean,
+    includeCustomKindSets: Boolean,
+    customDataClass: Class<out D>
+  ): List<WorkspaceFileSetWithCustomData<D>> {
+    val info = getFileInfo(file, honorExclusion, includeContentSets, includeExternalSets, includeExternalSourceSets, includeCustomKindSets)
+    val result = when (info) {
+      is WorkspaceFileSetWithCustomData<*> -> listOfNotNull(info.takeIf { customDataClass.isInstance(it.data) })
+      is MultipleWorkspaceFileSets -> info.fileSets.filter { customDataClass.isInstance(it.data) }
+      else -> emptyList()
+    }
+    @Suppress("UNCHECKED_CAST")
+    return result as List<WorkspaceFileSetWithCustomData<D>>
+  }
+
   override fun getFileInfo(file: VirtualFile,
                            honorExclusion: Boolean,
                            includeContentSets: Boolean,
@@ -266,20 +310,24 @@ class WorkspaceFileIndexImpl(private val project: Project) : WorkspaceFileIndexE
   }
 
   override fun <E : WorkspaceEntity> findContainingEntities(file: VirtualFile, entityClass: Class<E>, honorExclusion: Boolean, includeContentSets: Boolean, includeExternalSets: Boolean, includeExternalSourceSets: Boolean, includeCustomKindSets: Boolean): Collection<E> {
+    val allEntities = findContainingEntities(file, honorExclusion, includeContentSets, includeExternalSets, includeExternalSourceSets, includeCustomKindSets)
+    @Suppress("UNCHECKED_CAST")
+    return allEntities.filter { entity -> entity.getEntityInterface() == entityClass } as Collection<E>
+  }
+
+  override fun findContainingEntities(file: VirtualFile, honorExclusion: Boolean, includeContentSets: Boolean, includeExternalSets: Boolean, includeExternalSourceSets: Boolean, includeCustomKindSets: Boolean): Collection<WorkspaceEntity> {
     return when (val fileInfo = getFileInfo(file, honorExclusion, includeContentSets, includeExternalSets, includeExternalSourceSets, includeCustomKindSets)) {
-      is WorkspaceFileSetImpl -> listOfNotNull(resolveEntity(fileInfo, entityClass))
+      is WorkspaceFileSetImpl -> listOfNotNull(resolveEntity(fileInfo))
       is MultipleWorkspaceFileSets -> fileInfo.fileSets.mapNotNull { fileSet ->
-        (fileSet as? StoredFileSet?)?.let { resolveEntity(it, entityClass) }
+        (fileSet as? StoredFileSet?)?.let { resolveEntity(it) }
       }
       is NonWorkspace -> return emptyList()
     }
   }
 
-  private fun <E> resolveEntity(fileSet: StoredFileSet, entityClass: Class<E>): E? {
+  private fun resolveEntity(fileSet: StoredFileSet): WorkspaceEntity? {
     if (fileSet.entityStorageKind != EntityStorageKind.MAIN) return null
-    val entity = fileSet.entityPointer.resolve(WorkspaceModel.getInstance(project).currentSnapshot)
-    @Suppress("UNCHECKED_CAST")
-    return entity?.takeIf { it.getEntityInterface() == entityClass } as E?
+    return fileSet.entityPointer.resolve(WorkspaceModel.getInstance(project).currentSnapshot)
   }
 
   @RequiresReadLock
@@ -306,7 +354,8 @@ class WorkspaceFileIndexImpl(private val project: Project) : WorkspaceFileIndexE
           throttledLogger.warn("WorkspaceFileIndex must not be queried for the default project", Throwable())
         }
         else {
-          thisLogger().error("WorkspaceFileIndex is not initialized yet, empty data is returned. Activities which use the project configuration must be postponed until the project is fully loaded.")
+          thisLogger().error("WorkspaceFileIndex is not initialized yet, empty data is returned. Activities which use the project configuration must be postponed until the project is fully loaded." +
+                             "It is possible to check Project.isInitialized to verify that the project is fully loaded.")
         }
       }
       EmptyWorkspaceFileIndexData.RESET -> {

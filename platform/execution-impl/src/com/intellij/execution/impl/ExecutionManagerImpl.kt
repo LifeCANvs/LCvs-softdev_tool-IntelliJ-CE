@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.impl
 
 import com.intellij.CommonBundle
@@ -60,10 +60,12 @@ import com.intellij.ui.UIBundle
 import com.intellij.ui.content.ContentManager
 import com.intellij.ui.content.impl.ContentImpl
 import com.intellij.util.Alarm
+import com.intellij.util.SlowOperations
 import com.intellij.util.SmartList
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.containers.ContainerUtil
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import org.jetbrains.annotations.*
 import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.concurrency.AsyncPromise
@@ -71,7 +73,6 @@ import org.jetbrains.concurrency.Promise
 import org.jetbrains.concurrency.resolvedPromise
 import java.awt.BorderLayout
 import java.io.OutputStream
-import java.lang.Runnable
 import java.util.*
 import java.util.concurrent.Callable
 import java.util.concurrent.atomic.AtomicBoolean
@@ -190,7 +191,7 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
     connection.subscribe(ProjectCloseListener.TOPIC, object : ProjectCloseListener {
       override fun projectClosed(project: Project) {
         if (project === this@ExecutionManagerImpl.project) {
-          inProgress.clear()
+          inProgress.update { setOf() }
         }
       }
     })
@@ -204,7 +205,7 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
   private val awaitingRunProfiles = HashMap<RunProfile, ExecutionEnvironment>()
   private val runningConfigurations: MutableList<RunningConfigurationEntry> = ContainerUtil.createLockFreeCopyOnWriteList()
 
-  private val inProgress = Collections.synchronizedSet(HashSet<InProgressEntry>())
+  private val inProgress = MutableStateFlow<Set<InProgressEntry>>(setOf())
 
   private fun processNotStarted(environment: ExecutionEnvironment, activity: StructuredIdeActivity?, e : Throwable? = null) {
     RunConfigurationUsageTriggerCollector.logProcessFinished(activity, RunConfigurationFinishType.FAILED_TO_START)
@@ -212,7 +213,7 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
     val inProgressEntry = InProgressEntry(
       environment.runnerAndConfigurationSettings?.uniqueID ?: "",
       executorId, environment.runner.runnerId)
-    inProgress.remove(inProgressEntry)
+    inProgress.update { it - inProgressEntry }
     environment.callback?.processNotStarted(e)
     project.messageBus.syncPublisher(EXECUTION_TOPIC).processNotStarted(executorId, environment, e)
   }
@@ -224,7 +225,9 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
   override fun startRunProfile(environment: ExecutionEnvironment, starter: () -> Promise<RunContentDescriptor?>) {
     doStartRunProfile(environment) {
       // errors are handled by startRunProfile
-      starter()
+      SlowOperations.knownIssue("IJPL-162793").use {
+        starter()
+      }
         .then { descriptor ->
           if (descriptor != null) {
             descriptor.executionId = environment.executionId
@@ -270,7 +273,7 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
     val inProgressEntry = InProgressEntry(
       environment.runnerAndConfigurationSettings?.uniqueID ?: "",
       executor.id, environment.runner.runnerId)
-    inProgress.add(inProgressEntry)
+    inProgress.update { it + inProgressEntry }
     project.messageBus.syncPublisher(EXECUTION_TOPIC).processStartScheduled(executor.id, environment)
     registerRecentExecutor(environment)
 
@@ -313,7 +316,7 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
                   project.messageBus.syncPublisher(EXECUTION_TOPIC).processStarting(executor.id, environment, processHandler)
                   processHandler.startNotify()
                 }
-                inProgress.remove(inProgressEntry)
+                inProgress.update { it - inProgressEntry }
                 project.messageBus.syncPublisher(EXECUTION_TOPIC).processStarted(executor.id, environment, processHandler)
 
                 val listener = ProcessExecutionListener(project, executor.id, environment, descriptor, activity)
@@ -601,7 +604,7 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
           }
           val inProgressEntry = InProgressEntry(configuration?.uniqueID ?: "", environment.executor.id, environment.runner.runnerId)
           if ((configuration != null && !configuration.type.isDumbAware && DumbService.getInstance(project).isDumb)
-              || inProgress.contains(inProgressEntry)) {
+              || inProgress.value.contains(inProgressEntry)) {
             awaitTermination(this, 100)
             return@wira
           }
@@ -622,7 +625,9 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
           }
 
           val settings = environment.runnerAndConfigurationSettings
-          executeConfiguration(environment, settings != null && settings.isEditBeforeRun)
+          SlowOperations.knownIssue("IJPL-162789").use {
+            executeConfiguration(environment, settings != null && settings.isEditBeforeRun)
+          }
         }
       }
     }, 50)
@@ -751,15 +756,15 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
             val inProgressEntry = InProgressEntry(
               environment.runnerAndConfigurationSettings?.uniqueID  ?: "",
               environment.executor.id, environment.runner.runnerId)
-            inProgress.add(inProgressEntry)
+            inProgress.update { it + inProgressEntry }
             ReadAction.nonBlocking(Callable { RunManagerImpl.canRunConfiguration(environment) })
               .finishOnUiThread(ModalityState.nonModal()) { canRun ->
-                inProgress.remove(inProgressEntry)
+                inProgress.update { it - inProgressEntry }
                 if (canRun) {
-
-                  executeConfiguration(environment, environment.runner, assignNewId, this.project,
-                                       environment.runnerAndConfigurationSettings)
-
+                  SlowOperations.knownIssue("IJPL-162789").use {
+                    executeConfiguration(environment, environment.runner, assignNewId, this.project,
+                                         environment.runnerAndConfigurationSettings)
+                  }
                   return@finishOnUiThread
                 }
 
@@ -842,11 +847,27 @@ open class ExecutionManagerImpl(private val project: Project, coroutineScope: Co
   }
 
   override fun isStarting(configurationId: String, executorId: String, runnerId: String): Boolean {
+    return isStarting(inProgress.value, configurationId, executorId, runnerId)
+  }
+
+  private fun isStarting(
+    inProgressEntries: Set<InProgressEntry>,
+    configurationId: String, executorId: String, runnerId: String,
+  ): Boolean {
     if (configurationId != "") {
-      return inProgress.contains(InProgressEntry(configurationId, executorId, runnerId))
+      return inProgressEntries.contains(InProgressEntry(configurationId, executorId, runnerId))
     }
     else {
-      return inProgress.any { it.executorId == executorId && it.runnerId == runnerId  }
+      return inProgressEntries.any { it.executorId == executorId && it.runnerId == runnerId }
+    }
+  }
+
+  @ApiStatus.Internal
+  override fun isStartingFlow(configurationId: String, executorId: String, runnerId: String): Flow<Boolean> {
+    return channelFlow {
+      inProgress.collectLatest {
+        send(isStarting(it, configurationId, executorId, runnerId))
+      }
     }
   }
 

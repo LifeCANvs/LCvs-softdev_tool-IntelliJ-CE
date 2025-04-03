@@ -8,6 +8,7 @@ import pydevd_tracing
 from _pydev_bundle import pydev_log
 from _pydev_imps._pydev_saved_modules import threading
 from _pydevd_bundle import pydevd_traceproperty, pydevd_dont_trace, pydevd_utils
+from _pydevd_bundle.pydevd_pep_669_tracing import add_new_breakpoint, remove_breakpoint
 from _pydevd_bundle.pydevd_additional_thread_info import set_additional_thread_info
 from _pydevd_bundle.pydevd_breakpoints import LineBreakpoint, get_exception_class
 from _pydevd_bundle.pydevd_comm import (CMD_RUN, CMD_VERSION, CMD_LIST_THREADS,
@@ -366,13 +367,13 @@ def process_net_command(py_db, cmd_id, seq, text):
                 if py_db._set_breakpoints_with_id:
                     try:
                         try:
-                            breakpoint_id, type, file, line, func_name, condition, expression, hit_condition, is_logpoint, suspend_policy = text.split('\t', 9)
+                            breakpoint_id, breakpoint_type, file, line, func_name, condition, expression, hit_condition, is_logpoint, suspend_policy = text.split('\t', 9)
                         except ValueError: # not enough values to unpack
                             # No suspend_policy passed (use default).
-                            breakpoint_id, type, file, line, func_name, condition, expression, hit_condition, is_logpoint = text.split('\t', 8)
+                            breakpoint_id, breakpoint_type, file, line, func_name, condition, expression, hit_condition, is_logpoint = text.split('\t', 8)
                         is_logpoint = is_logpoint == 'True'
                     except ValueError: # not enough values to unpack
-                        breakpoint_id, type, file, line, func_name, condition, expression = text.split('\t', 6)
+                        breakpoint_id, breakpoint_type, file, line, func_name, condition, expression = text.split('\t', 6)
 
                     breakpoint_id = int(breakpoint_id)
                     line = int(line)
@@ -387,7 +388,7 @@ def process_net_command(py_db, cmd_id, seq, text):
                 else:
                     # Note: this else should be removed after PyCharm migrates to setting
                     # breakpoints by id (and ideally also provides func_name).
-                    type, file, line, func_name, suspend_policy, condition, expression = text.split('\t', 6)
+                    breakpoint_type, file, line, func_name, suspend_policy, condition, expression = text.split('\t', 6)
                     # If we don't have an id given for each breakpoint, consider
                     # the id to be the line.
                     breakpoint_id = line = int(line)
@@ -401,7 +402,7 @@ def process_net_command(py_db, cmd_id, seq, text):
                 if not IS_PY3K:  # In Python 3, the frame object will have unicode for the file, whereas on python 2 it has a byte-array encoded with the filesystem encoding.
                     file = file.encode(file_system_encoding)
 
-                if pydevd_file_utils.is_real_file(file):
+                if pydevd_file_utils.is_real_file(file) and breakpoint_type != 'jupyter-line':
                     file = pydevd_file_utils.norm_file_to_server(file)
 
                     if not pydevd_file_utils.exists(file):
@@ -418,7 +419,7 @@ def process_net_command(py_db, cmd_id, seq, text):
                 if hit_condition is not None and (len(hit_condition) <= 0 or hit_condition == "None"):
                     hit_condition = None
 
-                if type == 'python-line':
+                if breakpoint_type == 'python-line':
                     breakpoint = LineBreakpoint(line, condition, func_name, expression, suspend_policy, hit_condition=hit_condition, is_logpoint=is_logpoint)
                     breakpoints = py_db.breakpoints
                     file_to_id_to_breakpoint = py_db.file_to_id_to_line_breakpoint
@@ -427,7 +428,7 @@ def process_net_command(py_db, cmd_id, seq, text):
                     result = None
                     plugin = py_db.get_plugin_lazy_init()
                     if plugin is not None:
-                        result = plugin.add_breakpoint('add_line_breakpoint', py_db, type, file, line, condition, expression, func_name, hit_condition=hit_condition, is_logpoint=is_logpoint)
+                        result = plugin.add_breakpoint('add_line_breakpoint', py_db, breakpoint_type, file, line, condition, expression, func_name, hit_condition=hit_condition, is_logpoint=is_logpoint)
                     if result is not None:
                         supported_type = True
                         breakpoint, breakpoints = result
@@ -436,10 +437,10 @@ def process_net_command(py_db, cmd_id, seq, text):
                         supported_type = False
 
                 if not supported_type:
-                    if type == 'jupyter-line':
+                    if breakpoint_type == 'jupyter-line':
                         return
                     else:
-                        raise NameError(type)
+                        raise NameError(breakpoint_type)
 
                 if DebugInfoHolder.DEBUG_TRACE_BREAKPOINTS > 0:
                     pydev_log.debug('Added breakpoint:%s - line:%s - func_name:%s\n' % (file, line, func_name.encode('utf-8')))
@@ -452,6 +453,10 @@ def process_net_command(py_db, cmd_id, seq, text):
 
                 id_to_pybreakpoint[breakpoint_id] = breakpoint
                 py_db.consolidate_breakpoints(file, id_to_pybreakpoint, breakpoints)
+
+                if py_db.is_pep669_monitoring_enabled:
+                    add_new_breakpoint(breakpoint)
+
                 if py_db.plugin is not None:
                     py_db.has_plugin_line_breaks = py_db.plugin.has_line_breaks()
                     if py_db.has_plugin_line_breaks:
@@ -461,13 +466,13 @@ def process_net_command(py_db, cmd_id, seq, text):
 
             elif cmd_id == CMD_REMOVE_BREAK:
                 #command to remove some breakpoint
-                #text is type\file\tid. Remove from breakpoints dictionary
+                #text is breakpoint_type\file\tid. Remove from breakpoints dictionary
                 breakpoint_type, file, breakpoint_id = text.split('\t', 2)
 
                 if not IS_PY3K:  # In Python 3, the frame object will have unicode for the file, whereas on python 2 it has a byte-array encoded with the filesystem encoding.
                     file = file.encode(file_system_encoding)
 
-                if pydevd_file_utils.is_real_file(file):
+                if pydevd_file_utils.is_real_file(file) and breakpoint_type != 'jupyter-line':
                     file = pydevd_file_utils.norm_file_to_server(file)
 
                 try:
@@ -495,6 +500,9 @@ def process_net_command(py_db, cmd_id, seq, text):
                                 existing = id_to_pybreakpoint[breakpoint_id]
                                 sys.stderr.write('Removed breakpoint:%s - line:%s - func_name:%s (id: %s)\n' % (
                                     file, existing.line, existing.func_name.encode('utf-8'), breakpoint_id))
+
+                            if py_db.is_pep669_monitoring_enabled:
+                                remove_breakpoint(id_to_pybreakpoint[breakpoint_id])
 
                             del id_to_pybreakpoint[breakpoint_id]
                             py_db.consolidate_breakpoints(file, id_to_pybreakpoint, breakpoints)

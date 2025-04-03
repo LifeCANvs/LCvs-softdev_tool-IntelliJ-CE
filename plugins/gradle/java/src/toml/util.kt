@@ -2,6 +2,7 @@
 package org.jetbrains.plugins.gradle.toml
 
 import com.intellij.openapi.components.service
+import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.openapi.util.text.StringUtil
@@ -33,7 +34,8 @@ internal fun getLibraries(context: PsiElement): List<TomlKeySegment> = getTableE
 internal fun String.getVersionCatalogParts() : List<String> = split("_", "-")
 
 internal fun findTomlFile(context: PsiElement, name: String) : TomlFile? {
-  val file = getVersionCatalogFiles(context.project)[name] ?: return null
+  val module = ModuleUtilCore.findModuleForPsiElement(context) ?: return null
+  val file = getVersionCatalogFiles(module)[name] ?: return null
   return context.manager.findFile(file)?.asSafely<TomlFile>()
 }
 
@@ -64,6 +66,14 @@ fun findOriginInTomlFile(method: PsiMethod, context: PsiElement): PsiElement? {
   val tomlVisitor = TomlVersionCatalogVisitor(containingClasses.tail(), method)
   toml.accept(tomlVisitor)
   return tomlVisitor.resolveTarget
+}
+
+/**
+ * Determines a section name (libraries / plugins / bundles / versions) the given key-value belongs to
+ */
+fun getTomlParentSectionName(tomlKeyValue: TomlKeyValue): String? {
+  val parentTable = tomlKeyValue.parent?.asSafely<TomlTable>() ?: return null
+  return parentTable.header.key?.name
 }
 
 private fun getVersionCatalogName(psiClass: PsiClass): String? {

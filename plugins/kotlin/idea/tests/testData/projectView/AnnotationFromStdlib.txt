@@ -63,6 +63,7 @@ Navigation item file #0: kotlin-stdlib.jar!/kotlin/annotation/AnnotationTarget.c
      ExposedCopyVisibility
      ExtensionFunctionType
      Function
+     IgnorableReturnValue
      InitializedLazyImpl
      kotlin.kotlin_builtins
      KotlinNothingValueException
@@ -72,6 +73,7 @@ Navigation item file #0: kotlin-stdlib.jar!/kotlin/annotation/AnnotationTarget.c
      Lazy
      LazyThreadSafetyMode
      Metadata
+     MustUseReturnValue
      NotImplementedError
      NoWhenBranchMatchedException
      OptIn
@@ -145,4 +147,4 @@ Navigation item file #0: kotlin-stdlib.jar!/kotlin/annotation/AnnotationTarget.c
      UShortArrayKt
      UShortKt
     +PsiDirectory: META-INF
-   +PsiDirectory: kotlin-stdlib-common.jar
+   +PsiDirectory: kotlin-stdlib-common.klib

@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.frame;
 
 import com.intellij.ide.dnd.DnDManager;
@@ -39,9 +39,11 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
+
+import static com.intellij.xdebugger.impl.actions.FrontendDebuggerActionsKt.areFrontendDebuggerActionsEnabled;
 
 public abstract class XVariablesViewBase extends XDebugView {
   private final XDebuggerTreePanel myTreePanel;
@@ -52,9 +54,15 @@ public abstract class XVariablesViewBase extends XDebugView {
   private @NotNull CompletableFuture<XDebuggerTreeNode> myLoaded = new CompletableFuture<>();
   private final Map<Object, XDebuggerTreeState> myTreeStates = new FixedHashMap<>(Registry.get("debugger.tree.states.depth").asInteger());
 
-  protected XVariablesViewBase(@NotNull Project project, @NotNull XDebuggerEditorsProvider editorsProvider, @Nullable XValueMarkers<?, ?> markers) {
-    myTreePanel = new XDebuggerTreePanel(
-      project, editorsProvider, this, null, this instanceof XWatchesView ? XDebuggerActions.WATCHES_TREE_POPUP_GROUP : XDebuggerActions.VARIABLES_TREE_POPUP_GROUP, markers);
+  protected XVariablesViewBase(@NotNull Project project,
+                               @NotNull XDebuggerEditorsProvider editorsProvider,
+                               @Nullable XValueMarkers<?, ?> markers) {
+    String actionGroupId = areFrontendDebuggerActionsEnabled()
+                           ? XDebuggerActions.INSPECT_TREE_POPUP_GROUP_FRONTEND
+                           : (this instanceof XWatchesView
+                              ? XDebuggerActions.WATCHES_TREE_POPUP_GROUP
+                              : XDebuggerActions.VARIABLES_TREE_POPUP_GROUP);
+    myTreePanel = new XDebuggerTreePanel(project, editorsProvider, this, null, actionGroupId, markers);
     getTree().getEmptyText().setText(XDebuggerBundle.message("debugger.variables.not.available"));
     getTree().addTreeListener(new XDebuggerTreeListener() {
       @Override
@@ -77,10 +85,10 @@ public abstract class XVariablesViewBase extends XDebugView {
     return myTreePanel.getTree();
   }
 
-  protected void buildTreeAndRestoreState(@NotNull final XStackFrame stackFrame) {
+  protected void buildTreeAndRestoreState(final @NotNull XStackFrame stackFrame) {
     XSourcePosition position = stackFrame.getSourcePosition();
     XDebuggerTree tree = getTree();
-    DebuggerUIUtil.freezePaintingToReduceFlickering(tree.getParent());
+    DebuggerUIUtil.freezePaintingToReduceFlickering(myTreePanel.getContentComponent());
     tree.setSourcePosition(position);
     createNewRootNode(stackFrame);
     XVariablesView.InlineVariablesInfo.set(getSession(tree), new XVariablesView.InlineVariablesInfo());
@@ -170,8 +178,7 @@ public abstract class XVariablesViewBase extends XDebugView {
     return myTreeRestorer != null ? CompletableFuture.allOf(myTreeRestorer.onFinished(), loaded).thenCompose(v -> loaded) : loaded.copy();
   }
 
-  @NotNull
-  public final XDebuggerTree getTree() {
+  public final @NotNull XDebuggerTree getTree() {
     return myTreePanel.getTree();
   }
 
@@ -199,9 +206,9 @@ public abstract class XVariablesViewBase extends XDebugView {
     private final XDebuggerTreePanel myTreePanel;
 
     MySelectionListener(Editor editor,
-                               XStackFrame stackFrame,
-                               Project project,
-                               XDebuggerTreePanel panel) {
+                        XStackFrame stackFrame,
+                        Project project,
+                        XDebuggerTreePanel panel) {
       myEditor = editor;
       myStackFrame = stackFrame;
       myProject = project;
@@ -213,7 +220,7 @@ public abstract class XVariablesViewBase extends XDebugView {
     }
 
     @Override
-    public void selectionChanged(@NotNull final SelectionEvent e) {
+    public void selectionChanged(final @NotNull SelectionEvent e) {
       if (!Registry.is("debugger.valueTooltipAutoShowOnSelection") ||
           myEditor.getCaretModel().getCaretCount() > 1 ||
           e.getNewRanges().length != 1 ||
@@ -232,18 +239,19 @@ public abstract class XVariablesViewBase extends XDebugView {
         int offset = range.getStartOffset();
         LogicalPosition pos = myEditor.offsetToLogicalPosition(offset);
         Point point = myEditor.logicalPositionToXY(pos);
-        showTooltip(point, info, evaluator, session);
+        showTooltip(point, offset, info, evaluator, session);
       }
     }
 
     private void showTooltip(@NotNull Point point,
+                             int offset,
                              @NotNull ExpressionInfo info,
                              @NotNull XDebuggerEvaluator evaluator,
                              @NotNull XDebugSession session) {
       ALARM.cancelAllRequests();
       ALARM.addRequest(() -> {
         if (DocumentUtil.isValidOffset(info.getTextRange().getEndOffset(), myEditor.getDocument())) {
-          new XValueHint(myProject, myEditor, point, ValueHintType.MOUSE_OVER_HINT, info, evaluator, session, true).invokeHint();
+          new XValueHint(myProject, myEditor, point, ValueHintType.MOUSE_OVER_HINT, offset, info, evaluator, session, true).invokeHint();
         }
       }, EVALUATION_DELAY_MILLIS);
     }

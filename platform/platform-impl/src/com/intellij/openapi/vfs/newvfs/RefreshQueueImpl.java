@@ -36,6 +36,7 @@ import java.util.function.Consumer;
 import static com.intellij.util.concurrency.AppJavaExecutorUtil.createBoundedTaskExecutor;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
+@ApiStatus.Internal
 public final class RefreshQueueImpl extends RefreshQueue implements Disposable {
   @SuppressWarnings("LoggerInitializedWithForeignClass") private static final Logger LOG = Logger.getInstance(RefreshQueue.class);
 
@@ -57,16 +58,16 @@ public final class RefreshQueueImpl extends RefreshQueue implements Disposable {
     if (session.isAsynchronous()) {
       queueSession(session, session.getModality());
     }
-    else if ((app = ApplicationManagerEx.getApplicationEx()).isWriteIntentLockAcquired()) {
+    else if ((app = ApplicationManagerEx.getApplicationEx()).isWriteIntentLockAcquired() && EDT.isCurrentThreadEdt()) {
       ((TransactionGuardImpl)TransactionGuard.getInstance()).assertWriteActionAllowed();
       var events = runRefreshSession(session, -1L);
       fireEvents(events, session);
     }
-    else if (app.holdsReadLock()) {
-      LOG.error("Do not perform a synchronous refresh under read lock (causes deadlocks if there are events to fire)");
-    }
     else if (EDT.isCurrentThreadEdt()) {
       LOG.error("Do not perform a synchronous refresh on naked EDT (without WIL) (causes deadlocks if there are events to fire)");
+    }
+    else if (app.holdsReadLock()) {
+      LOG.error("Do not perform a synchronous refresh under read lock (causes deadlocks if there are events to fire)");
     }
     else {
       queueSession(session, session.getModality());
@@ -220,7 +221,6 @@ public final class RefreshQueueImpl extends RefreshQueue implements Disposable {
   }
 
   @ApiStatus.Internal
-  @TestOnly
   public static boolean isEventProcessingInProgress() {
     var refreshQueue = (RefreshQueueImpl)getInstance();
     return !refreshQueue.myEventProcessingQueue.isEmpty();

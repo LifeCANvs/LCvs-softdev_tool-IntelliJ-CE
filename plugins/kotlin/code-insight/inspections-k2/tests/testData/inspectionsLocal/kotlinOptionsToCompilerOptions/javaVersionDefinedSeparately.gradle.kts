@@ -1,5 +1,7 @@
 // FIX: Replace 'kotlinOptions' with 'compilerOptions'
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+// DISABLE_K2_ERRORS
+// TODO: KTIJ-32773
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
     kotlin("jvm") version "2.0.0"

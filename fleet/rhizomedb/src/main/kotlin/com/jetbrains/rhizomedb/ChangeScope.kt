@@ -3,8 +3,8 @@ package com.jetbrains.rhizomedb
 
 import com.jetbrains.rhizomedb.impl.entity
 import com.jetbrains.rhizomedb.impl.generateSeed
+import fleet.util.openmap.Key
 import fleet.util.openmap.MutableOpenMap
-import kotlin.reflect.KClass
 
 /**
  * Asserts that current thread-bound [DbContext] contains mutable db, constructs [ChangeScope] for it, and runs body with it
@@ -112,6 +112,9 @@ interface ChangeScope {
       }
     }
 
+  fun register(vararg entityTypes: EntityType<*>) {
+    entityTypes.forEach { register(it) }
+  }
 
   /**
    * Sets a value to the attribute of a given entity.
@@ -119,7 +122,7 @@ interface ChangeScope {
    * */
   operator fun <E : Entity, V : Any> E.set(
     attribute: Attributes<E>.Required<V>,
-    value: V
+    value: V,
   ): Unit = context.run {
     @Suppress("UNCHECKED_CAST")
     add(eid, attribute.attr as Attribute<Any>, attribute.toIndexValue(value))
@@ -133,7 +136,7 @@ interface ChangeScope {
    * */
   operator fun <E : Entity, V : Any> E.set(
     attribute: Attributes<E>.Optional<V>,
-    value: V?
+    value: V?,
   ): Unit = context.run {
     when {
       value == null ->
@@ -184,9 +187,9 @@ interface ChangeScope {
     let { entity ->
       context.run {
         builder.build(object : EntityBuilder.Target<E> {
-          override fun <V : Any> set(attribute: Attributes<E>.Required<V>, value: V) = entity.set(attribute, value)
-          override fun <V : Any> set(attribute: Attributes<E>.Optional<V>, value: V?) = entity.set(attribute, value)
-          override fun <V : Any> set(attribute: Attributes<E>.Many<V>, values: Set<V>) = entity.set(attribute, values)
+          override fun <V : Any> set(attribute: Attributes<in E>.Required<V>, value: V) = entity.set(attribute, value)
+          override fun <V : Any> set(attribute: Attributes<in E>.Optional<V>, value: V?) = entity.set(attribute, value)
+          override fun <V : Any> set(attribute: Attributes<in E>.Many<V>, values: Set<V>) = entity.set(attribute, values)
         })
       }
     }
@@ -230,7 +233,7 @@ interface ChangeScope {
    * */
   fun <E : Entity> EntityType<E>.new(builder: EntityBuilder<E> = EntityBuilder {}): E = let { entityType ->
     require(entity(entityType.eid) != null) {
-      "Entity type '${entityType.entityTypeIdent}' is not registered. It should be registered automatically, report and use ChangeScope.register as mitigation"
+      "Entity type '${entityType.entityTypeIdent}' is not registered.\nDid you export package to rhizomedb?\nIt should be registered automatically, report and use ChangeScope.register as mitigation"
     }
     val eid = context.impl.createEntity(pipeline = context,
                                         entityTypeEid = entityType.eid,
@@ -241,16 +244,18 @@ interface ChangeScope {
 
   fun <E : Entity, V : Any> EntityType<E>.upsert(attribute: EntityAttribute<E, V>, value: V, builder: EntityBuilder<E>): E =
     let { entityType ->
-      entity(attribute, value)?.apply { update(builder) } ?: entityType.new(builder)
-    }
-
-  /**
-   * Support for legacy entity definitions
-   * */
-  fun <T : LegacyEntity> new(c: KClass<T>,
-                             part: Part = defaultPart,
-                             constructor: T.() -> Unit = {}): T =
-    withDefaultPart(part) {
-      context.new(c, constructor)
+      entity(attribute, value)?.apply { update(builder) } ?: entityType.new {
+        when (attribute) {
+          is Attributes<E>.Many<V> -> it[attribute] = setOf(value)
+          is Attributes<E>.Optional<V> -> it[attribute] = value
+          is Attributes<E>.Required<V> -> it[attribute] = value
+        }
+        builder.build(it)
+      }
     }
 }
+
+/**
+ * Key for data associated with a particular change
+ */
+interface ChangeScopeKey<V : Any> : Key<V, ChangeScope>

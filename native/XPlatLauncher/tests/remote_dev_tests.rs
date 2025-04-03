@@ -117,6 +117,7 @@ mod tests {
         let libs_dir = &self_contained_root.join("lib");
         fs::create_dir_all(libs_dir).unwrap();
         File::create(self_contained_root.join("lib-load-order")).unwrap();
+        File::create(self_contained_root.join("lib-load-order-limited")).unwrap();
     }
 
     #[test]
@@ -149,6 +150,15 @@ mod tests {
 
         let expected_output = format!("{}={}", variable_name, expected_value);
         check_output(&launch_result, |output| output.contains(&expected_output));
+    }
+
+    #[test]
+    fn remote_dev_status_debug_vm_option_test() {
+        let mut test = prepare_test_env(LauncherLocation::RemoteDev);
+        test.create_toolbox_vm_options("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n\n");
+        let args = &["status"];
+        run_launcher_ext(&test, LauncherRunSpec::remote_dev().with_args(args).assert_status());
+        // app will exit with an error if debug option has been passed to it along with 'status' command
     }
 
     fn check_output<Check>(run_result: &LauncherRunResult, check: Check) where Check: FnOnce(&String) -> bool {

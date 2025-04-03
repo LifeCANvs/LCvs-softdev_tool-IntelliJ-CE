@@ -1,13 +1,13 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.application
 
 import com.intellij.configurationStore.saveSettings
 import com.intellij.ide.CliResult
+import com.intellij.ide.commandNameFromExtension
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.NlsContexts
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.ide.bootstrap.commandNameFromExtension
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -24,7 +24,7 @@ abstract class ApplicationStarterBase protected constructor(private vararg val a
 
   companion object {
     @JvmStatic
-    protected fun saveIfNeeded(file: VirtualFile?) {
+    fun saveIfNeeded(file: VirtualFile?) {
       if (file != null) {
         val documentManager = FileDocumentManager.getInstance()
         documentManager.getCachedDocument(file)?.let(documentManager::saveDocument)

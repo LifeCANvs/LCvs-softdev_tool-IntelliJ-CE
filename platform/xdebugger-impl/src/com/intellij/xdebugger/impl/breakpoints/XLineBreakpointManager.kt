@@ -37,6 +37,7 @@ import com.intellij.openapi.vfs.impl.BulkVirtualFileListenerAdapter
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.ui.ExperimentalUI.Companion.isNewUI
 import com.intellij.util.DocumentUtil
+import com.intellij.util.SlowOperations
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.containers.MultiMap
 import com.intellij.util.ui.EDT
@@ -87,8 +88,9 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
     if (breakpoints.isEmpty() || ApplicationManager.getApplication().isUnitTestMode) {
       return
     }
-
-    breakpoints.forEach { it.updatePosition() }
+    SlowOperations.knownIssue("IJPL-162343").use {
+      breakpoints.forEach { it.updatePosition() }
+    }
 
     // Check if two or more breakpoints occurred at the same position and remove duplicates.
     val (valid, invalid) = breakpoints.partition { it.isValid }
@@ -99,7 +101,9 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
         if (areInlineBreakpoints) {
           // We cannot show multiple breakpoints of the same type at the same position.
           // Note that highlightRange might be null, so we still have to add line as an identity element.
-          Triple(b.type, b.line, b.highlightRange?.startOffset)
+          SlowOperations.knownIssue("IJPL-162343").use {
+            Triple(b.type, b.line, b.highlightRange?.startOffset)
+          }
         } else {
           // We cannot show multiple breakpoints of any type at the same line.
           b.line

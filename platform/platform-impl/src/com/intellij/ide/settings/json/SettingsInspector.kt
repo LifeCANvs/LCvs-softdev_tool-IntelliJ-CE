@@ -8,7 +8,6 @@ import com.intellij.openapi.client.ClientSessionsManager
 import com.intellij.openapi.components.*
 import com.intellij.openapi.extensions.PluginDescriptor
 import com.intellij.serialization.MutableAccessor
-import com.intellij.serviceContainer.ComponentManagerImpl
 import com.intellij.util.xmlb.annotations.OptionTag
 import com.intellij.util.xmlb.getBeanAccessors
 import org.jetbrains.annotations.ApiStatus
@@ -29,7 +28,8 @@ fun buildComponentModel(): JsonSettingsModel.ComponentModel =
   })
 
 
-internal fun listAppComponents(): List<ComponentDescriptor> {
+@ApiStatus.Internal
+fun listAppComponents(): List<ComponentDescriptor> {
   val descriptors = mutableListOf<ComponentDescriptor>()
   fun processImplementationClass(aClass: Class<*>, descriptor: PluginDescriptor?) {
     if (PersistentStateComponent::class.java.isAssignableFrom(aClass)) {
@@ -46,8 +46,8 @@ internal fun listAppComponents(): List<ComponentDescriptor> {
     }
   }
 
-  val componentManager = ApplicationManager.getApplication() as ComponentManagerImpl
-  val localAppSession = ClientSessionsManager.getAppSession(ClientId.localId) as ComponentManagerImpl
+  val componentManager = ApplicationManager.getApplication() as ComponentManagerEx
+  val localAppSession = ClientSessionsManager.getAppSession(ClientId.localId) as ComponentManagerEx
   componentManager.processAllImplementationClasses(::processImplementationClass)
   localAppSession.processAllImplementationClasses(::processImplementationClass)
 
@@ -64,7 +64,8 @@ private fun getState(aClass: Class<*>): State? {
 }
 
 
-internal data class ComponentDescriptor(
+@ApiStatus.Internal
+data class ComponentDescriptor(
   val name: String,
   val aClass: Class<PersistentStateComponent<*>>,
   val pluginDescriptor: PluginDescriptor?,

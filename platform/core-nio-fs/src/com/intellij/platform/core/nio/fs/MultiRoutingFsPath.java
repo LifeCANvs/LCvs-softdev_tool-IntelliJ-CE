@@ -1,6 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.core.nio.fs;
 
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.Nullable;
 
@@ -13,7 +14,8 @@ import java.util.Iterator;
 import java.util.Objects;
 
 @SuppressWarnings("UnnecessaryFullyQualifiedName")
-final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHolder {
+@ApiStatus.Internal
+public final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHolder {
   private final Path myDelegate;
   private final MultiRoutingFileSystem myFileSystem;
 
@@ -69,7 +71,7 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
   @Override
   public boolean startsWith(Path other) {
     if (!(other instanceof MultiRoutingFsPath)) return false;
-    return myDelegate.startsWith(unwrap(other));
+    return myDelegate.startsWith(toSameTypeAsDelegate(other));
   }
 
   @Override
@@ -80,7 +82,7 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
   @Override
   public boolean endsWith(Path other) {
     if (!(other instanceof MultiRoutingFsPath)) return false;
-    return myDelegate.endsWith(unwrap(other));
+    return myDelegate.endsWith(toSameTypeAsDelegate(other));
   }
 
   @Override
@@ -95,7 +97,7 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
 
   @Override
   public MultiRoutingFsPath resolve(Path other) {
-    return wrap(myDelegate.resolve(unwrap(other)));
+    return wrap(myDelegate.resolve(toSameTypeAsDelegate(other)));
   }
 
   @Override
@@ -105,7 +107,7 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
 
   @Override
   public MultiRoutingFsPath resolveSibling(Path other) {
-    return wrap(myDelegate.resolveSibling(unwrap(other)));
+    return wrap(myDelegate.resolveSibling(toSameTypeAsDelegate(other)));
   }
 
   @Override
@@ -115,7 +117,7 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
 
   @Override
   public MultiRoutingFsPath relativize(Path other) {
-    return wrap(myDelegate.relativize(unwrap(other)));
+    return wrap(myDelegate.relativize(toSameTypeAsDelegate(other)));
   }
 
   @Override
@@ -146,11 +148,17 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
 
   @Override
   public WatchKey register(WatchService watcher, WatchEvent.Kind<?>[] events, WatchEvent.Modifier... modifiers) throws IOException {
+    if (watcher instanceof MultiRoutingWatchServiceDelegate delegated) {
+      return myDelegate.register(delegated.myDelegate, events, modifiers);
+    }
     return myDelegate.register(watcher, events, modifiers);
   }
 
   @Override
   public WatchKey register(WatchService watcher, WatchEvent.Kind<?>... events) throws IOException {
+    if (watcher instanceof MultiRoutingWatchServiceDelegate delegated) {
+      return myDelegate.register(delegated.myDelegate, events);
+    }
     return myDelegate.register(watcher, events);
   }
 
@@ -172,7 +180,21 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
 
   @Override
   public int compareTo(Path other) {
-    return myDelegate.compareTo(unwrap(other));
+    // The documentation of the method declares that:
+    // * The returned order is provider-specific.
+    // * `compareTo` should never be called for paths with different file systems.
+    // However, the meaning of this machinery is a combination of different file systems into a single one.
+    // It is assumed that every valid path of every underlying file system is a valid path for the other file systems.
+    Path unwrappedOther = toSameTypeAsDelegate(other);
+    if (unwrappedOther.getClass().isAssignableFrom(myDelegate.getClass())) {
+      return myDelegate.compareTo(unwrappedOther);
+    }
+    else if (myDelegate.getClass().isAssignableFrom(unwrappedOther.getClass())) {
+      return unwrappedOther.compareTo(myDelegate);
+    }
+    else {
+      return myDelegate.compareTo(myDelegate.getFileSystem().getPath(unwrappedOther.toString()));
+    }
   }
 
   @Override
@@ -215,8 +237,17 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
   }
 
   @Contract("null -> null; !null -> !null")
-  private static @Nullable Path unwrap(@Nullable Path path) {
-    return path == null ? null : ((MultiRoutingFsPath)path).getDelegate();
+  private @Nullable Path toSameTypeAsDelegate(@Nullable Path path) {
+    if (path == null) {
+      return null;
+    }
+    if (path instanceof MultiRoutingFsPath mrfsp) {
+      path = mrfsp.getDelegate();
+    }
+    if (myDelegate.getClass().equals(path.getClass())) {
+      return path;
+    }
+    return myDelegate.getFileSystem().getPath(path.toString());
   }
 
   @Override
@@ -230,6 +261,6 @@ final class MultiRoutingFsPath implements Path, sun.nio.fs.BasicFileAttributesHo
 
   @Override
   public int hashCode() {
-    return Objects.hash(myDelegate, myFileSystem);
+    return myDelegate.hashCode() * 31 + myFileSystem.hashCode();
   }
 }

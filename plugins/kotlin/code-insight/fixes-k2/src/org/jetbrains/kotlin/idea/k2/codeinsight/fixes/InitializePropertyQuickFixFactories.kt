@@ -27,7 +27,6 @@ import org.jetbrains.kotlin.idea.codeinsight.api.applicable.intentions.KotlinPsi
 import org.jetbrains.kotlin.idea.codeinsight.api.applicators.fixes.KotlinQuickFixFactory
 import org.jetbrains.kotlin.idea.codeinsight.api.classic.quickfixes.KotlinQuickFixAction
 import org.jetbrains.kotlin.idea.k2.refactoring.changeSignature.*
-import org.jetbrains.kotlin.idea.k2.refactoring.changeSignature.KotlinChangeSignatureProcessor
 import org.jetbrains.kotlin.idea.k2.refactoring.introduce.extractionEngine.KotlinNameSuggester
 import org.jetbrains.kotlin.idea.refactoring.addElement
 import org.jetbrains.kotlin.idea.refactoring.changeSignature.KotlinValVar
@@ -41,7 +40,7 @@ import org.jetbrains.kotlin.types.Variance
 import org.jetbrains.kotlin.utils.exceptions.errorWithAttachment
 import org.jetbrains.kotlin.utils.exceptions.withPsiEntry
 
-object InitializePropertyQuickFixFactories {
+internal object InitializePropertyQuickFixFactories {
 
     private data class PropertyContext(
         val defaultInitializer: String,
@@ -124,7 +123,7 @@ object InitializePropertyQuickFixFactories {
             val newParameterName = constructor.valueParameters.last().name
                 ?: errorWithAttachment(property, constructor, containingClass)
 
-            val psiFactory = org.jetbrains.kotlin.psi.KtPsiFactory(project)
+            val psiFactory = KtPsiFactory(project)
             when (constructor) {
                 is KtPrimaryConstructor -> property.setInitializer(psiFactory.createExpression(newParameterName))
                 is KtSecondaryConstructor -> {
@@ -149,9 +148,10 @@ object InitializePropertyQuickFixFactories {
             val containingClassPointer = containingClass.createSmartPointer()
 
             val validator = KotlinDeclarationNameValidator(
-                visibleDeclarationsContext = containingClass.parent as KtElement,
-                checkVisibleDeclarationsContext = false,
-                target = KotlinNameSuggestionProvider.ValidatorTarget.PARAMETER,
+              visibleDeclarationsContext = containingClass.parent as KtElement,
+              checkVisibleDeclarationsContext = false,
+              target = KotlinNameSuggestionProvider.ValidatorTarget.PARAMETER,
+              excludedDeclarations = listOf(property),
             )
 
             val existingNames = constructor?.valueParameters?.mapNotNull { it.name }?.toSet() ?: emptySet()
@@ -274,9 +274,8 @@ object InitializePropertyQuickFixFactories {
             createFixes(diagnostic.psi)
         }
 
-    context(KaSession)
     @OptIn(KaExperimentalApi::class)
-    private fun createFixes(
+    private fun KaSession.createFixes(
         property: KtProperty,
     ): List<CommonIntentionAction> {
         // An extension property cannot be initialized because it has no backing field

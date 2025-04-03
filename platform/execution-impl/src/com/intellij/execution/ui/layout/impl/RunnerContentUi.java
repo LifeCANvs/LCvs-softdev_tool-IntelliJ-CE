@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.ui.layout.impl;
 
 import com.intellij.execution.ExecutionBundle;
@@ -1221,8 +1221,13 @@ public final class RunnerContentUi implements ContentUI, Disposable, CellTransfo
 
     tab.setDragOutDelegate(tabs.getTabs().size() > 1 || !isOriginal() ? myDragOutDelegate : null);
 
+    String tooltip = contents.size() == 1 ? contents.get(0).getDescription() : null;
+
     Tab gridTab = grid.getTab();
-    tab.setText(title).setIcon(gridTab != null && gridTab.isDefault() && contents.size() > 1 ? null : icon);
+    tab
+      .setText(title)
+      .setIcon(gridTab != null && gridTab.isDefault() && contents.size() > 1 ? null : icon)
+      .setTooltipText(tooltip);
 
     return hasToolbarContent;
   }
@@ -2066,6 +2071,7 @@ public final class RunnerContentUi implements ContentUI, Disposable, CellTransfo
   }
 
   public static final class ShowDebugContentAction extends AnAction implements DumbAware {
+    @SuppressWarnings("UnresolvedPluginConfigReference") // not registered
     public static final String ACTION_ID = "ShowDebugContent";
 
     private RunnerContentUi myContentUi;

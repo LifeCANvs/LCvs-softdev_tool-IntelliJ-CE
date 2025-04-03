@@ -61,7 +61,7 @@ object PluginAutoUpdateRepository {
   }
 
   @Synchronized
-  internal fun clearUpdates() {
+  fun clearUpdates() {
     if (getAutoUpdateDirPath().exists()) {
       getAutoUpdateDirPath().delete(recursively = true)
     }
@@ -160,7 +160,7 @@ private class PluginsAutoUpdateRepositoryViewAction : AnAction() {
       cs.launch(Dispatchers.IO) {
         updatePath.copy(getAutoUpdateDirPath().resolve(updatePath.fileName))
         PluginAutoUpdateRepository.addUpdates(mapOf(
-          pluginDescriptor.pluginId to PluginUpdateInfo(pluginDescriptor.path.absolutePathString(), updatePath.fileName.toString())
+          pluginDescriptor.pluginId to PluginUpdateInfo(pluginDescriptor.pluginPath.absolutePathString(), updatePath.fileName.toString())
         ))
         updateState()
       }

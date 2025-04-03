@@ -7,7 +7,6 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.sun.management.OperatingSystemMXBean;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.jps.ModuleChunk;
 import org.jetbrains.jps.builders.DirtyFilesHolder;
 import org.jetbrains.jps.builders.java.JavaSourceRootDescriptor;
@@ -21,18 +20,23 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ChartsBuilderService extends BuilderService {
+  private static final Logger LOG = Logger.getInstance(ChartsBuilderService.class);
+
   public static final String COMPILATION_STATISTIC_BUILDER_ID = "jps.compile.statistic";
   public static final String COMPILATION_STATUS_BUILDER_ID = "jps.compile.status";
 
   @Override
   public @NotNull List<? extends ModuleLevelBuilder> createModuleLevelBuilders() {
-    return List.of(new ChartsModuleLevelBuilder());
+    if (Boolean.getBoolean("compilation.charts")) {
+      LOG.info("Compilation charts enabled.");
+      return List.of(new ChartsModuleLevelBuilder());
+    } else {
+      return List.of();
+    }
   }
 
   private static class ChartsModuleLevelBuilder extends ModuleLevelBuilder {
     private static final Logger LOG = Logger.getInstance(ChartsModuleLevelBuilder.class);
-
-    @Nullable private CompileStatisticService myStatisticService = null;
 
     protected ChartsModuleLevelBuilder() {
       super(BuilderCategory.TRANSLATOR);
@@ -52,9 +56,8 @@ public class ChartsBuilderService extends BuilderService {
       return List.of();
     }
 
-    @Nls(capitalization = Nls.Capitalization.Sentence)
     @Override
-    public @NotNull String getPresentableName() {
+    public @Nls(capitalization = Nls.Capitalization.Sentence) @NotNull String getPresentableName() {
       return StringUtil.capitalize(getBuilderName());
     }
 
@@ -65,8 +68,7 @@ public class ChartsBuilderService extends BuilderService {
     @Override
     public void buildStarted(@NotNull CompileContext context) {
       context.processMessage(new CompilationStatusBuilderMessage("START"));
-      myStatisticService = new CompileStatisticService(context);
-      SharedThreadPool.getInstance().execute(myStatisticService);
+      SharedThreadPool.getInstance().execute(new CompileStatisticService(context));
     }
 
     @Override
@@ -77,13 +79,11 @@ public class ChartsBuilderService extends BuilderService {
     @Override
     public void chunkBuildStarted(@NotNull CompileContext context, @NotNull ModuleChunk chunk) {
       context.processMessage(CompileStatisticBuilderMessage.create(chunk.getTargets(), "STARTED"));
-      if (myStatisticService != null) myStatisticService.send();
     }
 
     @Override
     public void chunkBuildFinished(@NotNull CompileContext context, @NotNull ModuleChunk chunk) {
       context.processMessage(CompileStatisticBuilderMessage.create(chunk.getTargets(), "FINISHED"));
-      if (myStatisticService != null) myStatisticService.send();
     }
   }
 
@@ -98,16 +98,12 @@ public class ChartsBuilderService extends BuilderService {
       this.context = context;
     }
 
-    public void send() {
-      BuildMessage message = CompileStatisticBuilderMessage.create(memory, os);
-      if (message != null) context.processMessage(message);
-    }
-
     @Override
     public void run() {
       while (true) {
         try {
-          send();
+          BuildMessage message = CompileStatisticBuilderMessage.create(memory, os);
+          if (message != null) context.processMessage(message);
           TimeUnit.SECONDS.sleep(1);
         }
         catch (Exception e) {

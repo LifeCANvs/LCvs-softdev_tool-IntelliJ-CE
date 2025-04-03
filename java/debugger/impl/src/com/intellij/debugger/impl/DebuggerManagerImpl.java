@@ -1,9 +1,8 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.debugger.impl;
 
 import com.intellij.debugger.DebugEnvironment;
 import com.intellij.debugger.DebuggerManagerEx;
-import com.intellij.debugger.JavaDebuggerBundle;
 import com.intellij.debugger.NameMapper;
 import com.intellij.debugger.engine.*;
 import com.intellij.debugger.ui.breakpoints.BreakpointManager;
@@ -15,11 +14,12 @@ import com.intellij.execution.configurations.JavaParameters;
 import com.intellij.execution.configurations.RemoteConnection;
 import com.intellij.execution.executors.DefaultDebugExecutor;
 import com.intellij.execution.process.KillableColoredProcessHandler;
-import com.intellij.execution.process.ProcessAdapter;
 import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
+import com.intellij.execution.process.ProcessListener;
 import com.intellij.execution.ui.RunContentDescriptor;
 import com.intellij.execution.ui.RunContentWithExecutorListener;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
@@ -28,11 +28,10 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.colors.EditorColorsListener;
 import com.intellij.openapi.editor.colors.EditorColorsManager;
 import com.intellij.openapi.editor.colors.EditorColorsScheme;
-import com.intellij.openapi.progress.ProgressIndicator;
-import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.WriteExternalException;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.psi.PsiClass;
 import com.intellij.util.EventDispatcher;
 import com.intellij.util.concurrency.ThreadingAssertions;
@@ -44,7 +43,6 @@ import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
 import java.util.*;
 
 @State(name = "DebuggerManager", storages = @Storage(StoragePathMacros.WORKSPACE_FILE))
@@ -90,8 +88,7 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
     }
   };
 
-  @NotNull
-  private DebuggerManagerListener getEventPublisher() {
+  private @NotNull DebuggerManagerListener getEventPublisher() {
     return myProject.getMessageBus().syncPublisher(DebuggerManagerListener.TOPIC);
   }
 
@@ -106,7 +103,7 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
   }
 
   @Override
-  public String getVMClassQualifiedName(@NotNull final PsiClass aClass) {
+  public String getVMClassQualifiedName(final @NotNull PsiClass aClass) {
     for (NameMapper nameMapper : myNameMappers) {
       final String qName = nameMapper.getQualifiedName(aClass);
       if (qName != null) {
@@ -143,25 +140,22 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
     myBreakpointManager.addListeners(busConnection);
   }
 
-  @Nullable
   @Override
-  public DebuggerSession getSession(DebugProcess process) {
+  public @Nullable DebuggerSession getSession(DebugProcess process) {
     ThreadingAssertions.assertEventDispatchThread();
     return ContainerUtil.find(getSessions(), debuggerSession -> process == debuggerSession.getProcess());
   }
 
-  @NotNull
   @Override
-  public Collection<DebuggerSession> getSessions() {
+  public @NotNull Collection<DebuggerSession> getSessions() {
     synchronized (mySessions) {
       final Collection<DebuggerSession> values = mySessions.values();
       return values.isEmpty() ? Collections.emptyList() : new ArrayList<>(values);
     }
   }
 
-  @Nullable
   @Override
-  public Element getState() {
+  public @Nullable Element getState() {
     Element state = new Element("state");
     myBreakpointManager.writeExternal(state);
     return state;
@@ -177,8 +171,7 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
   }
 
   @Override
-  @Nullable
-  public DebuggerSession attachVirtualMachine(@NotNull DebugEnvironment environment) throws ExecutionException {
+  public @Nullable DebuggerSession attachVirtualMachine(@NotNull DebugEnvironment environment) throws ExecutionException {
     DebugProcessEvents debugProcess = new DebugProcessEvents(myProject);
     DebuggerSession session = DebuggerSession.create(debugProcess, environment);
     ExecutionResult executionResult = session.getProcess().getExecutionResult();
@@ -206,37 +199,32 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
       // so we need to call debugProcess.stop() explicitly for graceful termination.
       // RemoteProcessHandler on the other hand will call debugProcess.stop() as a part of destroyProcess() and detachProcess() implementation,
       // so we shouldn't add the listener to avoid calling stop() twice
-      processHandler.addProcessListener(new ProcessAdapter() {
+      processHandler.addProcessListener(new ProcessListener() {
         @Override
         public void processWillTerminate(@NotNull ProcessEvent event, boolean willBeDestroyed) {
           ProcessHandler processHandler = event.getProcessHandler();
           final DebugProcessImpl debugProcess = getDebugProcess(processHandler);
           if (debugProcess != null) {
-            // if current thread is a "debugger manager thread", stop will execute synchronously
-            // it is KillableColoredProcessHandler responsibility to terminate VM
-            debugProcess.stop(willBeDestroyed &&
-                              !(processHandler instanceof KillableColoredProcessHandler &&
-                                ((KillableColoredProcessHandler)processHandler).shouldKillProcessSoftly()));
+            if (Registry.is("debugger.stop.on.graceful.exit")) {
+              // it is KillableColoredProcessHandler responsibility to terminate VM
+              debugProcess.stop(willBeDestroyed &&
+                                !(processHandler instanceof KillableColoredProcessHandler &&
+                                  ((KillableColoredProcessHandler)processHandler).shouldKillProcessSoftly()));
 
-            // wait at most 10 seconds: the problem is that debugProcess.stop() can hang if there are troubles in the debuggee
-            // if processWillTerminate() is called from AWT thread debugProcess.waitFor() will block it and the whole app will hang
-            if (!DebuggerManagerThreadImpl.isManagerThread()) {
-              if (SwingUtilities.isEventDispatchThread()) {
-                ProgressManager.getInstance().runProcessWithProgressSynchronously(() -> {
-                  ProgressIndicator indicator = ProgressManager.getInstance().getProgressIndicator();
-                  indicator.setIndeterminate(false);
-                  int wait = 0;
-                  while (wait < WAIT_KILL_TIMEOUT && !indicator.isCanceled()) {
-                    indicator.setFraction((double)wait / WAIT_KILL_TIMEOUT);
-                    debugProcess.waitFor(200);
-                    wait += 200;
-                  }
-                }, JavaDebuggerBundle.message("waiting.for.debugger.response"), true, debugProcess.getProject());
-              }
-              else {
+              // still need to wait in tests for results stability
+              if (ApplicationManager.getApplication().isUnitTestMode()) {
+                assert !DebuggerManagerThreadImpl.isManagerThread() && !DebuggerManagerThreadImpl.isManagerThread();
                 debugProcess.waitFor(WAIT_KILL_TIMEOUT);
               }
             }
+          }
+        }
+
+        @Override
+        public void processTerminated(@NotNull ProcessEvent event) {
+          DebugProcessImpl debugProcess = getDebugProcess(event.getProcessHandler());
+          if (debugProcess != null) {
+            debugProcess.stop(false);
           }
         }
       });
@@ -265,8 +253,7 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
   }
 
   @SuppressWarnings("UnusedDeclaration")
-  @Nullable
-  public DebuggerSession getDebugSession(final ProcessHandler processHandler) {
+  public @Nullable DebuggerSession getDebugSession(final ProcessHandler processHandler) {
     synchronized (mySessions) {
       return mySessions.get(processHandler);
     }
@@ -279,7 +266,7 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
       debugProcess.addDebugProcessListener(listener);
     }
     else {
-      processHandler.addProcessListener(new ProcessAdapter() {
+      processHandler.addProcessListener(new ProcessListener() {
         @Override
         public void startNotified(@NotNull ProcessEvent event) {
           DebugProcessImpl debugProcess = getDebugProcess(processHandler);
@@ -299,7 +286,7 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
       debugProcess.removeDebugProcessListener(listener);
     }
     else {
-      processHandler.addProcessListener(new ProcessAdapter() {
+      processHandler.addProcessListener(new ProcessListener() {
         @Override
         public void startNotified(@NotNull ProcessEvent event) {
           DebugProcessImpl debugProcess = getDebugProcess(processHandler);
@@ -317,21 +304,18 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
     return DebuggerManagerThreadImpl.isManagerThread();
   }
 
-  @NotNull
   @Override
-  public BreakpointManager getBreakpointManager() {
+  public @NotNull BreakpointManager getBreakpointManager() {
     return myBreakpointManager;
   }
 
-  @NotNull
   @Override
-  public DebuggerContextImpl getContext() {
+  public @NotNull DebuggerContextImpl getContext() {
     return getContextManager().getContext();
   }
 
-  @NotNull
   @Override
-  public DebuggerStateManager getContextManager() {
+  public @NotNull DebuggerStateManager getContextManager() {
     return myDebuggerStateManager;
   }
 
@@ -352,14 +336,13 @@ public final class DebuggerManagerImpl extends DebuggerManagerEx implements Pers
   private static class MyDebuggerStateManager extends DebuggerStateManager {
     private DebuggerSession myDebuggerSession;
 
-    @NotNull
     @Override
-    public DebuggerContextImpl getContext() {
+    public @NotNull DebuggerContextImpl getContext() {
       return myDebuggerSession == null ? DebuggerContextImpl.EMPTY_CONTEXT : myDebuggerSession.getContextManager().getContext();
     }
 
     @Override
-    public void setState(@NotNull final DebuggerContextImpl context,
+    public void setState(final @NotNull DebuggerContextImpl context,
                          DebuggerSession.State state,
                          DebuggerSession.Event event,
                          String description) {

@@ -19,11 +19,12 @@ import com.intellij.openapi.options.advanced.AdvancedSettings;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.openapi.roots.ProjectRootManager;
-import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.registry.Registry;
+import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.newvfs.ArchiveFileSystem;
 import com.intellij.util.PlatformUtils;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,8 +45,9 @@ public class ProjectViewPane extends AbstractProjectViewPaneWithAsyncSupport {
     super(project);
   }
 
+  @ApiStatus.Internal
   @Override
-  public void configureAsyncSupport(@NotNull AsyncProjectViewSupport support) {
+  public void configureAsyncSupport(@NotNull ProjectViewPaneSupport support) {
     support.setMultiSelectionEnabled(false);
   }
 
@@ -77,29 +79,7 @@ public class ProjectViewPane extends AbstractProjectViewPaneWithAsyncSupport {
 
   @Override
   protected @NotNull ProjectViewTree createTree(@NotNull DefaultTreeModel treeModel) {
-    return new ProjectViewTree(treeModel) {
-      @Override
-      public String toString() {
-        return getTitle() + " " + super.toString();
-      }
-
-      @Override
-      public void setFont(Font font) {
-        if (AdvancedSettings.getBoolean("bigger.font.in.project.view")) {
-          font = font.deriveFont(font.getSize() + 1.0f);
-        }
-        super.setFont(font);
-      }
-
-      @Override
-      public AccessibleContext getAccessibleContext() {
-        if (accessibleContext == null) {
-          accessibleContext = super.getAccessibleContext();
-          accessibleContext.setAccessibleName(IdeBundle.message("project.structure.tree.accessible.name"));
-        }
-        return accessibleContext;
-      }
-    };
+    return new MyProjectViewTree(treeModel, getTitle());
   }
 
   public @NotNull String getComponentName() {
@@ -186,10 +166,11 @@ public class ProjectViewPane extends AbstractProjectViewPaneWithAsyncSupport {
       archiveFile = null;
 
     ProjectFileIndex index = ProjectRootManager.getInstance(project).getFileIndex();
+    final VirtualFile baseDir = project.getBaseDir();
     return (archiveFile != null && index.getContentRootForFile(archiveFile, false) != null) ||
            index.getContentRootForFile(file, false) != null ||
            index.isInLibrary(file) ||
-           Comparing.equal(file.getParent(), project.getBaseDir()) ||
+           (baseDir != null && VfsUtilCore.isAncestor(baseDir, file, false)) ||
            (ScratchUtil.isScratch(file) && ProjectView.getInstance(project).isShowScratchesAndConsoles(ID));
   }
 
@@ -206,5 +187,36 @@ public class ProjectViewPane extends AbstractProjectViewPaneWithAsyncSupport {
   @Override
   public boolean supportsShowScratchesAndConsoles() {
     return true;
+  }
+
+  private static class MyProjectViewTree extends ProjectViewTree {
+    private final @NotNull String myTitle;
+
+    MyProjectViewTree(@NotNull DefaultTreeModel treeModel, @NotNull String title) {
+      super(treeModel);
+      myTitle = title;
+    }
+
+    @Override
+    public String toString() {
+      return myTitle + " " + super.toString();
+    }
+
+    @Override
+    public void setFont(Font font) {
+      if (AdvancedSettings.getBoolean("bigger.font.in.project.view")) {
+        font = font.deriveFont(font.getSize() + 1.0f);
+      }
+      super.setFont(font);
+    }
+
+    @Override
+    public AccessibleContext getAccessibleContext() {
+      if (accessibleContext == null) {
+        accessibleContext = super.getAccessibleContext();
+        accessibleContext.setAccessibleName(IdeBundle.message("project.structure.tree.accessible.name"));
+      }
+      return accessibleContext;
+    }
   }
 }

@@ -13,17 +13,13 @@ import git4idea.i18n.GitBundle
 import git4idea.repo.GitRepository
 import git4idea.ui.branch.popup.GitBranchesTreePopupBase
 import git4idea.ui.branch.popup.GitBranchesTreePopupMinimalRenderer
-import git4idea.ui.branch.popup.GitBranchesTreePopupShowTagsAction
 import git4idea.ui.branch.popup.GitBranchesTreePopupStepBase
-import git4idea.ui.branch.tree.GitBranchesTreeModel
-import git4idea.ui.branch.tree.GitBranchesTreeRenderer
-import git4idea.ui.branch.tree.GitBranchesTreeSingleRepoModel
-import git4idea.ui.branch.tree.createTreePathFor
+import git4idea.ui.branch.tree.*
 import java.util.function.Consumer
 import javax.swing.JComponent
 import javax.swing.tree.TreePath
 
-class GitCompareWithBranchPopupStep(
+internal class GitCompareWithBranchPopupStep(
   project: Project,
   private val repository: GitRepository,
   private val onRefSelected: Consumer<GitReference>,
@@ -71,7 +67,7 @@ private class GitCompareWithBranchesTreeModel(project: Project, repository: GitR
   }
 }
 
-class GitCompareWithBranchPopup(
+internal class GitCompareWithBranchPopup(
   project: Project,
   step: GitCompareWithBranchPopupStep,
 ) : GitBranchesTreePopupBase<GitCompareWithBranchPopupStep>(project = project,
@@ -85,12 +81,12 @@ class GitCompareWithBranchPopup(
 
   override fun getSearchFiledEmptyText(): String = GitBundle.message(
     "git.compare.with.branch.search.field.empty.text",
-    if (GitBranchesTreePopupShowTagsAction.isSelected(project)) 1 else 0
+    if (GitBranchesTreeShowTagsAction.isSelected(project)) 1 else 0
   )
 
   override fun getTreeEmptyText(searchPattern: String?): String = GitBundle.message("git.compare.with.branch.search.not.found", searchPattern)
 
-  override fun createRenderer(treeStep: GitCompareWithBranchPopupStep): GitBranchesTreeRenderer =
+  override fun createRenderer(): GitBranchesTreeRenderer =
     GitBranchesTreePopupMinimalRenderer(treeStep)
 
   override fun getOldUiHeaderComponent(c: JComponent?): JComponent? =

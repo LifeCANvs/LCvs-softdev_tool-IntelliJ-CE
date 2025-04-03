@@ -1,11 +1,11 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.fixes
 
 import com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
 import org.jetbrains.kotlin.analysis.api.resolution.successfulFunctionCallOrNull
 import org.jetbrains.kotlin.analysis.api.resolution.symbol
-import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
 import org.jetbrains.kotlin.analysis.api.types.KaClassType
 import org.jetbrains.kotlin.analysis.api.types.KaStarTypeProjection
 import org.jetbrains.kotlin.analysis.api.types.KaTypeParameterType
@@ -20,10 +20,10 @@ import org.jetbrains.kotlin.psi.psiUtil.getParentOfTypes3
 import org.jetbrains.kotlin.psi.psiUtil.getStrictParentOfType
 
 internal object ChangeToStarProjectionFixFactory {
-    val uncheckedCastFactory = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.UncheckedCast ->
-        val quickFix = getQuickFix(diagnostic.psi) ?: return@ModCommandBased emptyList()
-        listOf(quickFix)
-    }
+    val uncheckedCastFactory: KotlinQuickFixFactory.ModCommandBased<KaFirDiagnostic.UncheckedCast> =
+        KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.UncheckedCast ->
+            listOfNotNull(getQuickFix(diagnostic.psi))
+        }
 
     val cannotCheckForErased = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.CannotCheckForErased ->
         val element = diagnostic.psi
@@ -38,8 +38,7 @@ internal object ChangeToStarProjectionFixFactory {
         listOf(quickFix)
     }
 
-    context(KaSession)
-    private fun getQuickFix(element: PsiElement): ChangeToStarProjectionFix? {
+    private fun KaSession.getQuickFix(element: PsiElement): ChangeToStarProjectionFix? {
         val (binaryExpr, typeReference, typeElement) = StarProjectionUtils.getChangeToStarProjectionFixInfo(element) ?: return null
 
         if (binaryExpr?.operationReference?.isAsKeyword() == true) {
@@ -59,7 +58,7 @@ internal object ChangeToStarProjectionFixFactory {
 
                 is KtQualifiedExpression ->
                     if (KtPsiUtil.safeDeparenthesize(parent.receiverExpression) == binaryExpr)
-                        parent.resolveToCall()?.successfulFunctionCallOrNull()?.partiallyAppliedSymbol?.symbol?.receiverParameter?.type
+                        parent.resolveToCall()?.successfulFunctionCallOrNull()?.partiallyAppliedSymbol?.symbol?.receiverParameter?.returnType
                     else
                         null
 

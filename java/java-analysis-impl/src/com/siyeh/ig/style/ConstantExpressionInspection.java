@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.siyeh.ig.style;
 
 import com.intellij.codeInspection.AbstractBaseJavaLocalInspectionTool;
@@ -45,9 +45,8 @@ public final class ConstantExpressionInspection extends AbstractBaseJavaLocalIns
         .description(InspectionGadgetsBundle.message("inspection.constant.expression.report.compile.time.description")));
   }
 
-  @NotNull
   @Override
-  public PsiElementVisitor buildVisitor(@NotNull ProblemsHolder holder, boolean isOnTheFly) {
+  public @NotNull PsiElementVisitor buildVisitor(@NotNull ProblemsHolder holder, boolean isOnTheFly) {
     return new JavaElementVisitor() {
       @Override
       public void visitReferenceExpression(@NotNull PsiReferenceExpression expression) {
@@ -60,7 +59,7 @@ public final class ConstantExpressionInspection extends AbstractBaseJavaLocalIns
       }
       
       private void handle(@NotNull PsiExpression expression) {
-        if (expression instanceof PsiLiteralExpression) return;
+        if (expression instanceof PsiLiteralExpression || expression instanceof PsiParenthesizedExpression) return;
         // inspection disabled for long expressions because of performance issues on
         // relatively common large string expressions.
         Object value = computeConstant(expression);
@@ -84,15 +83,12 @@ public final class ConstantExpressionInspection extends AbstractBaseJavaLocalIns
         }
       }
 
-      @Nullable
-      private Object computeConstant(PsiExpression expression) {
-        if (expression.getTextLength() > MAX_EXPRESSION_LENGTH) return null;
-        if (expression.getType() == null) return null;
+      private @Nullable Object computeConstant(PsiExpression expression) {
+        if (expression.getTextLength() > MAX_EXPRESSION_LENGTH || expression.getType() == null) return null;
         Object value = computeValue(expression);
         if (value == null) return null;
         final PsiExpression parent = getParentExpression(expression);
-        if (parent != null && computeValue(parent) != null) return null;
-        return value;
+        return (parent != null && computeValue(parent) != null) ? null : value;
       }
 
       private Object computeValue(PsiExpression expression) {
@@ -111,8 +107,7 @@ public final class ConstantExpressionInspection extends AbstractBaseJavaLocalIns
         return CommonDataflow.computeValue(expression);
       }
 
-      @Nullable
-      private static PsiExpression getParentExpression(PsiExpression expression) {
+      private static @Nullable PsiExpression getParentExpression(PsiExpression expression) {
         PsiElement parent = PsiUtil.skipParenthesizedExprUp(expression.getParent());
         if (parent instanceof PsiExpressionList || parent instanceof PsiTemplate) {
           parent = parent.getParent();
@@ -136,20 +131,16 @@ public final class ConstantExpressionInspection extends AbstractBaseJavaLocalIns
       myValueText = valueText;
     }
 
-    @Nls
-    @NotNull
     @Override
-    public String getName() {
+    public @Nls @NotNull String getName() {
       if (myText.length() < MAX_RESULT_LENGTH_TO_DISPLAY) {
         return InspectionGadgetsBundle.message("inspection.constant.expression.fix.name", myText);
       }
       return InspectionGadgetsBundle.message("inspection.constant.expression.fix.name.short");
     }
 
-    @Nls
-    @NotNull
     @Override
-    public String getFamilyName() {
+    public @Nls @NotNull String getFamilyName() {
       return InspectionGadgetsBundle.message("inspection.constant.expression.fix.family.name");
     }
 
@@ -161,7 +152,7 @@ public final class ConstantExpressionInspection extends AbstractBaseJavaLocalIns
   }
 
   private static String getValueText(Object value) {
-    @NonNls final String newExpression;
+    final @NonNls String newExpression;
     if (value instanceof String string) {
       newExpression = '"' + StringUtil.escapeStringCharacters(string) + '"';
     }

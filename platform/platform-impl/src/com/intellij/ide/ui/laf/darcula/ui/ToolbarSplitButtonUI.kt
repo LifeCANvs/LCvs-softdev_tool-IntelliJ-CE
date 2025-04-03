@@ -12,6 +12,7 @@ import com.intellij.util.ui.GraphicsUtil
 import com.intellij.util.ui.JBInsets
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import org.jetbrains.annotations.ApiStatus
 import java.awt.*
 import java.awt.event.ActionEvent
 import java.awt.event.MouseEvent
@@ -27,6 +28,7 @@ private const val DEAD_ZONE = 0
 private const val ACTION_ZONE = 1
 private const val EXPAND_ZONE = 2
 
+@ApiStatus.Internal
 class ToolbarSplitButtonUI : AbstractToolbarComboUI(), PropertyChangeListener {
 
   private val clickListener = MyClickListener()
@@ -73,13 +75,13 @@ class ToolbarSplitButtonUI : AbstractToolbarComboUI(), PropertyChangeListener {
     assert(!StringUtil.isEmpty(text) || rightIcons.isEmpty()) { "Right icons are only allowed when text is not empty" }
 
     val innerRect = SwingUtilities.calculateInnerArea(c, null)
-    val g2 = g.create(innerRect.x, innerRect.y, innerRect.width, innerRect.height) as Graphics2D
-    val paintRect = Rectangle(0, 0, innerRect.width, innerRect.height )
+    val paintRect = Rectangle(innerRect)
     JBInsets.removeFrom(paintRect, button.leftPartMargin.getTopBottom())
     paintRect.cutLeft(c.leftPartMargin.left)
-
     val maxTextWidth = calcMaxTextWidth(button, innerRect)
+    val g2 = g.create() as Graphics2D
     try {
+      g2.clip(paintRect)
       GraphicsUtil.setupAAPainting(g2)
 
       //paint left icons

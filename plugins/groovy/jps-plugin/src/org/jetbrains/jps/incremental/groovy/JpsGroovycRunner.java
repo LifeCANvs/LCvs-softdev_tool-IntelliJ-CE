@@ -7,9 +7,9 @@ import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.util.CurrentJavaVersion;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
-import com.intellij.util.lang.JavaVersion;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.groovy.compiler.rt.GroovyRtConstants;
@@ -28,6 +28,7 @@ import org.jetbrains.jps.incremental.ModuleLevelBuilder.ExitCode;
 import org.jetbrains.jps.incremental.java.JavaBuilder;
 import org.jetbrains.jps.incremental.messages.BuildMessage;
 import org.jetbrains.jps.incremental.messages.CompilerMessage;
+import org.jetbrains.jps.incremental.storage.SourceToOutputMappingCursor;
 import org.jetbrains.jps.model.JpsDummyElement;
 import org.jetbrains.jps.model.java.JpsJavaExtensionService;
 import org.jetbrains.jps.model.java.JpsJavaSdkType;
@@ -147,7 +148,7 @@ public abstract class JpsGroovycRunner<R extends BuildRootDescriptor, T extends 
     final Set<String> toCompilePaths = getPathsToCompile(toCompile);
 
     JpsSdk<JpsDummyElement> jdk = GroovyBuilder.getJdk(chunk);
-    int version = jdk != null ? JpsJavaSdkType.getJavaVersion(jdk) : JavaVersion.current().feature;
+    int version = jdk != null ? JpsJavaSdkType.getJavaVersion(jdk) : CurrentJavaVersion.currentJavaVersion().feature;
     boolean inProcess = shouldRunGroovycInProcess(version);
     boolean mayDependOnUtilJar = version >= 6;
     // Optimized classloader is in fact a UrlClassLoader that refers to jar archives in the SDK distribution
@@ -204,7 +205,7 @@ public abstract class JpsGroovycRunner<R extends BuildRootDescriptor, T extends 
   private static boolean shouldRunGroovycInProcess(int jdkVersion) {
     String explicitProperty = System.getProperty(GROOVYC_IN_PROCESS);
     return explicitProperty != null ? "true".equals(explicitProperty)
-                                    : jdkVersion == JavaVersion.current().feature
+                                    : jdkVersion == CurrentJavaVersion.currentJavaVersion().feature
                                       || jdkVersion < 5; // our own jars require at least JDK 5
   }
 
@@ -434,17 +435,15 @@ public abstract class JpsGroovycRunner<R extends BuildRootDescriptor, T extends 
       context.getProjectDescriptor().getProject());
     for (T target : getTargets(chunk)) {
       String moduleOutputPath = finalOutputs.get(target);
-      final SourceToOutputMapping srcToOut = context.getProjectDescriptor().dataManager.getSourceToOutputMap(target);
-      for (String src : srcToOut.getSources()) {
+      SourceToOutputMapping srcToOut = context.getProjectDescriptor().dataManager.getSourceToOutputMap(target);
+      for (SourceToOutputMappingCursor cursor = srcToOut.cursor(); cursor.hasNext(); ) {
+        String src = cursor.next();
         if (!toCompilePaths.contains(src) && GroovyBuilder.isGroovyFile(src) &&
             !configuration.getCompilerExcludes().isExcluded(new File(src))) {
-          final Collection<String> outs = srcToOut.getOutputs(src);
-          if (outs != null) {
-            for (String out : outs) {
-              if (out.endsWith(".class") && out.startsWith(moduleOutputPath)) {
-                final String className = out.substring(moduleOutputPath.length(), out.length() - ".class".length()).replace('/', '.');
-                class2Src.put(className, src);
-              }
+          for (String out : cursor.getOutputPaths()) {
+            if (out.endsWith(".class") && out.startsWith(moduleOutputPath)) {
+              final String className = out.substring(moduleOutputPath.length(), out.length() - ".class".length()).replace('/', '.');
+              class2Src.put(className, src);
             }
           }
         }

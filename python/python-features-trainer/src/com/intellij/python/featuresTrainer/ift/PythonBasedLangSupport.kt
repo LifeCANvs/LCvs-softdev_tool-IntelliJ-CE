@@ -4,7 +4,6 @@ package com.intellij.python.featuresTrainer.ift
 import com.intellij.ide.impl.OpenProjectTask
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.diagnostic.getOrLogException
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
@@ -180,7 +179,7 @@ abstract class PythonBasedLangSupport : AbstractLangSupport() {
         isSdkConfigured(project)
       }
       val configureCallbackId = LearningUiManager.addCallback {
-        val module = project.modules.singleOrNull() ?: return@addCallback
+        val module = project.modules.singleOrNull()
         PyInterpreterInspection.InterpreterSettingsQuickFix.showPythonInterpreterSettings(project, module)
       }
       if (useUserProjects || isLearningProject(project, primaryLanguage)) {

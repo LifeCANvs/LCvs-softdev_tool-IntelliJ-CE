@@ -5,7 +5,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.Cancellation
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.NonNls
-import kotlin.concurrent.Volatile
 
 /**
  * Describes a task for [MergingUpdateQueue]. Equal tasks (instances with the equal `identity` objects) are merged, i.e.,
@@ -16,7 +15,8 @@ import kotlin.concurrent.Volatile
 abstract class Update : ComparableObject.Impl, Runnable {
   private val _executeInWriteAction: Boolean
 
-  internal open val executeInWriteAction: Boolean
+  @get:ApiStatus.Internal
+  open val executeInWriteAction: Boolean
     get() = _executeInWriteAction
 
   val priority: Int

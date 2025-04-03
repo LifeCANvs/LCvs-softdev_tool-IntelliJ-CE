@@ -33,7 +33,7 @@ public final class Standalone {
   @Argument(value = "config", prefix = "--", description = "Path to directory containing global options (idea.config.path)")
   public String configPath;
 
-  @Argument(value = "script", prefix = "--", description = "Path to Groovy script which will be used to initialize global options")
+  @Argument(value = "script", prefix = "--", description = "Path to Groovy script which will be used to initialize global options (deprecated)")
   public String initializationScriptPath;
 
   @Argument(value = "cache-dir", prefix = "--", description = "Path to directory to store build caches")
@@ -102,6 +102,7 @@ public final class Standalone {
     ParameterizedRunnable<JpsModel> initializer = null;
     String scriptPath = initializationScriptPath;
     if (scriptPath != null) {
+      System.err.println("--script argument is deprecated, use --config instead or configure options in code and call Standalone.runBuild method");
       File scriptFile = new File(scriptPath);
       if (!scriptFile.isFile()) {
         System.err.println("Script '" + scriptPath + "' not found");
@@ -118,19 +119,12 @@ public final class Standalone {
     JpsModelLoaderImpl loader = new JpsModelLoaderImpl(projectPath, globalOptionsPath, false, initializer);
     Set<String> modulesSet = Set.of(modules);
     List<String> artifactsList = Arrays.asList(artifacts);
-    File dataStorageRoot;
-    if (cacheDirPath != null) {
-      dataStorageRoot = new File(cacheDirPath);
-    }
-    else {
-      dataStorageRoot = Utils.getDataStorageRoot(projectPath);
-    }
+    File dataStorageRoot = cacheDirPath == null ? Utils.getDataStorageRoot(projectPath) : new File(cacheDirPath);
 
     ConsoleMessageHandler consoleMessageHandler = new ConsoleMessageHandler();
     long start = System.nanoTime();
     try {
-      runBuild(loader, dataStorageRoot, !incremental, modulesSet, allModules, artifactsList, allArtifacts, true,
-               consoleMessageHandler);
+      runBuild(loader, dataStorageRoot, !incremental, modulesSet, allModules, artifactsList, allArtifacts, true, consoleMessageHandler);
     }
     catch (Throwable t) {
       System.err.println("Internal error: " + t.getMessage());

@@ -9,8 +9,7 @@ import com.intellij.collaboration.ui.codereview.CodeReviewChatItemUIUtil
 import com.intellij.collaboration.ui.layout.SizeRestrictedSingleComponentLayout
 import com.intellij.collaboration.ui.util.DimensionRestrictions
 import com.intellij.collaboration.util.HashingUtil
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.asContextElement
+import com.intellij.openapi.application.*
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.getOrLogException
 import com.intellij.openapi.editor.*
@@ -47,7 +46,7 @@ interface EditorMappedViewModel : EditorMapped {
 private val LOG = Logger.getInstance("codereview.editor.inlays")
 
 @Deprecated("Use the suspending function renderInlays for thread safety",
-            ReplaceWith("cs.launchNow(Dispatchers.Main) {\n" +
+            ReplaceWith("cs.launchNow(Dispatchers.EDT) {\n" +
                         "  renderInlays(vmsFlow, HashingUtil.mappingStrategy(vmKeyExtractor), rendererFactory)\n" +
                         "}"))
 fun <VM : EditorMapped> EditorEx.controlInlaysIn(
@@ -55,7 +54,7 @@ fun <VM : EditorMapped> EditorEx.controlInlaysIn(
   vmsFlow: Flow<Collection<VM>>,
   vmKeyExtractor: (VM) -> Any,
   rendererFactory: CodeReviewRendererFactory<VM>
-): Job = cs.launchNow(Dispatchers.Main) {
+): Job = cs.launchNow(Dispatchers.EDT) {
   doRenderInlays(vmsFlow, HashingUtil.mappingStrategy(vmKeyExtractor), rendererFactory)
 }
 
@@ -78,14 +77,16 @@ private suspend fun <VM : EditorMapped> EditorEx.doRenderInlays(
   rendererFactory: RendererFactory<VM, JComponent>
 ): Nothing {
   val editor = this
-  withContext(Dispatchers.Main.immediate + CoroutineName("Editor component inlays for $this")) {
+  withContext(Dispatchers.EdtImmediate + CoroutineName("Editor component inlays for $this")) {
     val inlaysCs = this
     val controllersByVmKey = createCustomHashingStrategyMap<VM, Job>(vmHashingStrategy)
     val positionKeeper = EditorScrollingPositionKeeper(editor)
     vmsFlow.map {
       createCustomHashingStrategySet(vmHashingStrategy).apply { addAll(it) }
     }.collect {
-      positionKeeper.savePosition()
+      writeIntentReadAction {
+        positionKeeper.savePosition()
+      }
 
       // remove missing
       val iter = controllersByVmKey.iterator()
@@ -105,17 +106,19 @@ private suspend fun <VM : EditorMapped> EditorEx.doRenderInlays(
         }
       }
 
-      // immediately validate the editor to recalculate the size with inlays
-      editor.contentComponent.validate()
-      positionKeeper.restorePosition(true)
-      editor.contentComponent.repaint()
+      writeIntentReadAction {
+        // immediately validate the editor to recalculate the size with inlays
+        editor.contentComponent.validate()
+        positionKeeper.restorePosition(true)
+        editor.contentComponent.repaint()
+      }
     }
     awaitCancellation()
   }
 }
 
 private suspend fun <VM : EditorMapped> controlInlay(vm: VM, editor: EditorEx, rendererFactory: RendererFactory<VM, JComponent>): Nothing {
-  withContext(Dispatchers.Main.immediate + CoroutineName("Scope for code review component editor inlay for $vm")) {
+  withContext(Dispatchers.EdtImmediate + CoroutineName("Scope for code review component editor inlay for $vm")) {
     var inlay: Inlay<*>? = null
     try {
       val lineFlow = vm.line
@@ -128,19 +131,21 @@ private suspend fun <VM : EditorMapped> controlInlay(vm: VM, editor: EditorEx, r
         combine(lineFlow, visibleFlow, ::Pair)
       }.distinctUntilChanged()
         .collect { (line, isVisible) ->
-          val currentInlay = inlay
-          if (line != null && isVisible) {
-            runCatching {
-              val offset = editor.document.getLineEndOffset(line)
-              if (currentInlay == null || !currentInlay.isValid || currentInlay.offset != offset) {
-                currentInlay?.let(Disposer::dispose)
-                inlay = insertComponent(vm, rendererFactory, editor, offset)
-              }
-            }.getOrLogException(LOG)
-          }
-          else if (currentInlay != null) {
-            Disposer.dispose(currentInlay)
-            inlay = null
+          writeIntentReadAction {
+            val currentInlay = inlay
+            if (line != null && isVisible) {
+              runCatching {
+                val offset = editor.document.getLineEndOffset(line)
+                if (currentInlay == null || !currentInlay.isValid || currentInlay.offset != offset) {
+                  currentInlay?.let(Disposer::dispose)
+                  inlay = insertComponent(vm, rendererFactory, editor, offset)
+                }
+              }.getOrLogException(LOG)
+            }
+            else if (currentInlay != null) {
+              Disposer.dispose(currentInlay)
+              inlay = null
+            }
           }
         }
       awaitCancellation()

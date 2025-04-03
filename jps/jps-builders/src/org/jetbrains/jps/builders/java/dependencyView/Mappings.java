@@ -1,10 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.jps.builders.java.dependencyView;
 
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.Ref;
-import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.SystemInfoRt;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.*;
@@ -19,7 +19,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.jps.builders.storage.BuildDataCorruptedException;
 import org.jetbrains.jps.incremental.Utils;
 import org.jetbrains.jps.incremental.relativizer.PathRelativizerService;
-import org.jetbrains.jps.incremental.storage.PathStringDescriptor;
+import org.jetbrains.jps.incremental.storage.PathStringDescriptors;
 import org.jetbrains.jps.javac.Iterators;
 import org.jetbrains.jps.service.JpsServiceManager;
 import org.jetbrains.org.objectweb.asm.ClassReader;
@@ -116,7 +116,7 @@ public class Mappings {
     createImplementation();
   }
 
-  public Mappings(final File rootDir, PathRelativizerService relativizer) throws IOException {
+  public Mappings(final File rootDir, @NotNull PathRelativizerService relativizer) throws IOException {
     myLock = new Object();
     myIsDelta = false;
     myChangedClasses = null;
@@ -169,17 +169,17 @@ public class Mappings {
           DependencyContext.getTableFile(myRootDir, SHORT_NAMES), EnumeratorIntegerDescriptor.INSTANCE
         );
         myRelativeSourceFilePathToClasses = new ObjectObjectPersistentMultiMaplet<String, ClassFileRepr>(
-          DependencyContext.getTableFile(myRootDir, SOURCE_TO_CLASS), PathStringDescriptor.INSTANCE, new ClassFileReprExternalizer(myContext),
+          DependencyContext.getTableFile(myRootDir, SOURCE_TO_CLASS), PathStringDescriptors.createPathStringDescriptor(), new ClassFileReprExternalizer(myContext),
           () -> new HashSet<>(5, DEFAULT_SET_LOAD_FACTOR)
         ) {
           @Override
           protected @NotNull String debugString(String path) {
             // on case-insensitive file systems save paths in normalized (lowercase) format to make tests run deterministically
-            return SystemInfo.isFileSystemCaseSensitive ? path : path.toLowerCase(Locale.US);
+            return SystemInfoRt.isFileSystemCaseSensitive ? path : path.toLowerCase(Locale.US);
           }
         };
         myClassToRelativeSourceFilePath = new IntObjectPersistentMultiMaplet<>(
-          DependencyContext.getTableFile(myRootDir, CLASS_TO_SOURCE), EnumeratorIntegerDescriptor.INSTANCE, PathStringDescriptor.INSTANCE, fileCollectionFactory
+          DependencyContext.getTableFile(myRootDir, CLASS_TO_SOURCE), EnumeratorIntegerDescriptor.INSTANCE, PathStringDescriptors.createPathStringDescriptor(), fileCollectionFactory
         );
       }
     }

@@ -42,6 +42,10 @@ public class PyControlFlowBuilderTest extends LightMarkedTestCase {
     doTest();
   }
 
+  public void testPass() {
+    doTest();
+  }
+
   public void testFile() {
     doTest();
   }
@@ -285,6 +289,21 @@ public class PyControlFlowBuilderTest extends LightMarkedTestCase {
 
   // PY-13919
   public void testWithRaiseException() {
+    doTest();
+  }
+
+  // PY-37718
+  public void testWithAssert() {
+    doTest();
+  }
+  
+  // PY-37718
+  public void testWithAssertFalse() {
+    doTest();
+  }
+
+  // PY-51564
+  public void testWithSeveralContextsAssert() {
     doTest();
   }
 

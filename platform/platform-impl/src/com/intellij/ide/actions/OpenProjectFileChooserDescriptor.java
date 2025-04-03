@@ -5,8 +5,8 @@ import com.intellij.ide.highlighter.ProjectFileType;
 import com.intellij.ide.ui.ProductIcons;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
+import com.intellij.openapi.project.ProjectStorePathManager;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.project.ProjectKt;
 import com.intellij.projectImport.ProjectOpenProcessor;
 import com.intellij.util.SystemProperties;
 import org.jetbrains.annotations.NotNull;
@@ -28,11 +28,6 @@ public class OpenProjectFileChooserDescriptor extends FileChooserDescriptor {
   public OpenProjectFileChooserDescriptor(boolean chooseFiles, boolean chooseJars) {
     super(chooseFiles, true, chooseJars, chooseJars, false, false);
     setHideIgnored(false);
-  }
-
-  @Override
-  public boolean isFileVisible(VirtualFile file, boolean showHiddenFiles) {
-    return super.isFileVisible(file, showHiddenFiles) && (file.isDirectory() || isProjectFile(file));
   }
 
   @Override
@@ -82,7 +77,7 @@ public class OpenProjectFileChooserDescriptor extends FileChooserDescriptor {
     return !file.isDirectory() && file.isValid() && (isIprFile(file) || hasImportProvider(file));
   }
 
-  private static boolean isProjectDirectory(@NotNull VirtualFile file) {
+  private static boolean isProjectDirectory(VirtualFile file) {
     return file.isDirectory() && file.isValid() && (isIdeaDirectory(file) || hasImportProvider(file));
   }
 
@@ -91,7 +86,8 @@ public class OpenProjectFileChooserDescriptor extends FileChooserDescriptor {
   }
 
   private static boolean isIdeaDirectory(VirtualFile file) {
-    return ProjectKt.getProjectStoreDirectory(file) != null;
+    ProjectStorePathManager storePathManager = ProjectStorePathManager.getInstance();
+    return storePathManager.testStoreDirectoryExistsForProjectRoot(file);
   }
 
   private static boolean hasImportProvider(VirtualFile file) {

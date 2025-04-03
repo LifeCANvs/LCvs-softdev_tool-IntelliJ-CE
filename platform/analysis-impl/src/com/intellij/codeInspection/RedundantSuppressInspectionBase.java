@@ -18,12 +18,14 @@ import com.intellij.util.ObjectUtils;
 import com.intellij.util.containers.BidirectionalMap;
 import com.intellij.util.containers.ContainerUtil;
 import org.jdom.Element;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
+@ApiStatus.Internal
 public abstract class RedundantSuppressInspectionBase extends GlobalSimpleInspectionTool {
   public static final String SHORT_NAME = "RedundantSuppression";
   private static final Logger LOG = Logger.getInstance(RedundantSuppressInspectionBase.class);
@@ -86,7 +88,7 @@ public abstract class RedundantSuppressInspectionBase extends GlobalSimpleInspec
       }
     });
 
-    if (suppressedScopes.values().isEmpty()) return ProblemDescriptor.EMPTY_ARRAY;
+    if (suppressedScopes.isEmpty()) return ProblemDescriptor.EMPTY_ARRAY;
     // have to visit all file from scratch since inspections can be written in any pervasive way including checkFile() overriding
     Map<InspectionToolWrapper<?, ?>, String> suppressedTools = new HashMap<>();
     List<InspectionToolWrapper<?, ?>> toolWrappers = getInspectionTools(psiFile, profile);

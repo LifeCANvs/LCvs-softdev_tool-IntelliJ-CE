@@ -1,31 +1,25 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk
 
+import com.intellij.execution.ExecutionException
 import com.intellij.execution.RunCanceledByUserException
 import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.execution.process.ProcessOutput
-import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.coroutineToIndicator
 import com.intellij.openapi.util.NlsContexts
-import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
-import com.jetbrains.python.packaging.IndicatedProcessOutputListener
 import com.jetbrains.python.packaging.PyExecutionException
-import kotlinx.coroutines.CoroutineScope
+import com.jetbrains.python.packaging.conda.PyPackageProcessHandler
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.jetbrains.annotations.ApiStatus.Internal
 import java.nio.file.Path
 import kotlin.io.path.absolutePathString
-import kotlin.io.path.pathString
 
 internal object Logger {
   val LOG = logger<Logger>()
 }
-
-/**
- * Used for CoroutineScope in com.jetbrains.python.sdk
- */
-@Service(Service.Level.PROJECT)
-internal class PythonSdkRunCommandService(val cs: CoroutineScope)
 
 /**
  * Runs a command line operation in a background thread.
@@ -33,37 +27,61 @@ internal class PythonSdkRunCommandService(val cs: CoroutineScope)
  * @param [commandLine] The command line to execute.
  * @return A [Result] object containing the output of the command execution.
  */
-@RequiresBackgroundThread
-internal fun runCommandLine(commandLine: GeneralCommandLine): Result<ProcessOutput> {
+internal suspend fun runCommandLine(commandLine: GeneralCommandLine): Result<String> {
   Logger.LOG.info("Running command: ${commandLine.commandLineString}")
-  val commandOutput = with(CapturingProcessHandler(commandLine)) {
-    runProcess()
-  }
+  try {
+    val capturingProcessHandler = PyPackageProcessHandler(commandLine)
 
-  return processOutput(
-    commandOutput,
-    commandLine.commandLineString,
-    emptyList()
-  )
+    val commandOutput = with(capturingProcessHandler) {
+      withContext(Dispatchers.IO) {
+        coroutineToIndicator {
+          val progressIndicator = ProgressManager.getInstance().progressIndicator
+          capturingProcessHandler.lastLineNotifier = { line ->
+            @Suppress("HardCodedStringLiteral")
+            progressIndicator.text = line
+          }
+          runProcessWithProgressIndicator(progressIndicator)
+        }
+      }
+    }
+
+    return processOutput(
+      commandOutput,
+      commandLine.exePath,
+      commandLine.parametersList.list,
+    )
+  }
+  catch (e: ExecutionException) {
+    return Result.failure(PyExecutionException(e.localizedMessage, commandLine.exePath, commandLine.parametersList.array.toList()))
+  }
 }
 
-fun runCommand(executable: Path, projectPath: Path?, @NlsContexts.DialogMessage errorMessage: String, vararg args: String): String {
-  val command = listOf(executable.absolutePathString()) + args
-  val commandLine = GeneralCommandLine(command).withWorkingDirectory(projectPath)
-  val handler = CapturingProcessHandler(commandLine)
-  val indicator = ProgressManager.getInstance().progressIndicator
-  val result = with(handler) {
-    when {
-      indicator != null -> {
-        addProcessListener(IndicatedProcessOutputListener(indicator))
-        runProcessWithProgressIndicator(indicator)
-      }
-      else ->
-        runProcess()
-    }
-  }
+/**
+ * Executes a given executable with specified arguments within an optional project directory.
+ *
+ * @param [executable] The [Path] to the executable to run.
+ * @param [projectPath] The path to the project directory in which to run the executable, or null if no specific directory is required.
+ * @param [args] The arguments to pass to the executable.
+ * @return A [Result] object containing the output of the command execution.
+ */
+@Internal
+suspend fun runExecutable(executable: Path, projectPath: Path?, vararg args: String): Result<String> {
+  val commandLine = GeneralCommandLine(listOf(executable.absolutePathString()) + args).withWorkingDirectory(projectPath)
+  return runCommandLine(commandLine)
+}
 
-  return processOutput(result, executable.pathString, args.asList(), errorMessage).getOrThrow().stdout.trim()
+/**
+ * Executes a specified [command] within the given project path with optional arguments.
+ *
+ * @param [projectPath] the path to the project directory where the command should be executed
+ * @param [command] the command to be executed
+ * @param [args] optional arguments for the command
+ * @return a [Result] object containing the output of the command execution
+ */
+@Internal
+suspend fun runCommand(projectPath: Path, command: String, vararg args: String): Result<String> {
+  val commandLine = GeneralCommandLine(listOf(command) + args).withWorkingDirectory(projectPath)
+  return runCommandLine(commandLine)
 }
 
 /**
@@ -80,14 +98,14 @@ internal fun processOutput(
   commandString: String,
   args: List<String>,
   @NlsContexts.DialogMessage errorMessage: String = "",
-): Result<ProcessOutput> {
+): Result<String> {
   return with(output) {
     when {
       isCancelled ->
         Result.failure(RunCanceledByUserException())
       exitCode != 0 ->
         Result.failure(PyExecutionException(errorMessage, commandString, args, stdout, stderr, exitCode, emptyList()))
-      else -> Result.success(output)
+      else -> Result.success(output.stdout.trim())
     }
   }
 }

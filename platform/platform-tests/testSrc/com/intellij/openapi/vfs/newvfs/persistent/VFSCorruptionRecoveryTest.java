@@ -3,7 +3,7 @@ package com.intellij.openapi.vfs.newvfs.persistent;
 
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.newvfs.FileAttribute;
-import com.intellij.openapi.vfs.newvfs.persistent.dev.blobstorage.StreamlinedBlobStorageHelper;
+import com.intellij.platform.util.io.storages.blobstorage.StreamlinedBlobStorageHelper;
 import com.intellij.openapi.vfs.newvfs.persistent.recovery.ContentStoragesRecoverer;
 import com.intellij.openapi.vfs.newvfs.persistent.recovery.NotClosedProperlyRecoverer;
 import com.intellij.platform.util.io.storages.StorageTestingUtils;
@@ -292,7 +292,7 @@ public class VFSCorruptionRecoveryTest {
         FSRecordsImpl.currentImplementationVersion(),
         Collections.emptyList()
       );
-      PersistentFSConnector.disconnect(connection);
+      connection.close();
       fail("VFS wasn't closed properly, no recoverers -> VFS init must fail");
     }
     catch (VFSInitException ex) {
@@ -317,7 +317,7 @@ public class VFSCorruptionRecoveryTest {
       FSRecordsImpl.currentImplementationVersion(),
       Collections.singletonList(new NotClosedProperlyRecoverer())
     );
-    PersistentFSConnector.disconnect(connection);
+    connection.close();
   }
 
 

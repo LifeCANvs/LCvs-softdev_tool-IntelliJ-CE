@@ -4,11 +4,17 @@ package org.jetbrains.kotlin.idea.j2k.post.processing.processings
 
 import com.intellij.openapi.application.runWriteAction
 import com.intellij.psi.search.searches.ReferencesSearch
+import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisFromWriteAction
+import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
+import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisFromWriteAction
+import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisOnEdt
+import org.jetbrains.kotlin.idea.base.analysis.api.utils.samConstructorCallsToBeConverted
 import org.jetbrains.kotlin.idea.base.psi.isRedundant
 import org.jetbrains.kotlin.idea.base.psi.replaceSamConstructorCall
 import org.jetbrains.kotlin.idea.base.psi.replaced
 import org.jetbrains.kotlin.idea.caches.resolve.analyze
 import org.jetbrains.kotlin.idea.caches.resolve.analyzeInContext
+import org.jetbrains.kotlin.idea.codeInsight.inspections.shared.RedundantSamConstructorInspection
 import org.jetbrains.kotlin.idea.codeinsights.impl.base.inspections.MayBeConstantInspectionBase
 import org.jetbrains.kotlin.idea.core.canMoveLambdaOutsideParentheses
 import org.jetbrains.kotlin.idea.inspections.*
@@ -112,12 +118,25 @@ internal class RemoveRedundantSamAdaptersProcessing : InspectionLikeProcessingFo
 
     override val writeActionNeeded = false
 
+    @OptIn(KaAllowAnalysisOnEdt::class)
     override fun isApplicableTo(element: KtCallExpression, settings: ConverterSettings): Boolean =
         isInspectionEnabledInCurrentProfile(inspection, element.project) &&
-                RedundantSamConstructorInspection.Util.samConstructorCallsToBeConverted(element).isNotEmpty()
+                allowAnalysisOnEdt {
+                    org.jetbrains.kotlin.analysis.api.analyze(element) {
+                        samConstructorCallsToBeConverted(element).isNotEmpty()
+                    }
+                }
 
+    @OptIn(KaAllowAnalysisOnEdt::class, KaAllowAnalysisFromWriteAction::class)
     override fun apply(element: KtCallExpression) {
-        val callsToBeConverted = RedundantSamConstructorInspection.Util.samConstructorCallsToBeConverted(element)
+        val callsToBeConverted =
+            allowAnalysisOnEdt {
+                allowAnalysisFromWriteAction {
+                    org.jetbrains.kotlin.analysis.api.analyze(element) {
+                        samConstructorCallsToBeConverted(element)
+                    }
+                }
+            }
         runWriteAction {
             for (call in callsToBeConverted) {
                 replaceSamConstructorCall(call)
@@ -189,23 +208,6 @@ internal class RemoveRedundantVisibilityModifierProcessing : InspectionLikeProce
         if (element is KtPrimaryConstructor && element.isRedundant()) {
             element.delete()
         }
-    }
-}
-
-/**
- * Handles a local 'var' without an initializer. For other cases, see [org.jetbrains.kotlin.j2k.postProcessings.VarToValProcessing]
- */
-internal class LocalVarToValInspectionBasedProcessing : InspectionLikeProcessingForElement<KtDeclaration>(KtDeclaration::class.java) {
-    private val inspection = CanBeValInspection()
-
-    override fun isApplicableTo(element: KtDeclaration, settings: ConverterSettings): Boolean =
-        isInspectionEnabledInCurrentProfile(inspection, element.project) &&
-                CanBeValInspection.Util.canBeVal(element, ignoreNotUsedVals = false)
-
-    override fun apply(element: KtDeclaration) {
-        val project = element.project
-        if (element !is KtValVarKeywordOwner) return
-        element.valOrVarKeyword?.replace(KtPsiFactory(project).createValKeyword())
     }
 }
 

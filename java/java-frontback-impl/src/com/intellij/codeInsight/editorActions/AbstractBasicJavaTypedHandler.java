@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.editorActions;
 
 import com.intellij.codeInsight.CodeInsightSettings;
@@ -17,6 +17,7 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.psi.impl.source.BasicJavaAstTreeUtil;
+import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.ParentAwareTokenSet;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.util.text.CharArrayUtil;
@@ -40,12 +41,11 @@ public abstract class AbstractBasicJavaTypedHandler extends TypedHandlerDelegate
 
   protected abstract void autoPopupMemberLookup(@NotNull Project project, @NotNull Editor editor);
 
-  protected abstract void autoPopupJavadocLookup(@NotNull final Project project, @NotNull final Editor editor);
+  protected abstract void autoPopupJavadocLookup(final @NotNull Project project, final @NotNull Editor editor);
 
   protected abstract boolean isLanguageLevel5OrHigher(@NotNull PsiFile file);
 
-  @NotNull
-  protected abstract Result processWhileAndIfStatementBody(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file);
+  protected abstract @NotNull Result processWhileAndIfStatementBody(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file);
 
 
   /**
@@ -64,13 +64,12 @@ public abstract class AbstractBasicJavaTypedHandler extends TypedHandlerDelegate
 
   protected abstract boolean handleAnnotationParameter(Project project, @NotNull Editor editor, @NotNull PsiFile file);
 
-  @NotNull
   @Override
-  public Result beforeCharTyped(final char c,
-                                @NotNull final Project project,
-                                @NotNull final Editor editor,
-                                @NotNull final PsiFile file,
-                                @NotNull final FileType fileType) {
+  public @NotNull Result beforeCharTyped(final char c,
+                                         final @NotNull Project project,
+                                         final @NotNull Editor editor,
+                                         final @NotNull PsiFile file,
+                                         final @NotNull FileType fileType) {
     if (!isJavaFile(file)) return Result.CONTINUE;
 
     if (c == '@') {
@@ -131,7 +130,7 @@ public abstract class AbstractBasicJavaTypedHandler extends TypedHandlerDelegate
       }
     }
     if (fileType instanceof JavaFileType && c == '{') {
-      int offset = editor.getCaretModel().getOffset();
+      final int offset = editor.getCaretModel().getOffset();
       if (offset == 0) {
         return Result.CONTINUE;
       }
@@ -236,6 +235,12 @@ public abstract class AbstractBasicJavaTypedHandler extends TypedHandlerDelegate
 
   private static boolean afterArrowInCase(@Nullable PsiElement leaf) {
     if (leaf == null) return false;
+    IElementType leafElementType = leaf.getNode().getElementType();
+    if (leafElementType == JavaTokenType.STRING_LITERAL ||
+        leafElementType == JavaTokenType.TEXT_BLOCK_LITERAL ||
+        leafElementType == JavaTokenType.CHARACTER_LITERAL) {
+      return false;
+    }
     PsiElement prevLeaf = PsiTreeUtil.prevVisibleLeaf(leaf);
     if (prevLeaf == null) return false;
     if (prevLeaf.getNode().getElementType() != JavaTokenType.ARROW) return false;
@@ -302,9 +307,8 @@ public abstract class AbstractBasicJavaTypedHandler extends TypedHandlerDelegate
     return doc.getLineNumber(astNode.getTextRange().getStartOffset());
   }
 
-  @NotNull
   @Override
-  public Result charTyped(final char c, @NotNull final Project project, @NotNull final Editor editor, @NotNull final PsiFile file) {
+  public @NotNull Result charTyped(final char c, final @NotNull Project project, final @NotNull Editor editor, final @NotNull PsiFile file) {
     if (!(isJavaFile(file))) return Result.CONTINUE;
 
     if (myJavaLTTyped) {

@@ -11,7 +11,6 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.WeakReferenceDisposableWrapper
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.WriteIntentReadAction
-import com.intellij.openapi.application.writeIntentReadAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.RangeMarker
 import com.intellij.openapi.editor.event.DocumentEvent
@@ -22,8 +21,10 @@ import com.intellij.psi.statistics.StatisticsInfo
 import com.intellij.psi.statistics.StatisticsManager
 import com.intellij.util.Alarm
 import com.intellij.util.application
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.VisibleForTesting
 
+@ApiStatus.Internal
 class StatisticsUpdate
     private constructor(private val myInfo: StatisticsInfo) : Disposable {
   private var mySpared: Int = 0

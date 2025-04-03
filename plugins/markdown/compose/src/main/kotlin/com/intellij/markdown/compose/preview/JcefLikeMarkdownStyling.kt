@@ -1,4 +1,4 @@
-package org.intellij.plugins.markdown.compose.preview
+package com.intellij.markdown.compose.preview
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.intellij.util.ui.JBUI
 import org.intellij.plugins.markdown.ui.preview.PreviewStyleScheme
+import org.jetbrains.jewel.bridge.retrievePlatformTextStyle
 import org.jetbrains.jewel.bridge.toComposeColor
 import org.jetbrains.jewel.markdown.rendering.InlinesStyling
 import org.jetbrains.jewel.markdown.rendering.MarkdownStyling
@@ -32,12 +33,13 @@ import org.jetbrains.jewel.markdown.rendering.MarkdownStyling.List.Ordered
 import org.jetbrains.jewel.markdown.rendering.MarkdownStyling.List.Unordered
 
 @Suppress("FunctionName")
-fun JcefLikeMarkdownStyling(scheme: PreviewStyleScheme, fontSize: TextUnit): MarkdownStyling {
+internal fun JcefLikeMarkdownStyling(scheme: PreviewStyleScheme, fontSize: TextUnit): MarkdownStyling {
   val fontSizeDp = fontSize.value.dp
   val defaultTextStyle = TextStyle(
     fontSize = fontSize,
     fontFamily = FontFamily.SansSerif,
     lineHeight = fontSize * 1.6,
+    platformStyle = retrievePlatformTextStyle()
   ).copy(
     color = scheme.foregroundColor.toComposeColor()
   )
@@ -91,14 +93,11 @@ private fun createInlinesStyling(
   linkHovered = link.copy(color = JBUI.CurrentTheme.Link.Foreground.HOVERED.toComposeColor()),
   linkFocused = link.copy(
     color = JBUI.CurrentTheme.Link.Foreground.HOVERED.toComposeColor(),
-    background = JBUI.CurrentTheme.ActionButton.hoverBackground().toComposeColor(),
   ),
   linkPressed = link.copy(
     color = JBUI.CurrentTheme.Link.Foreground.PRESSED.toComposeColor(),
-    background = JBUI.CurrentTheme.ActionButton.pressedBackground().toComposeColor(),
   ),
-  linkVisited = link.copy(color = JBUI.CurrentTheme.Link.Foreground.VISITED.toComposeColor()),
-  renderInlineHtml = false,
+  linkVisited = link.copy(color = JBUI.CurrentTheme.Link.Foreground.VISITED.toComposeColor())
 )
 
 private fun createParagraphStyling(inlinesStyling: InlinesStyling): Paragraph = Paragraph(inlinesStyling)

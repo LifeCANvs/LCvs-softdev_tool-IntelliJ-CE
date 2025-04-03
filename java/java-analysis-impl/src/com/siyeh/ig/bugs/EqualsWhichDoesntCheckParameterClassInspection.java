@@ -51,8 +51,7 @@ public class EqualsWhichDoesntCheckParameterClassInspection extends BaseInspecti
     CallMatcher.staticCall("org.springframework.data.util.ProxyUtils", "getUserClass").parameterCount(1);
 
   @Override
-  @NotNull
-  public String buildErrorString(Object... infos) {
+  public @NotNull String buildErrorString(Object... infos) {
     return InspectionGadgetsBundle.message("equals.doesnt.check.class.parameter.problem.descriptor");
   }
 
@@ -231,7 +230,7 @@ public class EqualsWhichDoesntCheckParameterClassInspection extends BaseInspecti
         .map(PsiSwitchLabelStatementBase::getCaseLabelElementList)
         .filter(Objects::nonNull)
         .flatMap(list -> Arrays.stream(list.getElements()))
-        .anyMatch(element -> element instanceof PsiTypeTestPattern);
+        .anyMatch(element -> element instanceof PsiPrimaryPattern);
       if (checksType) makeChecked();
     }
 

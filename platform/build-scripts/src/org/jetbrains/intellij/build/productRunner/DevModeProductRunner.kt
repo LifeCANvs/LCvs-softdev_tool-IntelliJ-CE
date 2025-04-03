@@ -1,8 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplacePutWithAssignment")
 
 package org.jetbrains.intellij.build.productRunner
 
+import com.intellij.platform.ijent.community.buildConstants.IJENT_BOOT_CLASSPATH_MODULE
+import com.intellij.platform.ijent.community.buildConstants.isMultiRoutingFileSystemEnabledForProduct
 import org.jetbrains.intellij.build.BuildContext
 import org.jetbrains.intellij.build.VmProperties
 import org.jetbrains.intellij.build.dev.BuildRequest
@@ -30,7 +32,7 @@ internal suspend fun createDevModeProductRunner(context: BuildContext, additiona
       devRootDir = context.paths.tempDir.resolve("dev-run"),
       jarCacheDir = homeDir.resolve("out/dev-run/jar-cache"),
       productionClassOutput = context.classesOutputDirectory.resolve("production"),
-      platformClassPathConsumer = { classPath, _ ->
+      platformClassPathConsumer = { _, classPath, _ ->
         newClassPath = classPath
       },
       buildOptionsTemplate = context.options,
@@ -46,6 +48,13 @@ private class DevModeProductRunner(
   private val classPath: Collection<String>,
 ) : IntellijProductRunner {
   override suspend fun runProduct(args: List<String>, additionalVmProperties: VmProperties, timeout: Duration) {
+    val multiRoutingFsBootClassPath: List<String> =
+      if (isMultiRoutingFileSystemEnabledForProduct(context.productProperties.platformPrefix))
+        listOf(
+          "-Xbootclasspath/a:${homePath}/out/classes/production/$IJENT_BOOT_CLASSPATH_MODULE"
+        )
+      else
+        listOf()
     runApplicationStarter(
       context = context,
       classpath = classPath,
@@ -54,6 +63,7 @@ private class DevModeProductRunner(
       homePath = homePath,
       vmProperties = additionalVmProperties + getIdeSystemProperties(homePath),
       isFinalClassPath = true,
+      vmOptions = multiRoutingFsBootClassPath,
     )
   }
 }

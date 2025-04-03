@@ -26,13 +26,17 @@ import java.awt.Component
 import java.awt.Dimension
 import javax.swing.*
 
-abstract class SettingChooserPage(private val provider: ActionsDataProvider<*>,
-                                  val product: SettingsContributor,
-                                  controller: ImportSettingsController) : OnboardingPage {
+internal sealed class SettingChooserPage(
+  private val provider: ActionsDataProvider<*>,
+  val product: SettingsContributor,
+  controller: ImportSettingsController,
+) : OnboardingPage {
   companion object {
-    fun createPage(provider: ActionsDataProvider<*>,
-                   product: Product,
-                   controller: ImportSettingsController): OnboardingPage {
+    internal fun createPage(
+      provider: ActionsDataProvider<*>,
+      product: Product,
+      controller: ImportSettingsController,
+    ): OnboardingPage {
       if (provider is SyncActionsDataProvider && provider.productService.baseProduct(product.id)) {
         return SyncSettingChooserPage(provider, product, controller)
       }
@@ -113,6 +117,7 @@ abstract class SettingChooserPage(private val provider: ActionsDataProvider<*>,
         add(ScrollSnapToFocused(listPane, this@SettingChooserPage).apply {
           viewport.isOpaque = false
           background = JBColor.namedColor("WelcomeScreen.Details.background", JBColor(Color.white, Color(0x313335)))
+          accessibleContext.accessibleName = ImportSettingsBundle.message("choose.settings.title.accessible.name", provider.getText(product))
 
           SwingUtilities.invokeLater {
             this.requestFocus()
@@ -132,7 +137,7 @@ abstract class SettingChooserPage(private val provider: ActionsDataProvider<*>,
     }
 }
 
-class ConfigurableSettingChooserPage<T : BaseService>(
+private class ConfigurableSettingChooserPage<T : BaseService>(
   val provider: ActionsDataProvider<T>,
   product: Product,
   controller: ImportSettingsController
@@ -195,7 +200,7 @@ class ConfigurableSettingChooserPage<T : BaseService>(
   }
 }
 
-class SyncSettingChooserPage(val provider: SyncActionsDataProvider,
+private class SyncSettingChooserPage(val provider: SyncActionsDataProvider,
                              product: SettingsContributor,
                              controller: ImportSettingsController) : SettingChooserPage(provider, product, controller) {
 

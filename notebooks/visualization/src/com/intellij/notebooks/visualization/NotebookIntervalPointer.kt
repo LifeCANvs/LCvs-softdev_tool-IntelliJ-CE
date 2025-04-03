@@ -42,6 +42,7 @@ interface NotebookIntervalPointerFactory {
    */
   interface ChangeListener : EventListener {
     fun onUpdated(event: NotebookIntervalPointersEvent)
+    fun bulkUpdateFinished() {}
 
     companion object {
       val TOPIC: Topic<ChangeListener> =
@@ -53,6 +54,8 @@ interface NotebookIntervalPointerFactory {
    * listen events for only one document
    */
   val changeListeners: EventDispatcher<ChangeListener>
+
+  fun onUpdated(event: NotebookIntervalPointersEvent)
 
   companion object {
     internal val key = Key.create<NotebookIntervalPointerFactory>(NotebookIntervalPointerFactory::class.java.name)

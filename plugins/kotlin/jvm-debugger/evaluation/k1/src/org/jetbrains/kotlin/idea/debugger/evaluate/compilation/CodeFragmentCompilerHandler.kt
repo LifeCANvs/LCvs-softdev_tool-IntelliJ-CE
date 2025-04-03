@@ -3,6 +3,7 @@ package org.jetbrains.kotlin.idea.debugger.evaluate.compilation
 
 import org.jetbrains.kotlin.descriptors.ModuleDescriptor
 import org.jetbrains.kotlin.idea.debugger.base.util.evaluate.ExecutionContext
+import org.jetbrains.kotlin.idea.debugger.evaluate.extractExceptionCauseClass
 import org.jetbrains.kotlin.psi.KtCodeFragment
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.resolve.BindingContext
@@ -40,12 +41,9 @@ class CodeFragmentCompilerHandler(val strategy: CodeFragmentCompilingStrategy) {
                     strategy.onSuccess()
                 }
         } catch (e: Exception) {
+            strategy.stats.compilerFailExceptionClass = extractExceptionCauseClass(e)
+
             strategy.processError(e, codeFragment, filesToCompileExceptCodeFragment, executionContext)
-            val fallback = strategy.getFallbackStrategy()
-            if (fallback != null) {
-                strategy.beforeRunningFallback()
-                return doCompileCodeFragment(fallback, codeFragment, moduleDescriptor, bindingContext, executionContext)
-            }
             // This error will be recycled into an error message in the Evaluation/Watches result component,
             // and it won't be actually thrown further, so there shouldn't be duplicated error messages
             // in EA dialog / log / wherever else

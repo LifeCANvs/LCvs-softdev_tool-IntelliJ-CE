@@ -1,7 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection.ex;
 
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
+import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerEx;
 import com.intellij.codeInspection.BatchQuickFix;
 import com.intellij.codeInspection.CommonProblemDescriptor;
 import com.intellij.codeInspection.ProblemDescriptor;
@@ -21,6 +21,7 @@ import com.intellij.openapi.util.Iconable;
 import com.intellij.openapi.util.NlsActions;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiElement;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -29,6 +30,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
+@ApiStatus.Internal
 public final class LocalQuickFixWrapper extends QuickFixAction {
   private final QuickFix<?> myFix;
 
@@ -73,7 +75,7 @@ public final class LocalQuickFixWrapper extends QuickFixAction {
     if (myFix instanceof BatchQuickFix) {
       final List<PsiElement> collectedElementsToIgnore = new ArrayList<>();
       final Runnable refreshViews = () -> {
-        DaemonCodeAnalyzer.getInstance(project).restart();
+        DaemonCodeAnalyzerEx.getInstanceEx(project).restart("LocalQuickFixWrapper.applyFix.refreshViews");
         for (CommonProblemDescriptor descriptor : descriptors) {
           ignore(ignoredElements, descriptor, getWorkingQuickFix(descriptor.getFixes()) != null, context);
         }
@@ -122,7 +124,7 @@ public final class LocalQuickFixWrapper extends QuickFixAction {
       }
     }
     if (restart) {
-      DaemonCodeAnalyzer.getInstance(project).restart();
+      DaemonCodeAnalyzerEx.getInstanceEx(project).restart("LocalQuickFixWrapper.applyFix");
     }
     return result;
   }
@@ -138,7 +140,10 @@ public final class LocalQuickFixWrapper extends QuickFixAction {
                                      @NotNull GlobalInspectionContextImpl context,
                                      Set<? super PsiElement> ignoredElements) {
     if (myFix instanceof BatchQuickFix) {
-      applyFix(project, context, BatchModeDescriptorsUtil.flattenDescriptors(descriptors), ignoredElements);
+      executeAndNotify(project, () -> {
+        BatchExecutionResult result = applyFix(project, context, BatchModeDescriptorsUtil.flattenDescriptors(descriptors), ignoredElements);
+        return result.getMessage();
+      });
     }
     else {
       super.performFixesInBatch(project, descriptors, context, ignoredElements);

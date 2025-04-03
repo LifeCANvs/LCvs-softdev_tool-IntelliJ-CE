@@ -1,7 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.externalSystem.service.project.manage
 
-import com.intellij.ide.projectView.actions.MarkRootActionBase
+import com.intellij.ide.projectView.actions.MarkRootsManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
@@ -20,7 +20,7 @@ import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.roots.SourceFolder
 import com.intellij.openapi.roots.impl.RootConfigurationAccessor
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.util.io.CanonicalPathPrefixTreeFactory
+import com.intellij.openapi.util.io.CanonicalPathPrefixTree
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
@@ -58,7 +58,7 @@ class SourceFolderManagerImpl(
   private val moduleNamesToSourceFolderState: MultiMap<String, SourceFolderModelState> = MultiMap.create()
   private var isDisposed = false
   private val mutex = Any()
-  private var sourceFolders = CanonicalPathPrefixTreeFactory.createMap<SourceFolderModel>()
+  private var sourceFolders = CanonicalPathPrefixTree.createMap<SourceFolderModel>()
   private var sourceFoldersByModule = HashMap<String, ModuleModel>()
 
   private val operationsStates = ConcurrentLinkedQueue<Future<*>>()
@@ -210,7 +210,7 @@ class SourceFolderManagerImpl(
     val p = sourceFoldersToChange[model.module] ?: error("Value for the module ${model.module.name} should be available")
     for ((eventFile, sourceFolders) in p) {
       val (_, url, type, packagePrefix, generated) = sourceFolders
-      val contentEntry = MarkRootActionBase.findContentEntry(model, eventFile) ?: model.addContentEntry(url, true)
+      val contentEntry = MarkRootsManager.findContentEntry(model, eventFile) ?: model.addContentEntry(url, true)
       val sourceFolder = contentEntry.addSourceFolder(url, type, true)
       if (!packagePrefix.isNullOrEmpty()) {
         sourceFolder.packagePrefix = packagePrefix
@@ -279,7 +279,7 @@ class SourceFolderManagerImpl(
         return
       }
 
-      sourceFolders = CanonicalPathPrefixTreeFactory.createMap()
+      sourceFolders = CanonicalPathPrefixTree.createMap()
       sourceFoldersByModule = HashMap()
 
       if (state.sourceFolders.isEmpty()) {

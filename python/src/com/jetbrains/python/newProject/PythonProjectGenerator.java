@@ -8,7 +8,6 @@ import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
-import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
@@ -16,6 +15,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.NlsContexts.DialogMessage;
+import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.platform.DirectoryProjectGeneratorBase;
@@ -23,7 +23,8 @@ import com.intellij.util.containers.ContainerUtil;
 import com.jetbrains.python.PyBundle;
 import com.jetbrains.python.PyPsiPackageUtil;
 import com.jetbrains.python.newProject.collector.InterpreterStatisticsInfo;
-import com.jetbrains.python.newProject.collector.PythonNewProjectWizardCollector;
+import com.jetbrains.python.newProjectWizard.collector.PyProjectTypeGenerator;
+import com.jetbrains.python.newProjectWizard.collector.PythonNewProjectWizardCollector;
 import com.jetbrains.python.packaging.PyPackage;
 import com.jetbrains.python.packaging.PyPackageManager;
 import com.jetbrains.python.packaging.PyPackageUtil;
@@ -34,7 +35,6 @@ import com.jetbrains.python.sdk.PyLazySdk;
 import com.jetbrains.python.sdk.PythonSdkUtil;
 import com.jetbrains.python.sdk.add.v2.PythonInterpreterSelectionMode;
 import com.jetbrains.python.statistics.PyStatisticToolsKt;
-import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -50,8 +50,9 @@ import java.util.function.Consumer;
 /**
  * @deprecated Use {@link com.jetbrains.python.newProjectWizard}
  */
-@Deprecated
-public abstract class PythonProjectGenerator<T extends PyNewProjectSettings> extends DirectoryProjectGeneratorBase<T> {
+@Deprecated(forRemoval = true)
+public abstract class PythonProjectGenerator<T extends PyNewProjectSettings> extends DirectoryProjectGeneratorBase<T> implements
+                                                                                                                      PyProjectTypeGenerator {
   public static final PyNewProjectSettings NO_SETTINGS = new PyNewProjectSettings();
   private static final Logger LOGGER = Logger.getInstance(PythonProjectGenerator.class);
 
@@ -60,8 +61,7 @@ public abstract class PythonProjectGenerator<T extends PyNewProjectSettings> ext
 
   protected Consumer<String> myErrorCallback;
 
-  @Nullable
-  private final PythonInterpreterSelectionMode preferredEnvironmentType;
+  private final @Nullable PythonInterpreterSelectionMode preferredEnvironmentType;
 
   /**
    * @param allowRemoteProjectCreation if project of this type could be created remotely
@@ -72,6 +72,11 @@ public abstract class PythonProjectGenerator<T extends PyNewProjectSettings> ext
 
   protected PythonProjectGenerator() {
     this(false, null);
+  }
+
+  @Override
+  public final @NlsSafe @NotNull String getProjectTypeForStatistics() {
+    return getClass().getName();
   }
 
   /**
@@ -88,22 +93,6 @@ public abstract class PythonProjectGenerator<T extends PyNewProjectSettings> ext
     myErrorCallback = errorCallback;
   }
 
-  public @Nullable JComponent getSettingsPanel(File baseDir) throws ProcessCanceledException {
-    return null;
-  }
-
-  /**
-   * Upper part of project generation wizard panel could be customized
-   */
-  @ApiStatus.Internal
-  @Nullable
-  public MainPartUiCustomizer getMainPartUiCustomizer() {
-    return null;
-  }
-
-  public @Nullable JPanel extendBasePanel() throws ProcessCanceledException {
-    return null;
-  }
 
   /**
    * Checks if project type and remote ask allows project creation.
@@ -197,7 +186,7 @@ public abstract class PythonProjectGenerator<T extends PyNewProjectSettings> ext
     if (statisticsInfo instanceof InterpreterStatisticsInfo interpreterStatisticsInfo && settings.getSdk() != null) {
       PythonNewProjectWizardCollector.logPythonNewProjectGenerated(interpreterStatisticsInfo,
                                                                    PyStatisticToolsKt.getVersion(settings.getSdk()),
-                                                                   this.getClass(),
+                                                                   this,
                                                                    Collections.emptyList());
     }
   }
@@ -270,12 +259,6 @@ public abstract class PythonProjectGenerator<T extends PyNewProjectSettings> ext
     void stateChanged();
   }
 
-  public void fireStateChanged() {
-    for (SettingsListener listener : myListeners) {
-      listener.stateChanged();
-    }
-  }
-
   public void afterProjectGenerated(final @NotNull Project project) {
   }
 
@@ -332,85 +315,36 @@ public abstract class PythonProjectGenerator<T extends PyNewProjectSettings> ext
   public static @NotNull Future<Void> installFrameworkIfNeeded(final @NotNull Project project,
                                                                final @NotNull String frameworkName,
                                                                final @NotNull String requirement,
-                                                               final @Nullable Sdk sdk,
+                                                               final @NotNull Sdk sdk,
                                                                final boolean forceInstallFramework,
                                                                final @Nullable Runnable callback) {
-    return installFrameworkIfNeeded(project, frameworkName, requirement, sdk, forceInstallFramework, false, callback);
-  }
-
-  public static @NotNull Future<Void> installFrameworkInBackground(final @NotNull Project project,
-                                                                   final @NotNull String frameworkName,
-                                                                   final @NotNull String requirement,
-                                                                   final @Nullable Sdk sdk,
-                                                                   final boolean forceInstallFramework,
-                                                                   final @Nullable Runnable callback) {
-    return installFrameworkIfNeeded(project, frameworkName, requirement, sdk, forceInstallFramework, true, callback);
-  }
-
-  private static @NotNull Future<Void> installFrameworkIfNeeded(final @NotNull Project project,
-                                                                final @NotNull String frameworkName,
-                                                                final @NotNull String requirement,
-                                                                final @Nullable Sdk sdk,
-                                                                final boolean forceInstallFramework,
-                                                                boolean asBackgroundTask,
-                                                                final @Nullable Runnable callback) {
 
     var future = new CompletableFuture<Void>();
-    if (sdk == null) {
-      reportPackageInstallationFailure(frameworkName, null);
-      future.completeExceptionally(new RuntimeException(("No SDK provided")));
-      return future;
-    }
 
     // For remote SDK we are not sure if framework exists or not, so we'll check it anyway
     if (forceInstallFramework || PythonSdkUtil.isRemote(sdk)) {
 
-      if (asBackgroundTask) {
-        ProgressManager.getInstance()
-          .run(new Task.Backgroundable(project, PyBundle.message("python.install.framework.ensure.installed", frameworkName), false) {
-            @Override
-            public void run(final @NotNull ProgressIndicator indicator) {
-              installPackages(frameworkName, forceInstallFramework, indicator, requirement, sdk);
-            }
+      ProgressManager.getInstance()
+        .run(new Task.Modal(project, PyBundle.message("python.install.framework.ensure.installed", frameworkName), false) {
+          @Override
+          public void run(final @NotNull ProgressIndicator indicator) {
+            installPackages(frameworkName, forceInstallFramework, indicator, requirement, sdk);
+          }
 
-            @Override
-            public void onThrowable(@NotNull Throwable error) {
-              future.completeExceptionally(error);
-            }
+          @Override
+          public void onThrowable(@NotNull Throwable error) {
+            future.completeExceptionally(error);
+          }
 
-            @Override
-            public void onSuccess() {
-              future.complete(null);
-              // Installed / checked successfully, call callback on AWT
-              if (callback != null) {
-                callback.run();
-              }
+          @Override
+          public void onSuccess() {
+            future.complete(null);
+            // Installed / checked successfully, call callback on AWT
+            if (callback != null) {
+              callback.run();
             }
-          });
-      }
-      else {
-        ProgressManager.getInstance()
-          .run(new Task.Modal(project, PyBundle.message("python.install.framework.ensure.installed", frameworkName), false) {
-            @Override
-            public void run(final @NotNull ProgressIndicator indicator) {
-              installPackages(frameworkName, forceInstallFramework, indicator, requirement, sdk);
-            }
-
-            @Override
-            public void onThrowable(@NotNull Throwable error) {
-              future.completeExceptionally(error);
-            }
-
-            @Override
-            public void onSuccess() {
-              future.complete(null);
-              // Installed / checked successfully, call callback on AWT
-              if (callback != null) {
-                callback.run();
-              }
-            }
-          });
-      }
+          }
+        });
     }
     else {
       future.complete(null);

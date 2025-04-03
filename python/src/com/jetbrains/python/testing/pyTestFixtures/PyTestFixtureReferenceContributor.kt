@@ -20,9 +20,6 @@ class PyTestFixtureReference(pyElement: PsiElement, fixture: PyTestFixture, priv
   private val functionRef = fixture.function?.let { SmartPointerManager.createPointer(it) }
   private val resolveRef = fixture.resolveTarget?.let { SmartPointerManager.createPointer(it) }
 
-  @Deprecated("Use new constructor")
-  constructor(namedParameter: PyNamedParameter, fixture: PyTestFixture) : this(namedParameter, fixture, null)
-
   override fun resolve() = resolveRef?.element
 
   fun getFunction() = functionRef?.element

@@ -2,9 +2,14 @@ package com.intellij.codeInspection.tests.kotlin.logging
 
 import com.intellij.jvm.analysis.internal.testFramework.logging.LoggingPlaceholderCountMatchesArgumentCountInspectionTestBase
 import com.intellij.jvm.analysis.testFramework.JvmLanguage
-import org.jetbrains.kotlin.idea.base.plugin.KotlinPluginModeProvider
+import org.jetbrains.kotlin.idea.test.ExpectedPluginModeProvider
+import org.jetbrains.kotlin.idea.test.setUpWithKotlinPlugin
 
-abstract class KotlinLoggingPlaceholderCountMatchesArgumentCountInspectionLog4J2Test : LoggingPlaceholderCountMatchesArgumentCountInspectionTestBase(), KotlinPluginModeProvider {
+abstract class KotlinLoggingPlaceholderCountMatchesArgumentCountInspectionLog4J2Test : LoggingPlaceholderCountMatchesArgumentCountInspectionTestBase(), ExpectedPluginModeProvider {
+  override fun setUp() {
+    setUpWithKotlinPlugin(testRootDisposable) { super.setUp() }
+  }
+
   fun `test log4j2 with text variables`() {
     myFixture.testHighlighting(JvmLanguage.KOTLIN, """
           import org.apache.logging.log4j.LogManager
@@ -161,24 +166,6 @@ abstract class KotlinLoggingPlaceholderCountMatchesArgumentCountInspectionLog4J2
 
             companion object {
                 private val LOG = LogManager.getLogger()
-            }
-        }
-      """.trimIndent())
-  }
-
-
-  fun `test error type`() {
-    myFixture.testHighlighting(JvmLanguage.KOTLIN, """
-        import org.apache.logging.log4j.LogManager
-
-        class Log4j {
-            fun m() {
-              var e = <error descr="[UNRESOLVED_REFERENCE] Unresolved reference: Ce">Ce</error>;
-              LOG.error(<warning descr="Fewer arguments provided (2) than placeholders specified (3)">"1 {} {} {}"</warning> , <error descr="[DEBUG] Resolved to error element">e</error>, <error descr="[DEBUG] Resolved to error element">e</error>)
-            }
-
-            companion object {
-                val LOG = LogManager.getLogger()
             }
         }
       """.trimIndent())

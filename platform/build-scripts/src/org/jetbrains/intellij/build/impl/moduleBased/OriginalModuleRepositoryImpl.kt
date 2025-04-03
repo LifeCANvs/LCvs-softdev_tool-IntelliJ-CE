@@ -13,7 +13,9 @@ import com.intellij.platform.runtime.repository.RuntimeModuleRepository
 import com.intellij.platform.runtime.repository.serialization.RawRuntimeModuleRepositoryData
 import com.intellij.platform.runtime.repository.serialization.RuntimeModuleRepositorySerialization
 import com.jetbrains.plugin.structure.base.utils.inputStream
+import kotlinx.coroutines.runBlocking
 import org.jetbrains.intellij.build.CompilationContext
+import org.jetbrains.intellij.build.impl.findFileInModuleSources
 import org.jetbrains.intellij.build.moduleBased.OriginalModuleRepository
 import java.io.InputStream
 import java.nio.file.Files
@@ -43,7 +45,7 @@ internal class OriginalModuleRepositoryImpl(private val context: CompilationCont
                              ?: error("Cannot find product-modules.xml file in $rootModuleName")
     val resolver = object : ResourceFileResolver {
       override fun readResourceFile(moduleId: RuntimeModuleId, relativePath: String): InputStream? {
-        return context.findFileInModuleSources(context.findRequiredModule(moduleId.stringId), relativePath)?.inputStream()
+        return findFileInModuleSources(context.findRequiredModule(moduleId.stringId), relativePath)?.inputStream()
       }
 
       override fun toString(): String {
@@ -55,9 +57,18 @@ internal class OriginalModuleRepositoryImpl(private val context: CompilationCont
 
   override suspend fun loadProductModules(rootModuleName: String, productMode: ProductMode): ProductModules {
     val repository = context.getOriginalModuleRepository().repository
-    val productModulesFile = findProductModulesFile(context, rootModuleName)
-                             ?: error("Cannot find product-modules.xml file in $rootModuleName")
-    return ProductModulesSerialization.loadProductModules(productModulesFile, productMode, repository)
+    val productModulesStream = readProductModulesFile(context, rootModuleName)
+                               ?: error("Cannot read product-modules.xml file from $rootModuleName")
+    val resolver = object : ResourceFileResolver {
+      override fun readResourceFile(moduleId: RuntimeModuleId, relativePath: String): InputStream? {
+        return runBlocking { context.readFileContentFromModuleOutput(context.findRequiredModule(moduleId.stringId), relativePath)?.inputStream() }
+      }
+
+      override fun toString(): String {
+        return "module output based resolver for '${context.paths.projectHome}' project"
+      }
+    }
+    return ProductModulesSerialization.loadProductModules(productModulesStream, "(product-modules.xml file in $rootModuleName)", productMode, repository, resolver)
   }
 
   override val repository: RuntimeModuleRepository by lazy { 
@@ -65,5 +76,10 @@ internal class OriginalModuleRepositoryImpl(private val context: CompilationCont
   }
 }
 
-internal fun findProductModulesFile(context: CompilationContext, clientMainModuleName: String): Path? =
-  context.findFileInModuleSources(context.findRequiredModule(clientMainModuleName), "META-INF/$clientMainModuleName/product-modules.xml")
+internal fun findProductModulesFile(context: CompilationContext, clientMainModuleName: String): Path? {
+  return findFileInModuleSources(context.findRequiredModule(clientMainModuleName), "META-INF/$clientMainModuleName/product-modules.xml")
+}
+
+internal suspend fun readProductModulesFile(context: CompilationContext, clientMainModuleName: String): InputStream? {
+  return context.readFileContentFromModuleOutput(context.findRequiredModule(clientMainModuleName), "META-INF/$clientMainModuleName/product-modules.xml")?.inputStream()
+}

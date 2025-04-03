@@ -3,6 +3,7 @@ package com.intellij.vcs.log.impl
 
 import com.intellij.openapi.Disposable
 import com.intellij.util.concurrency.annotations.RequiresEdt
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.NonNls
 import java.util.*
 
@@ -42,6 +43,7 @@ interface VcsLogUiProperties {
   }
 }
 
+@ApiStatus.Internal
 fun VcsLogUiProperties.onPropertyChange(disposable: Disposable, listener: (VcsLogUiProperties.VcsLogUiProperty<*>) -> Unit) {
   val propertiesChangeListener = object : VcsLogUiProperties.PropertiesChangeListener {
     override fun <T> onPropertyChanged(property: VcsLogUiProperties.VcsLogUiProperty<T>) = listener(property)
@@ -49,7 +51,7 @@ fun VcsLogUiProperties.onPropertyChange(disposable: Disposable, listener: (VcsLo
   addChangeListener(propertiesChangeListener, disposable)
 }
 
-fun <T> VcsLogUiProperties.getOrNull(property: VcsLogUiProperties.VcsLogUiProperty<T>): T? {
+internal fun <T> VcsLogUiProperties.getOrNull(property: VcsLogUiProperties.VcsLogUiProperty<T>): T? {
   if (!exists(property)) return null
   return this[property]
 }

@@ -7,6 +7,7 @@ package org.jetbrains.intellij.build.impl.compilation
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.Span
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -18,6 +19,7 @@ import kotlinx.serialization.json.Json
 import org.jetbrains.annotations.VisibleForTesting
 import org.jetbrains.intellij.build.BuildMessages
 import org.jetbrains.intellij.build.CompilationContext
+import org.jetbrains.intellij.build.dependencies.TeamCityHelper
 import org.jetbrains.intellij.build.forEachConcurrent
 import org.jetbrains.intellij.build.http2Client.withHttp2ClientConnectionFactory
 import org.jetbrains.intellij.build.io.AddDirEntriesMode
@@ -41,8 +43,8 @@ import kotlin.io.path.listDirectoryEntries
 
 private val nettyMax = Runtime.getRuntime().availableProcessors() * 2
 internal val uploadParallelism = nettyMax.coerceIn(4, 32)
-// max 16 and not 32 as for upload because we write to disk (not read as upload)
-internal val downloadParallelism = nettyMax.coerceIn(4, 16)
+// max not 32 as for upload because we write to disk (not read as upload)
+internal val downloadParallelism = nettyMax.coerceIn(4, 24)
 
 private const val BRANCH_PROPERTY_NAME = "intellij.build.compiled.classes.branch"
 private const val SERVER_URL_PROPERTY = "intellij.build.compiled.classes.server.url"
@@ -122,7 +124,7 @@ private suspend fun packCompilationResult(zipDir: Path, context: CompilationCont
     try {
       zipDir.deleteRecursively()
     }
-    catch (ignore: NoSuchFileException) {
+    catch (_: NoSuchFileException) {
     }
   }
   Files.createDirectories(zipDir)
@@ -148,7 +150,7 @@ private suspend fun packCompilationResult(zipDir: Path, context: CompilationCont
               continue
             }
           }
-          catch (ignore: FileSystemException) {
+          catch (_: FileSystemException) {
             continue
           }
 
@@ -163,11 +165,9 @@ private suspend fun packCompilationResult(zipDir: Path, context: CompilationCont
     }
   }
 
-  spanBuilder("build zip archives").use {
-    for (item in items) {
-      launch {
-        item.hash = packAndComputeHash(addDirEntriesMode = addDirEntriesMode, name = item.name, archive = item.archive, directory = item.output)
-      }
+  spanBuilder("build zip archives").use(Dispatchers.IO) {
+    items.forEachConcurrent { item ->
+      item.hash = packAndComputeHash(addDirEntriesMode = addDirEntriesMode, name = item.name, archive = item.archive, directory = item.output)
     }
   }
   return items
@@ -255,7 +255,7 @@ private suspend fun upload(
 }
 
 internal fun getArchiveStorage(fallbackPersistentCacheRoot: Path): Path {
-  return (System.getProperty("agent.persistent.cache")?.let { Path.of(it) } ?: fallbackPersistentCacheRoot).resolve("idea-compile-parts-v2")
+  return (TeamCityHelper.persistentCachePath ?: fallbackPersistentCacheRoot).resolve("idea-compile-parts-v2")
 }
 
 @VisibleForTesting
@@ -416,8 +416,10 @@ private suspend fun checkPreviouslyUnpackedDirectories(
 
   val start = System.nanoTime()
   withContext(Dispatchers.IO) {
-    launch {
-      spanBuilder("remove stalled directories not present in metadata").setAttribute(AttributeKey.stringArrayKey("keys"), java.util.List.copyOf(metadata.files.keys)).use {
+    val name = "remove stalled directories not present in metadata"
+    launch(CoroutineName(name)) {
+      @Suppress("RemoveRedundantQualifierName")
+      spanBuilder(name).setAttribute(AttributeKey.stringArrayKey("keys"), java.util.List.copyOf(metadata.files.keys)).use {
         removeStalledDirs(metadata, classOutput)
       }
     }
@@ -489,13 +491,13 @@ private fun CoroutineScope.removeStalledDirs(
           }
         }
       }
-      catch (ignore: NoSuchFileException) {
+      catch (_: NoSuchFileException) {
       }
     }
   }
 
   for (dir in stalledDirs) {
-    launch {
+    launch(CoroutineName("delete stalled dir $dir")) {
       spanBuilder("delete stalled dir").setAttribute("dir", dir.toString()).use {
         dir.deleteRecursively()
       }

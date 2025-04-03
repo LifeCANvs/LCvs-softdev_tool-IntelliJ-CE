@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.formatter;
 
@@ -374,9 +374,38 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                     KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
                 }
 
+                @TestMetadata("CollectionLiteralEnabled.after.kt")
+                public void testCollectionLiteralEnabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/collectionLiteralExpression/CollectionLiteralEnabled.after.kt");
+                }
+
                 @TestMetadata("CollectionLiteralInAnnotation.after.kt")
                 public void testCollectionLiteralInAnnotation() throws Exception {
                     runTest("testData/formatter/trailingComma/collectionLiteralExpression/CollectionLiteralInAnnotation.after.kt");
+                }
+            }
+
+            @RunWith(JUnit3RunnerWithInners.class)
+            @TestMetadata("testData/formatter/trailingComma/contextParameters")
+            public static class ContextParameters extends AbstractFormatterTest {
+                @java.lang.Override
+                @org.jetbrains.annotations.NotNull
+                public final KotlinPluginMode getPluginMode() {
+                    return KotlinPluginMode.K1;
+                }
+
+                private void runTest(String testDataFilePath) throws Exception {
+                    KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+                }
+
+                @TestMetadata("ContextParametersList.after.kt")
+                public void testContextParametersList() throws Exception {
+                    runTest("testData/formatter/trailingComma/contextParameters/ContextParametersList.after.kt");
+                }
+
+                @TestMetadata("ContextParametersListDisabled.after.kt")
+                public void testContextParametersListDisabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/contextParameters/ContextParametersListDisabled.after.kt");
                 }
             }
 
@@ -391,6 +420,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
 
                 private void runTest(String testDataFilePath) throws Exception {
                     KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+                }
+
+                @TestMetadata("DestructuringDeclarationsDisabled.after.kt")
+                public void testDestructuringDeclarationsDisabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/destructuringDeclarations/DestructuringDeclarationsDisabled.after.kt");
                 }
 
                 @TestMetadata("DestructuringDeclarationsInLambda.after.kt")
@@ -440,6 +474,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                 public void testIndicesAccess() throws Exception {
                     runTest("testData/formatter/trailingComma/indices/IndicesAccess.after.kt");
                 }
+
+                @TestMetadata("IndicesEnabled.after.kt")
+                public void testIndicesEnabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/indices/IndicesEnabled.after.kt");
+                }
             }
 
             @RunWith(JUnit3RunnerWithInners.class)
@@ -458,6 +497,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                 @TestMetadata("LambdaParameterList.after.kt")
                 public void testLambdaParameterList() throws Exception {
                     runTest("testData/formatter/trailingComma/lambdaParameters/LambdaParameterList.after.kt");
+                }
+
+                @TestMetadata("LambdaParametersDisabled.after.kt")
+                public void testLambdaParametersDisabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/lambdaParameters/LambdaParametersDisabled.after.kt");
                 }
             }
 
@@ -478,6 +522,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                 public void testTypeArgumentList() throws Exception {
                     runTest("testData/formatter/trailingComma/typeArguments/TypeArgumentList.after.kt");
                 }
+
+                @TestMetadata("TypeArgumentListEnabled.after.kt")
+                public void testTypeArgumentListEnabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/typeArguments/TypeArgumentListEnabled.after.kt");
+                }
             }
 
             @RunWith(JUnit3RunnerWithInners.class)
@@ -496,6 +545,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                 @TestMetadata("TypeParameterList.after.kt")
                 public void testTypeParameterList() throws Exception {
                     runTest("testData/formatter/trailingComma/typeParameters/TypeParameterList.after.kt");
+                }
+
+                @TestMetadata("TypeParameterListDisabled.after.kt")
+                public void testTypeParameterListDisabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/typeParameters/TypeParameterListDisabled.after.kt");
                 }
             }
 
@@ -535,6 +589,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                 @TestMetadata("NamedArguments.after.kt")
                 public void testNamedArguments() throws Exception {
                     runTest("testData/formatter/trailingComma/valueArguments/NamedArguments.after.kt");
+                }
+
+                @TestMetadata("ValueArgumentsEnabled.after.kt")
+                public void testValueArgumentsEnabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/valueArguments/ValueArgumentsEnabled.after.kt");
                 }
             }
 
@@ -600,9 +659,19 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                     runTest("testData/formatter/trailingComma/whenEntry/WhenEntry.after.kt");
                 }
 
+                @TestMetadata("WhenEntryDisabled.after.kt")
+                public void testWhenEntryDisabled() throws Exception {
+                    runTest("testData/formatter/trailingComma/whenEntry/WhenEntryDisabled.after.kt");
+                }
+
                 @TestMetadata("WhenEntryNoIndentBeforeArrow.after.kt")
                 public void testWhenEntryNoIndentBeforeArrow() throws Exception {
                     runTest("testData/formatter/trailingComma/whenEntry/WhenEntryNoIndentBeforeArrow.after.kt");
+                }
+
+                @TestMetadata("WhenEntryWithGuards.after.kt")
+                public void testWhenEntryWithGuards() throws Exception {
+                    runTest("testData/formatter/trailingComma/whenEntry/WhenEntryWithGuards.after.kt");
                 }
             }
         }
@@ -785,6 +854,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                 runTest("testData/formatter/CommentInFunctionLiteral.after.kt");
             }
 
+            @TestMetadata("ContextParameterMultiline.after.kt")
+            public void testContextParameterMultiline() throws Exception {
+                runTest("testData/formatter/ContextParameterMultiline.after.kt");
+            }
+
             @TestMetadata("ContinuationIndentInAssigments.after.kt")
             public void testContinuationIndentInAssigments() throws Exception {
                 runTest("testData/formatter/ContinuationIndentInAssigments.after.kt");
@@ -963,6 +1037,16 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
             @TestMetadata("ExtendsListWrap.after.kt")
             public void testExtendsListWrap() throws Exception {
                 runTest("testData/formatter/ExtendsListWrap.after.kt");
+            }
+
+            @TestMetadata("FloatingPointRangeWithDots.after.kt")
+            public void testFloatingPointRangeWithDots() throws Exception {
+                runTest("testData/formatter/FloatingPointRangeWithDots.after.kt");
+            }
+
+            @TestMetadata("FloatingPointRangeWithoutDots.after.kt")
+            public void testFloatingPointRangeWithoutDots() throws Exception {
+                runTest("testData/formatter/FloatingPointRangeWithoutDots.after.kt");
             }
 
             @TestMetadata("ForLineBreak.after.kt")
@@ -1485,6 +1569,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                 runTest("testData/formatter/WhenEntryExprNoIndentBeforeArrow.after.kt");
             }
 
+            @TestMetadata("WhenIfGuardUnnecessarySpace.after.kt")
+            public void testWhenIfGuardUnnecessarySpace() throws Exception {
+                runTest("testData/formatter/WhenIfGuardUnnecessarySpace.after.kt");
+            }
+
             @TestMetadata("WhenLineBreak.after.kt")
             public void testWhenLineBreak() throws Exception {
                 runTest("testData/formatter/WhenLineBreak.after.kt");
@@ -1773,6 +1862,25 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
             }
 
             @RunWith(JUnit3RunnerWithInners.class)
+            @TestMetadata("testData/formatter/trailingComma/contextParameters")
+            public static class ContextParameters extends AbstractFormatterTest {
+                @java.lang.Override
+                @org.jetbrains.annotations.NotNull
+                public final KotlinPluginMode getPluginMode() {
+                    return KotlinPluginMode.K1;
+                }
+
+                private void runTest(String testDataFilePath) throws Exception {
+                    KotlinTestUtils.runTest(this::doTestInverted, this, testDataFilePath);
+                }
+
+                @TestMetadata("ContextParametersList.after.inv.kt")
+                public void testContextParametersList() throws Exception {
+                    runTest("testData/formatter/trailingComma/contextParameters/ContextParametersList.after.inv.kt");
+                }
+            }
+
+            @RunWith(JUnit3RunnerWithInners.class)
             @TestMetadata("testData/formatter/trailingComma/destructuringDeclarations")
             public static class DestructuringDeclarations extends AbstractFormatterTest {
                 @java.lang.Override
@@ -1996,6 +2104,11 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
                 public void testWhenEntryNoIndentBeforeArrow() throws Exception {
                     runTest("testData/formatter/trailingComma/whenEntry/WhenEntryNoIndentBeforeArrow.after.inv.kt");
                 }
+
+                @TestMetadata("WhenEntryWithGuards.after.inv.kt")
+                public void testWhenEntryWithGuards() throws Exception {
+                    runTest("testData/formatter/trailingComma/whenEntry/WhenEntryWithGuards.after.inv.kt");
+                }
             }
         }
 
@@ -2125,6 +2238,16 @@ public abstract class FormatterTestGenerated extends AbstractFormatterTest {
             @TestMetadata("ExtendsListAlignEnum.after.inv.kt")
             public void testExtendsListAlignEnum() throws Exception {
                 runTest("testData/formatter/ExtendsListAlignEnum.after.inv.kt");
+            }
+
+            @TestMetadata("FloatingPointRangeWithDots.after.inv.kt")
+            public void testFloatingPointRangeWithDots() throws Exception {
+                runTest("testData/formatter/FloatingPointRangeWithDots.after.inv.kt");
+            }
+
+            @TestMetadata("FloatingPointRangeWithoutDots.after.inv.kt")
+            public void testFloatingPointRangeWithoutDots() throws Exception {
+                runTest("testData/formatter/FloatingPointRangeWithoutDots.after.inv.kt");
             }
 
             @TestMetadata("ForLineBreak.after.inv.kt")

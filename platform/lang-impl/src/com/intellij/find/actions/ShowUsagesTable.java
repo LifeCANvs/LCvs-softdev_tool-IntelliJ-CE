@@ -24,9 +24,11 @@ import com.intellij.usages.impl.*;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.containers.SmartHashSet;
 import com.intellij.util.ui.ColumnInfo;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.ListTableModel;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -42,6 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
+@ApiStatus.Internal
 public final class ShowUsagesTable extends JBTable implements UiDataProvider {
   final Usage MORE_USAGES_SEPARATOR = new UsageAdapter();
   final Usage USAGES_OUTSIDE_SCOPE_SEPARATOR = new UsageAdapter();
@@ -51,9 +54,9 @@ public final class ShowUsagesTable extends JBTable implements UiDataProvider {
   static final int MIN_COLUMN_WIDTH = 200;
 
   private final ShowUsagesTableCellRenderer myRenderer;
-  private final UsageView myUsageView;
+  private final UsageViewImpl myUsageView;
 
-  ShowUsagesTable(@NotNull ShowUsagesTableCellRenderer renderer, UsageView usageView) {
+  ShowUsagesTable(@NotNull ShowUsagesTableCellRenderer renderer, UsageViewImpl usageView) {
     myRenderer = renderer;
     myUsageView = usageView;
     ScrollingUtil.installActions(this);
@@ -112,6 +115,7 @@ public final class ShowUsagesTable extends JBTable implements UiDataProvider {
       moreUsagesSelected.set(false);
       filteredOutUsagesSelected.set(null);
       java.util.List<Object> usages = null;
+      var nonDisposableUsageInfos = new SmartHashSet<UsageInfo>();
       //todo List<Usage>
       for (int i : getSelectedRows()) {
         Object value = getValueAt(i, 0);
@@ -133,11 +137,25 @@ public final class ShowUsagesTable extends JBTable implements UiDataProvider {
             break;
           }
           if (usages == null) usages = new ArrayList<>();
-          usages.add(usage instanceof UsageInfo2UsageAdapter ? ((UsageInfo2UsageAdapter)usage).getUsageInfo() : usage);
+          if (usage instanceof UsageInfo2UsageAdapter adapter) {
+            var usageInfo = adapter.getUsageInfo();
+            usages.add(usageInfo);
+            nonDisposableUsageInfos.add(usageInfo);
+          }
+          else {
+            usages.add(usage);
+          }
         }
       }
 
       selectedUsages.set(usages);
+      // The callback below is called after the popup is disposed,
+      // and when it happens, it disposes all smart pointers.
+      // This prevents some functionality in navigateTo.
+      // Therefore, we need to preserve the selected usages smart pointers.
+      // According to com.intellij.psi.SmartPointerManager.removePointer,
+      // disposing isn't mandatory so there should be no leaks here.
+      myUsageView.setNonDisposableUsageInfos(nonDisposableUsageInfos);
     });
 
     return () -> {

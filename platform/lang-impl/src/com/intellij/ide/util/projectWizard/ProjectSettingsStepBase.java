@@ -14,6 +14,7 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.ui.*;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.NotNullLazyValue;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.HtmlChunk;
@@ -42,6 +43,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
 import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,20 +64,31 @@ public class ProjectSettingsStepBase<T> extends AbstractActionWithPanel implemen
   protected JLabel myErrorLabel;
   protected NotNullLazyValue<ProjectGeneratorPeer<T>> myLazyGeneratorPeer;
   private AbstractNewProjectStep<T> myProjectStep;
+  private static final String DEFAULT_PROJECT_NAME = "untitled";
+  private final @NlsSafe @NotNull String myNewProjectName;
   /**
-   * If {@link ProjectGeneratorPeer#getComponent()} is Kotlin DSL UI, we store it here and use for validation
+   * If {@link ProjectGeneratorPeer#getComponent(TextFieldWithBrowseButton, Runnable)} is Kotlin DSL UI, we store it here and use for validation
    */
-  @Nullable
-  private DialogPanelWrapper myDialogPanelWrapper;
+  private @Nullable DialogPanelWrapper myDialogPanelWrapper;
 
   public ProjectSettingsStepBase(DirectoryProjectGenerator<T> projectGenerator,
                                  AbstractNewProjectStep.AbstractCallback<T> callback) {
+    this(projectGenerator, callback, null);
+  }
+
+  /**
+   * @param newProjectName {@link #myLocationField} will have default value ending with this name. Null means default
+   */
+  protected ProjectSettingsStepBase(DirectoryProjectGenerator<T> projectGenerator,
+                                    AbstractNewProjectStep.AbstractCallback<T> callback,
+                                    @NlsSafe @Nullable String newProjectName) {
     super();
     getTemplatePresentation().setIcon(projectGenerator.getLogo());
     getTemplatePresentation().setText(projectGenerator.getName());
     myProjectGenerator = projectGenerator;
     myCallback = callback;
-    myProjectDirectory = NotNullLazyValue.lazy(() -> findSequentNonExistingUntitled());
+    myProjectDirectory = NotNullLazyValue.lazy(() -> findSequentNonExistingUntitled().toFile());
+    myNewProjectName = newProjectName != null ? newProjectName : DEFAULT_PROJECT_NAME;
   }
 
   @Override
@@ -160,7 +173,7 @@ public class ProjectSettingsStepBase<T> extends AbstractActionWithPanel implemen
           if (dialog != null) {
             dialog.close(DialogWrapper.OK_EXIT_CODE);
           }
-          try (AccessToken ignore = SlowOperations.allowSlowOperations(SlowOperations.ACTION_PERFORM)) {
+          try (AccessToken ignore = SlowOperations.startSection(SlowOperations.ACTION_PERFORM)) {
             myCallback.consume(ProjectSettingsStepBase.this, getPeer());
           }
         }
@@ -319,7 +332,7 @@ public class ProjectSettingsStepBase<T> extends AbstractActionWithPanel implemen
 
   protected @Nullable JPanel createAdvancedSettings() {
     final JPanel jPanel = new JPanel(new VerticalFlowLayout(0, 5));
-    var component = getPeer().getComponent();
+    var component = getPeer().getComponent(myLocationField, () -> checkValid());
     // If a component is a DialogPanel, created with Kotlin DSL UI,
     // it may have validation which must be obeyed as is done for DialogWrapper
     if (component instanceof DialogPanel dialogPanel) {
@@ -349,6 +362,7 @@ public class ProjectSettingsStepBase<T> extends AbstractActionWithPanel implemen
 
   protected LabeledComponent<TextFieldWithBrowseButton> createLocationComponent() {
     myLocationField = new TextFieldWithBrowseButton();
+    Disposer.register(this, myLocationField);
     final String projectLocation = myProjectDirectory.get().toString();
     myLocationField.setText(projectLocation);
     final int index = projectLocation.lastIndexOf(File.separator);
@@ -367,8 +381,11 @@ public class ProjectSettingsStepBase<T> extends AbstractActionWithPanel implemen
                                    BorderLayout.WEST);
   }
 
-  protected @NotNull File findSequentNonExistingUntitled() {
-    return FileUtil.findSequentNonexistentFile(new File(ProjectUtil.getBaseDir()), "untitled", "");
+  /**
+   * Looks for the place for a new project
+   */
+  protected @NotNull Path findSequentNonExistingUntitled() {
+    return FileUtil.findSequentNonexistentFile(new File(ProjectUtil.getBaseDir()), myNewProjectName, "").toPath();
   }
 
   @Override

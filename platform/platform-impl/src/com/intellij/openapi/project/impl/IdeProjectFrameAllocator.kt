@@ -10,17 +10,10 @@ import com.intellij.diagnostic.StartUpPerformanceService
 import com.intellij.diagnostic.dumpCoroutines
 import com.intellij.featureStatistics.fusCollectors.FileEditorCollector.EmptyStateCause
 import com.intellij.featureStatistics.fusCollectors.LifecycleUsageTriggerCollector
-import com.intellij.ide.IdeBundle
-import com.intellij.ide.RecentProjectMetaInfo
-import com.intellij.ide.RecentProjectsManager
-import com.intellij.ide.RecentProjectsManagerBase
+import com.intellij.ide.*
 import com.intellij.ide.impl.OpenProjectTask
 import com.intellij.ide.util.runOnceForProject
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.asContextElement
-import com.intellij.openapi.application.writeIntentReadAction
+import com.intellij.openapi.application.*
 import com.intellij.openapi.components.ComponentManagerEx
 import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.components.serviceIfCreated
@@ -42,6 +35,7 @@ import com.intellij.openapi.project.ReadmeShownUsageCollector.README_OPENED_ON_S
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.project.isNotificationSilentMode
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.util.registry.RegistryManager
 import com.intellij.openapi.vfs.VirtualFile
@@ -53,7 +47,6 @@ import com.intellij.openapi.wm.impl.*
 import com.intellij.platform.diagnostic.telemetry.impl.getTraceActivity
 import com.intellij.platform.diagnostic.telemetry.impl.rootTask
 import com.intellij.platform.diagnostic.telemetry.impl.span
-import com.intellij.platform.ide.bootstrap.getAndUnsetSplashProjectFrame
 import com.intellij.platform.ide.bootstrap.hideSplash
 import com.intellij.platform.ide.diagnostic.startUpPerformanceReporter.FUSProjectHotStartUpMeasurer
 import com.intellij.problems.WolfTheProblemSolver
@@ -66,7 +59,6 @@ import kotlinx.coroutines.*
 import org.jetbrains.annotations.ApiStatus
 import java.awt.Dimension
 import java.awt.Frame
-import java.awt.GraphicsDevice
 import java.awt.Rectangle
 import java.nio.file.Path
 import java.time.Instant
@@ -87,16 +79,18 @@ internal class IdeProjectFrameAllocator(
 
   override suspend fun runInBackground(projectInitObservable: ProjectInitObservable) {
     coroutineScope {
-      launch {
-        delay(10.seconds)
-        logger<ProjectFrameAllocator>().warn("Cannot load project in 10 seconds: ${dumpCoroutines()}")
+      val application = ApplicationManager.getApplication()
+      if (application == null || application.isUnitTestMode || application.isInternal) {
+        launch {
+          delay(10.seconds)
+          // logged only during development, let's not spam users
+          logger<ProjectFrameAllocator>().warn("Cannot load project in 10 seconds: ${dumpCoroutines()}")
+        }
       }
 
-      launch {
-        val project = projectInitObservable.awaitProjectInit()
-        val connection = project.messageBus.connect(this)
-        hideSplashWhenEditorOrToolWindowShown(connection)
-      }
+      val project = projectInitObservable.awaitProjectInit()
+      val connection = project.messageBus.connect(this)
+      hideSplashWhenEditorOrToolWindowShown(connection)
     }
   }
 
@@ -104,9 +98,13 @@ internal class IdeProjectFrameAllocator(
     coroutineScope {
       val job = currentCoroutineContext().job
 
-      async(CoroutineName("project frame creating")) {
+      launch(CoroutineName("project frame creating")) {
         val loadingState = MutableLoadingState(done = job)
         createFrameManager(loadingState)
+      }.invokeOnCompletion { cause ->
+        if (cause is CancellationException) {
+          job.cancel(cause)
+        }
       }
 
       launch {
@@ -202,51 +200,38 @@ internal class IdeProjectFrameAllocator(
   }
 
   private suspend fun createFrameManager(loadingState: FrameLoadingState) {
-    val frame = options.frame
-                ?: (ApplicationManager.getApplication().serviceIfCreated<WindowManager>() as? WindowManagerImpl)?.removeAndGetRootFrame()
+    val frame = getFrame()
+    val frameInfo = getFrameInfo()
 
-    if (frame != null) {
-      withContext(Dispatchers.EDT) {
+    withContext(Dispatchers.EDT) {
+      if (frame != null) {
+        if (!frame.isVisible) {
+          throw CancellationException("Pre-allocated frame was already closed")
+        }
         val frameHelper = IdeProjectFrameHelper(frame = frame, loadingState = loadingState)
-
         completeFrameAndCloseOnCancel(frameHelper) {
           if (options.forceOpenInNewFrame) {
-            updateFullScreenState(frameHelper, getFrameInfo())
+            frameHelper.updateFullScreenState(frameInfo.fullScreen)
           }
-
-          frameHelper.init()
-          frameHelper.setInitBounds(getFrameInfo()?.bounds)
+          span("ProjectFrameHelper.init") {
+            frameHelper.init()
+          }
+          frameHelper.setInitBounds(frameInfo.bounds)
         }
       }
-      return
-    }
+      else {
+        val frameHelper = IdeProjectFrameHelper(createIdeFrame(frameInfo), loadingState = loadingState)
+        // must be after preInit (frame decorator is required to set a full-screen mode)
+        frameHelper.frame.isVisible = true
+        completeFrameAndCloseOnCancel(frameHelper) {
+          frameHelper.updateFullScreenState(frameInfo.fullScreen)
 
-    val preAllocated = getAndUnsetSplashProjectFrame() as IdeFrameImpl?
-    if (preAllocated != null) {
-      val frameHelper = withContext(Dispatchers.EDT) {
-        val frameHelper = IdeProjectFrameHelper(frame = preAllocated, loadingState = loadingState)
-        frameHelper.init()
-        frameHelper
-      }
-      completeFrameAndCloseOnCancel(frameHelper) {}
-      return
-    }
-
-    val frameInfo = getFrameInfo()
-    val frameProducer = createNewProjectFrameProducer(frameInfo = frameInfo)
-    withContext(Dispatchers.EDT) {
-      val frameHelper = IdeProjectFrameHelper(frameProducer.create(), loadingState = loadingState)
-      // must be after preInit (frame decorator is required to set a full-screen mode)
-      frameHelper.frame.isVisible = true
-      updateFullScreenState(frameHelper, frameInfo)
-
-      completeFrameAndCloseOnCancel(frameHelper) {
-        span("ProjectFrameHelper.init") {
-          frameHelper.init()
+          span("ProjectFrameHelper.init") {
+            frameHelper.init()
+          }
         }
       }
     }
-    return
   }
 
   private suspend inline fun completeFrameAndCloseOnCancel(
@@ -260,7 +245,7 @@ internal class IdeProjectFrameAllocator(
         return
       }
     }
-    catch (ignore: CancellationException) {
+    catch (_: CancellationException) {
     }
 
     // make sure that in case of some error we close frame for a not loaded project
@@ -269,15 +254,15 @@ internal class IdeProjectFrameAllocator(
     }
   }
 
-  private suspend fun getFrameInfo(): FrameInfo? {
-    return options.frameInfo
-           ?: (serviceAsync<RecentProjectsManager>() as RecentProjectsManagerBase).getProjectMetaInfo(projectStoreBaseDir)?.frame
+  private fun getFrame(): IdeFrameImpl? {
+    return options.frame
+           ?: (ApplicationManager.getApplication().serviceIfCreated<WindowManager>() as? WindowManagerImpl)?.removeAndGetRootFrame()
   }
 
-  private fun updateFullScreenState(frameHelper: ProjectFrameHelper, frameInfo: FrameInfo?) {
-    if (frameInfo?.fullScreen == true && FrameInfoHelper.isFullScreenSupportedInCurrentOs()) {
-      frameHelper.toggleFullScreen(true)
-    }
+  private suspend fun getFrameInfo(): FrameInfo {
+    return options.frameInfo
+           ?: (serviceAsync<RecentProjectsManager>() as RecentProjectsManagerBase).getProjectMetaInfo(projectStoreBaseDir)?.frame
+           ?: FrameInfo()
   }
 
   override suspend fun projectNotLoaded(cannotConvertException: CannotConvertException?) {
@@ -412,31 +397,33 @@ private suspend fun focusSelectedEditor(editorComponent: EditorsSplitters) {
   else {
     blockingContext {
       AsyncEditorLoader.performWhenLoaded(textEditor.editor) {
-        FUSProjectHotStartUpMeasurer.firstOpenedEditor(composite.file)
+        FUSProjectHotStartUpMeasurer.firstOpenedEditor(composite.file, composite.project)
         composite.preferredFocusedComponent?.requestFocusInWindow()
       }
     }
   }
 }
 
-internal interface ProjectFrameProducer {
-  val device: GraphicsDevice?
-
-  fun create(): IdeFrameImpl
-}
-
-internal fun applyBoundsOrDefault(frame: JFrame, bounds: Rectangle?) {
+internal fun applyBoundsOrDefault(frame: JFrame, bounds: Rectangle?, restoreOnlyLocation: Boolean = false) {
   if (bounds == null) {
     setDefaultSize(frame)
     frame.setLocationRelativeTo(null)
   }
   else {
-    frame.bounds = bounds
+    if (restoreOnlyLocation) {
+      frame.location = bounds.location
+      // We need to guarantee that the size is smaller than this screen,
+      // to be able to maximize the frame after this.
+      setDefaultSize(frame, ScreenUtil.getScreenRectangle(bounds.location))
+    }
+    else {
+      frame.bounds = bounds
+    }
   }
 }
 
-private fun setDefaultSize(frame: JFrame) {
-  val size = ScreenUtil.getMainScreenBounds().size
+private fun setDefaultSize(frame: JFrame, screen: Rectangle = ScreenUtil.getMainScreenBounds()) {
+  val size = screen.size
   size.width = min(1400, size.width - 20)
   size.height = min(1000, size.height - 40)
   frame.size = size
@@ -444,57 +431,40 @@ private fun setDefaultSize(frame: JFrame) {
 }
 
 @ApiStatus.Internal
-internal fun createNewProjectFrameProducer(frameInfo: FrameInfo?): ProjectFrameProducer {
-  val deviceBounds = frameInfo?.bounds
+fun createIdeFrame(frameInfo: FrameInfo): IdeFrameImpl {
+  val deviceBounds = frameInfo.bounds
   if (deviceBounds == null) {
-    return object : ProjectFrameProducer {
-      override val device = null
-
-      override fun create(): IdeFrameImpl {
-        val frame = IdeFrameImpl()
-        setDefaultSize(frame)
-        frame.setLocationRelativeTo(null)
-        return frame
-      }
-    }
+    val frame = IdeFrameImpl()
+    setDefaultSize(frame)
+    frame.setLocationRelativeTo(null)
+    return frame
   }
   else {
-    val boundsAndDevice = FrameBoundsConverter.convertFromDeviceSpaceAndFitToScreen(deviceBounds)
+    checkForNonsenseBounds("IdeProjectFrameAllocatorKt.createNewProjectFrameProducer.deviceBounds", deviceBounds)
+    val bounds = FrameBoundsConverter.convertFromDeviceSpaceAndFitToScreen(deviceBounds)
     val state = frameInfo.extendedState
     val isMaximized = FrameInfoHelper.isMaximized(state)
-    val graphicsDevice = boundsAndDevice?.second
-    return object : ProjectFrameProducer {
-      override val device = graphicsDevice
+    val frame = IdeFrameImpl()
+    val restoreNormalBounds = isMaximized && frame.extendedState == Frame.NORMAL && bounds != null
 
-      override fun create(): IdeFrameImpl {
-        val frame = IdeFrameImpl()
-        if (isMaximized && frame.extendedState == Frame.NORMAL && boundsAndDevice != null) {
-          frame.normalBounds = boundsAndDevice.first
-          frame.screenBounds = ScreenUtil.getScreenDevice(boundsAndDevice.first)?.defaultConfiguration?.bounds
-          if (IDE_FRAME_EVENT_LOG.isDebugEnabled) { // avoid unnecessary concatenation
-            IDE_FRAME_EVENT_LOG.debug("Loaded saved normal bounds ${frame.normalBounds} for the screen ${frame.screenBounds}")
-          }
-        }
-        applyBoundsOrDefault(frame, boundsAndDevice?.first)
-        frame.extendedState = state
-        frame.minimumSize = Dimension(340, frame.minimumSize.height)
-        return frame
+    // On macOS, setExtendedState(maximized) may UN-maximize the frame if the restored bounds are too large
+    // (so the OS will "autodetect" it as already maximized).
+    // Therefore, we only restore the location and use the default size (which is always computed to be less than the screen).
+    applyBoundsOrDefault(frame, bounds, restoreOnlyLocation = isMaximized && SystemInfo.isMac)
+    frame.extendedState = state
+    frame.minimumSize = Dimension(340, frame.minimumSize.height)
+
+    // This has to be done after restoring the actual state, as otherwise setExtendedState() may overwrite the normal bounds.
+    if (restoreNormalBounds) {
+      frame.normalBounds = bounds
+      frame.screenBounds = ScreenUtil.getScreenDevice(bounds!!)?.defaultConfiguration?.bounds
+      if (IDE_FRAME_EVENT_LOG.isDebugEnabled) { // avoid unnecessary concatenation
+        IDE_FRAME_EVENT_LOG.debug("Loaded saved normal bounds ${frame.normalBounds} for the screen ${frame.screenBounds}")
       }
     }
+    return frame
   }
 }
-
-internal val OpenProjectTask.frameInfo: FrameInfo?
-  get() = (implOptions as OpenProjectImplOptions?)?.frameInfo
-
-internal val OpenProjectTask.frame: IdeFrameImpl?
-  get() = (implOptions as OpenProjectImplOptions?)?.frame
-
-internal data class OpenProjectImplOptions(
-  @JvmField val recentProjectMetaInfo: RecentProjectMetaInfo,
-  @JvmField val frameInfo: FrameInfo? = null,
-  @JvmField val frame: IdeFrameImpl? = null,
-)
 
 private suspend fun openProjectViewIfNeeded(project: Project, toolWindowInitJob: Job) {
   if (!serviceAsync<RegistryManager>().`is`("ide.open.project.view.on.startup")) {
@@ -507,9 +477,12 @@ private suspend fun openProjectViewIfNeeded(project: Project, toolWindowInitJob:
   val toolWindowManager = project.serviceAsync<ToolWindowManager>()
   withContext(Dispatchers.EDT) {
     if (toolWindowManager.activeToolWindowId == null) {
-      //maybe readaction
-      writeIntentReadAction {
-        toolWindowManager.getToolWindow("Project")?.activate(null)
+      val toolWindow = toolWindowManager.getToolWindow("Project")
+      if (toolWindow != null) {
+        // maybe readAction
+        writeIntentReadAction {
+          toolWindow.activate(null)
+        }
       }
     }
   }

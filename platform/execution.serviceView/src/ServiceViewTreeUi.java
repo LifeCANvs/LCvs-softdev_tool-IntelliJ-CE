@@ -38,6 +38,7 @@ final class ServiceViewTreeUi implements ServiceViewUi {
     ExecutionBundle.message("service.view.empty.selection.text"));
   private final Set<JComponent> myDetailsComponents = ContainerUtil.createWeakSet();
   private ActionToolbar myServiceActionToolbar;
+  private JComponent myServiceActionToolbarPlaceholder;
   private JComponent myServiceActionToolbarWrapper;
   private ActionToolbar myMasterActionToolbar;
   private NavBarWrapper myNavBarWrapper;
@@ -64,6 +65,10 @@ final class ServiceViewTreeUi implements ServiceViewUi {
     myMessagePanel.setFocusable(true);
     myContentComponentPanel.add(myMessagePanel, BorderLayout.CENTER);
     myDetailsPanel.add(myContentComponentPanel, BorderLayout.CENTER);
+    if (ServiceViewUIUtils.isNewServicesUIEnabled()) {
+      myServiceActionToolbarPlaceholder = new JPanel(new BorderLayout());
+      myDetailsPanel.add(myServiceActionToolbarPlaceholder, BorderLayout.NORTH);
+    }
     mySplitter.setSecondComponent(myDetailsPanel);
 
     if (state.showServicesTree) {
@@ -78,9 +83,8 @@ final class ServiceViewTreeUi implements ServiceViewUi {
         JBIterable.from(myDetailsComponents).append(myMessagePanel).filter(component -> myContentComponentPanel != component.getParent()).iterator());
   }
 
-  @NotNull
   @Override
-  public JComponent getComponent() {
+  public @NotNull JComponent getComponent() {
     return myMainPanel;
   }
 
@@ -96,7 +100,7 @@ final class ServiceViewTreeUi implements ServiceViewUi {
     if (inDetails) {
       JComponent wrapper = ServiceViewUIUtils.wrapServicesAligned(myServiceActionToolbar);
       myServiceActionToolbarWrapper = actionProvider.wrapServiceToolbar(wrapper, inDetails);
-      myDetailsPanel.add(myServiceActionToolbarWrapper, BorderLayout.NORTH);
+      myServiceActionToolbarPlaceholder.add(myServiceActionToolbarWrapper, BorderLayout.CENTER);
     }
     else {
       myContentPanel.setToolbar(actionProvider.wrapServiceToolbar(myServiceActionToolbar.getComponent(), inDetails));
@@ -196,9 +200,8 @@ final class ServiceViewTreeUi implements ServiceViewUi {
     myDetailsPanel.setVisible(visible);
   }
 
-  @Nullable
   @Override
-  public JComponent getDetailsComponent() {
+  public @Nullable JComponent getDetailsComponent() {
     int count = myContentComponentPanel.getComponentCount();
     if (count == 0) return null;
 

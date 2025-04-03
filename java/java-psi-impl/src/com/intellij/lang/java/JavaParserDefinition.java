@@ -13,20 +13,19 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.LanguageLevelProjectExtension;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
-import com.intellij.psi.impl.java.stubs.JavaStubElementType;
+import com.intellij.psi.impl.java.stubs.JavaStubElementTypePsiElementMappingRegistry;
 import com.intellij.psi.impl.source.JavaFileElementType;
 import com.intellij.psi.impl.source.PsiJavaFileImpl;
 import com.intellij.psi.impl.source.tree.ElementType;
 import com.intellij.psi.impl.source.tree.JavaElementType;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.IFileElementType;
-import com.intellij.psi.tree.IStubFileElementType;
 import com.intellij.psi.tree.TokenSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class JavaParserDefinition implements ParserDefinition {
-  public static final IStubFileElementType JAVA_FILE = new JavaFileElementType();
+  public static final IFileElementType JAVA_FILE = new JavaFileElementType();
 
   @Override
   public @NotNull Lexer createLexer(@Nullable Project project) {
@@ -70,10 +69,10 @@ public class JavaParserDefinition implements ParserDefinition {
   @Override
   public @NotNull PsiElement createElement(ASTNode node) {
     IElementType type = node.getElementType();
-    if (type instanceof JavaStubElementType) {
-      return ((JavaStubElementType<?, ?>)type).createPsi(node);
+    PsiElement psi = JavaStubElementTypePsiElementMappingRegistry.getInstance().createPsi(node);
+    if (psi != null) {
+      return psi;
     }
-
     // This exception is caught in com.intellij.psi.impl.source.tree.injected.InjectionRegistrarImpl.findNewInjectionHost
     // Please, check that code if you make any changes here
     throw new IllegalArgumentException("Not a Java node: " + node + " (" + type + ", " + type.getLanguage() + ")");

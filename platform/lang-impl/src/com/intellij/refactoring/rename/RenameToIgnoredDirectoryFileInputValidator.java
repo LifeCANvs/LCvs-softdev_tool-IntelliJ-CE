@@ -10,8 +10,10 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.refactoring.RefactoringBundle;
 import com.intellij.util.ProcessingContext;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
+@ApiStatus.Internal
 public class RenameToIgnoredDirectoryFileInputValidator implements RenameInputValidatorEx {
   @Override
   public @Nullable String getErrorMessage(String newName, Project project) {
@@ -28,6 +30,6 @@ public class RenameToIgnoredDirectoryFileInputValidator implements RenameInputVa
 
   @Override
   public boolean isInputValid(String newName, PsiElement element, ProcessingContext context) {
-    return newName != null && newName.length() > 0 && newName.indexOf('\\') < 0 && newName.indexOf('/') < 0 && newName.indexOf('\n') < 0;
+    return newName != null && !newName.isEmpty() && newName.indexOf('\\') < 0 && newName.indexOf('/') < 0 && newName.indexOf('\n') < 0;
   }
 }

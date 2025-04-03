@@ -19,12 +19,15 @@ import com.intellij.diff.DiffManager;
 import com.intellij.diff.DiffRequestFactory;
 import com.intellij.diff.requests.DiffRequest;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
+import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification;
 import com.intellij.openapi.project.Project;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
-public class XCompareWithClipboardAction extends XFetchValueActionBase {
+@ApiStatus.Internal
+public class XCompareWithClipboardAction extends XFetchValueActionBase implements ActionRemoteBehaviorSpecification.FrontendOtherwiseBackend {
 
   @Override
   protected void handle(final Project project, final String value, XDebuggerTree tree) {

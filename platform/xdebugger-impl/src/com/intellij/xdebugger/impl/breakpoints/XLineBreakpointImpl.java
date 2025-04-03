@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.breakpoints;
 
 import com.intellij.openapi.application.ApplicationManager;
@@ -56,13 +56,13 @@ public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends 
   private static final ExecutorService redrawInlaysExecutor =
     AppExecutorUtil.createBoundedApplicationPoolExecutor("XLineBreakpointImpl Inlay Redraw", 1);
 
-  @Nullable private RangeMarker myHighlighter;
+  private @Nullable RangeMarker myHighlighter;
   private final XLineBreakpointType<P> myType;
   private XSourcePosition mySourcePosition;
 
   public XLineBreakpointImpl(final XLineBreakpointType<P> type,
                              XBreakpointManagerImpl breakpointManager,
-                             @Nullable final P properties, LineBreakpointState<P> state) {
+                             final @Nullable P properties, LineBreakpointState<P> state) {
     super(type, breakpointManager, properties, state);
     myType = type;
   }
@@ -158,7 +158,7 @@ public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends 
           MarkupModelEx markupModel = (MarkupModelEx)DocumentMarkupModel.forDocument(finalDocument, getProject(), true);
           if (range != null && !range.isEmpty()) {
             TextRange lineRange = DocumentUtil.getLineTextRange(finalDocument, line);
-            if (range.intersects(lineRange)) {
+            if (range.intersectsStrict(lineRange)) {
               highlighter = markupModel.addRangeHighlighter(range.getStartOffset(), range.getEndOffset(),
                                                             DebuggerColors.BREAKPOINT_HIGHLIGHTER_LAYER, attributes,
                                                             HighlighterTargetArea.EXACT_RANGE);
@@ -190,18 +190,16 @@ public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends 
         }
 
         callOnUpdate.run();
-      });
+      }, getProject().getDisposed());
     }).executeSynchronously();
   }
 
-  @Nullable
-  public VirtualFile getFile() {
+  public @Nullable VirtualFile getFile() {
     return VirtualFileManager.getInstance().findFileByUrl(getFileUrl());
   }
 
   @Override
-  @NotNull
-  public XLineBreakpointType<P> getType() {
+  public @NotNull XLineBreakpointType<P> getType() {
     return myType;
   }
 
@@ -238,8 +236,7 @@ public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends 
     return new File(VfsUtilCore.urlToPath(getFileUrl())).getName();
   }
 
-  @Nullable
-  public RangeHighlighter getHighlighter() {
+  public @Nullable RangeHighlighter getHighlighter() {
     return myHighlighter instanceof RangeHighlighter ? (RangeHighlighter)myHighlighter : null;
   }
 

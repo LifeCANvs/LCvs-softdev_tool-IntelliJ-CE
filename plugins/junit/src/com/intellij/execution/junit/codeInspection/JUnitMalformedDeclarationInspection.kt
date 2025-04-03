@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.junit.codeInspection
 
 import com.intellij.codeInsight.AnnotationUtil
@@ -47,7 +47,7 @@ import kotlin.streams.asSequence
 
 class JUnitMalformedDeclarationInspection : AbstractBaseUastLocalInspectionTool() {
   @JvmField
-  val ignorableAnnotations = mutableListOf("mockit.Mocked", "org.junit.jupiter.api.io.TempDir")
+  val ignorableAnnotations: List<String> = listOf("mockit.Mocked", "org.junit.jupiter.api.io.TempDir")
 
   override fun getOptionsPane(): OptPane = pane(
     stringList(
@@ -229,21 +229,27 @@ private class JUnitMalformedSignatureVisitor(
   }
 
   private fun PsiModifierListOwner.inParameterResolverContext(): Boolean {
-    val hasAnnotation = MetaAnnotationUtil.findMetaAnnotationsInHierarchy(this, listOf(ORG_JUNIT_JUPITER_API_EXTENSION_EXTEND_WITH))
+    val extendsWith = MetaAnnotationUtil.findMetaAnnotationsInHierarchy(this, listOf(ORG_JUNIT_JUPITER_API_EXTENSION_EXTEND_WITH))
       .asSequence()
-      .any { annotation ->
-        annotation?.flattenedAttributeValues(PsiAnnotation.DEFAULT_REFERENCED_METHOD_NAME)?.any {
-          val uClassLiteral = it.toUElementOfType<UClassLiteralExpression>()
-          uClassLiteral != null && InheritanceUtil.isInheritor(uClassLiteral.type, ORG_JUNIT_JUPITER_API_EXTENSION_PARAMETER_RESOLVER)
-        } == true
-      }
+    val extensionsEntries = MetaAnnotationUtil.findMetaAnnotationsInHierarchy(this, listOf(ORG_JUNIT_JUPITER_API_EXTENSION_EXTENSIONS))
+      .asSequence()
+      .map { annotation -> annotation.flattenedAttributeValues(PsiAnnotation.DEFAULT_REFERENCED_METHOD_NAME) }
+      .flatten()
+      .filterIsInstance<PsiAnnotation>()
+    val hasAnnotation = (extendsWith + extensionsEntries).any { annotation ->
+      annotation?.flattenedAttributeValues(PsiAnnotation.DEFAULT_REFERENCED_METHOD_NAME)?.any {
+        val uClassLiteral = it.toUElementOfType<UClassLiteralExpression>()
+        uClassLiteral != null && InheritanceUtil.isInheritor(uClassLiteral.type, ORG_JUNIT_JUPITER_API_EXTENSION_PARAMETER_RESOLVER)
+      } == true
+    }
     if (hasAnnotation) return true
     val hasRegisteredExtension = if (this is PsiClass) {
-      fields.any {  field ->
+      fields.any { field ->
         field.hasAnnotation(ORG_JUNIT_JUPITER_API_EXTENSION_REGISTER_EXTENSION)
         && InheritanceUtil.isInheritor(field.type, ORG_JUNIT_JUPITER_API_EXTENSION_PARAMETER_RESOLVER)
       }
-    } else false
+    }
+    else false
     if (hasRegisteredExtension) return true
     if (parentOfType<PsiModifierListOwner>(withSelf = false)?.inParameterResolverContext() == true) return true
     return hasPotentialAutomaticParameterResolver(this)
@@ -658,7 +664,7 @@ private class JUnitMalformedSignatureVisitor(
   }
 
   private fun implementationsTestInstanceAnnotated(containingClass: PsiClass): Boolean =
-    ClassInheritorsSearch.search(containingClass, containingClass.resolveScope, true).any { TestUtils.testInstancePerClass(it) }
+    ClassInheritorsSearch.search(containingClass, containingClass.resolveScope, true).asIterable().any { TestUtils.testInstancePerClass(it) }
 
   private fun getComponentType(returnType: PsiType?, method: PsiMethod): PsiType? {
     val collectionItemType = JavaGenericsUtil.getCollectionItemType(returnType, method.resolveScope)

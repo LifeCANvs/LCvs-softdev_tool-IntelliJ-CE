@@ -3,7 +3,6 @@ package com.intellij.openapi.project
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.IncompleteDependenciesService.IncompleteDependenciesAccessToken
-import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.concurrency.annotations.RequiresReadLock
 import com.intellij.util.concurrency.annotations.RequiresWriteLock
 import kotlinx.coroutines.flow.Flow
@@ -13,7 +12,7 @@ import org.jetbrains.annotations.ApiStatus
 /**
  * Indicates project state when dependencies are not yet downloaded.
  */
-@ApiStatus.Internal
+@ApiStatus.Experimental
 interface IncompleteDependenciesService {
   /**
    * Note that [Flow.collect] is invoked asynchronously outside any lock
@@ -42,7 +41,6 @@ interface IncompleteDependenciesService {
 fun IncompleteDependenciesAccessToken.asAutoCloseable(): WriteActionAutoCloseable = WriteActionAutoCloseable(this::finish)
 
 class WriteActionAutoCloseable(private val finish: () -> Unit) : AutoCloseable {
-  @RequiresBlockingContext
   override fun close() {
     ApplicationManager.getApplication().runWriteAction {
       finish()

@@ -10,10 +10,12 @@ import com.intellij.openapi.util.SystemInfo;
 import com.intellij.util.ui.UIUtil;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.*;
 
+@ApiStatus.Internal
 public class HtmlSyntaxInfoReader extends AbstractSyntaxAwareReader implements MarkupHandler {
   private final int myTabSize;
   protected StringBuilder    myResultBuffer;
@@ -65,11 +67,17 @@ public class HtmlSyntaxInfoReader extends AbstractSyntaxAwareReader implements M
   }
 
   protected void appendCloseTags() {
-    myResultBuffer.append("</pre></div></body></html>");
+    myResultBuffer.append("</pre></div>");
+    generateCloseBodyHtmlTags();
+  }
+
+  @ApiStatus.Experimental
+  protected void generateCloseBodyHtmlTags() {
+    myResultBuffer.append("</body></html>");
   }
 
   protected void appendStartTags() {
-    myResultBuffer.append("<html><head><meta http-equiv=\"content-type\" content=\"text/html; charset=UTF-8\"></head><body>");
+    appendOpenBodyHtmlTags();
 
     // IDEA-295350 background color is applied to a div block in order to be displayed in Google Docs correctly
     myResultBuffer.append("<div style=\"background-color:");
@@ -88,12 +96,22 @@ public class HtmlSyntaxInfoReader extends AbstractSyntaxAwareReader implements M
     else {
       myFontFamily = myDefaultFontFamily = -1;
     }
+    appendFontSizeRule();
+    myResultBuffer.append("\">");
+  }
+
+  @ApiStatus.Experimental
+  protected void appendOpenBodyHtmlTags() {
+    myResultBuffer.append("<html><head><meta http-equiv=\"content-type\" content=\"text/html; charset=UTF-8\"></head><body>");
+  }
+
+  @ApiStatus.Experimental
+  protected void appendFontSizeRule() {
     float fontSize = mySyntaxInfo.getFontSize();
     // on macOS font size in points declared in HTML doesn't mean the same value as when declared e.g. in TextEdit (and in Java),
     // this is the correction factor
     if (SystemInfo.isMac) fontSize *= 0.75f;
     myResultBuffer.append(String.format("font-size:%.1fpt;", fontSize));
-    myResultBuffer.append("\">");
   }
 
   protected void appendFontFamilyRule(@NotNull StringBuilder styleBuffer, int fontFamilyId) {

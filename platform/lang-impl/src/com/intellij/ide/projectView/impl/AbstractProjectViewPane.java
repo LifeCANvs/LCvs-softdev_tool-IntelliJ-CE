@@ -34,10 +34,10 @@ import com.intellij.psi.*;
 import com.intellij.psi.util.PsiAwareObject;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.refactoring.move.MoveHandler;
-import com.intellij.ui.tree.AsyncTreeModel;
 import com.intellij.ui.tree.TreePathUtil;
 import com.intellij.ui.tree.TreeVisitor;
 import com.intellij.ui.tree.project.ProjectFileNode;
+import com.intellij.ui.treeStructure.BgtAwareTreeModel;
 import com.intellij.ui.treeStructure.TreeStateListener;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.ArrayUtilRt;
@@ -69,8 +69,8 @@ import java.awt.datatransfer.Transferable;
 import java.awt.dnd.DnDConstants;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 
@@ -96,6 +96,7 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
   private final Map<String,TreeState> myReadTreeState = new HashMap<>();
   private final AtomicBoolean myTreeStateRestored = new AtomicBoolean();
   boolean myNonEmptyTreeStateRestored = false;
+  boolean myPersistingPresentationEnabled = true;
   private String mySubId;
   private static final @NonNls String ELEMENT_SUB_PANE = "subPane";
   private static final @NonNls String ATTRIBUTE_SUB_ID = "subId";
@@ -222,11 +223,11 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
 
   public void updateFrom(Object element, boolean forceResort, boolean updateStructure) {
     if (element instanceof PsiElement) {
-      AsyncProjectViewSupport support = getAsyncSupport();
+      var support = getAsyncSupport();
       if (support != null) support.updateByElement((PsiElement)element, updateStructure);
     }
     else if (element instanceof TreePath) {
-      AsyncProjectViewSupport support = getAsyncSupport();
+      var support = getAsyncSupport();
       if (support != null) support.update((TreePath)element, updateStructure);
     }
   }
@@ -470,7 +471,7 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
     return unloadedModules(myProject, getSelectedValues(selectedUserObjects));
   }
 
-  private <T> @NotNull List<@NotNull T> getSelectedValues(@Nullable Object @NotNull [] selectedUserObjects, @NotNull Class<T> aClass) {
+  private @Unmodifiable <T> @NotNull List<@NotNull T> getSelectedValues(@Nullable Object @NotNull [] selectedUserObjects, @NotNull Class<T> aClass) {
     return ContainerUtil.filterIsInstance(getSelectedValues(selectedUserObjects), aClass);
   }
 
@@ -496,7 +497,7 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
     return ContainerUtil.getFirstItem(getElementsFromNode(node));
   }
 
-  public @NotNull List<PsiElement> getElementsFromNode(@Nullable Object node) {
+  public @Unmodifiable @NotNull List<PsiElement> getElementsFromNode(@Nullable Object node) {
     Object value = getValueFromNode(node);
     JBIterable<?> it = value instanceof PsiElement || value instanceof VirtualFile || value instanceof PsiAwareObject ? JBIterable.of(value) :
                        value instanceof Object[] ? JBIterable.of((Object[])value) :
@@ -576,6 +577,17 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
     }
   }
 
+  @ApiStatus.Internal
+  public void writeExternalWithoutPresentations(Element element) {
+    myPersistingPresentationEnabled = false;
+    try {
+      writeExternal(element);
+    }
+    finally {
+      myPersistingPresentationEnabled = true;
+    }
+  }
+
   public void writeExternal(Element element) {
     saveExpandedPaths();
     for (Map.Entry<String, TreeState> entry : myReadTreeState.entrySet()) {
@@ -591,7 +603,8 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
   }
 
   protected @NotNull TreeState createTreeState(@NotNull JTree tree) {
-    return TreeState.createOn(tree, true, false, Registry.is("ide.project.view.persist.cached.presentation", true));
+    var persistPresentation = myPersistingPresentationEnabled && Registry.is("ide.project.view.persist.cached.presentation", true);
+    return TreeState.createOn(tree, true, false, persistPresentation);
   }
 
   protected void saveExpandedPaths() {
@@ -637,7 +650,7 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
       private boolean isExpandAllAllowed() {
         JTree tree = getTree();
         TreeModel model = tree == null ? null : tree.getModel();
-        return model == null || model instanceof AsyncTreeModel || model instanceof InvokerSupplier;
+        return model == null || model instanceof BgtAwareTreeModel || model instanceof InvokerSupplier;
       }
 
       @Override
@@ -1116,7 +1129,7 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
     return TreeUtil.getLastUserObject(AbstractTreeNode.class, path);
   }
 
-  AsyncProjectViewSupport getAsyncSupport() {
+  @Nullable ProjectViewPaneSupport getAsyncSupport() {
     return null;
   }
 
@@ -1207,5 +1220,9 @@ public abstract class AbstractProjectViewPane implements UiCompatibleDataProvide
 
     @Override
     public void treeCollapsed(TreeExpansionEvent event) { }
+  }
+
+  public interface ProjectViewPaneWithAsyncSelect {
+    @NotNull ActionCallback selectCB(Object element, VirtualFile file, boolean requestFocus);
   }
 }

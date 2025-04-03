@@ -8,9 +8,11 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CustomShortcutSet;
 import com.intellij.openapi.actionSystem.ShortcutSet;
+import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
+import com.intellij.openapi.fileChooser.FileSaverDescriptor;
 import com.intellij.openapi.keymap.KeymapUtil;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
@@ -27,6 +29,7 @@ import com.intellij.ui.dsl.builder.DslComponentProperty;
 import com.intellij.ui.dsl.builder.VerticalComponentGap;
 import com.intellij.ui.dsl.gridLayout.UnscaledGaps;
 import com.intellij.ui.dsl.gridLayout.UnscaledGapsKt;
+import com.intellij.util.SlowOperations;
 import com.intellij.util.ui.StartupUiUtil;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.accessibility.ScreenReader;
@@ -103,7 +106,7 @@ public class ComponentWithBrowseButton<Comp extends JComponent> extends JPanel i
     }
     UnscaledGaps visualPaddings = UnscaledGapsKt.toUnscaledGaps(insets);
     putClientProperty(DslComponentProperty.INTERACTIVE_COMPONENT, component);
-    putClientProperty(DslComponentProperty.VERTICAL_COMPONENT_GAP, new VerticalComponentGap(true, true));
+    putClientProperty(DslComponentProperty.VERTICAL_COMPONENT_GAP, VerticalComponentGap.BOTH);
     putClientProperty(DslComponentProperty.VISUAL_PADDINGS, visualPaddings);
   }
 
@@ -126,7 +129,11 @@ public class ComponentWithBrowseButton<Comp extends JComponent> extends JPanel i
 
   private void notifyActionListeners() {
     ActionEvent event = new ActionEvent(myComponent, ActionEvent.ACTION_PERFORMED, "action");
-    for (ActionListener listener: myBrowseButton.getActionListeners()) listener.actionPerformed(event);
+    for (ActionListener listener: myBrowseButton.getActionListeners()) {
+      try (AccessToken ignore = SlowOperations.startSection(SlowOperations.ACTION_PERFORM)) {
+        listener.actionPerformed(event);
+      }
+    }
   }
 
   public final @NotNull Comp getChildComponent() {
@@ -196,6 +203,13 @@ public class ComponentWithBrowseButton<Comp extends JComponent> extends JPanel i
     TextComponentAccessor<? super Comp> accessor
   ) {
     addActionListener(new BrowseFolderActionListener<>(this, project, fileChooserDescriptor, accessor));
+  }
+
+  public void addFileSaverDialog(@Nullable Project project,
+                                 @NotNull FileSaverDescriptor descriptor,
+                                 TextComponentAccessor<? super Comp> accessor)
+  {
+    addActionListener(new FileSaverRunnable<>(project, descriptor, getChildComponent(), accessor));
   }
 
   /**

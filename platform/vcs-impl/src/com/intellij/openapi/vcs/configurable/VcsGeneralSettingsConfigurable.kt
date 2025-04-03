@@ -32,6 +32,7 @@ import com.intellij.util.containers.MultiMap
 import com.intellij.util.containers.toMultiMap
 import com.intellij.util.xmlb.annotations.Attribute
 import com.intellij.vcsUtil.VcsUtil
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
 import javax.swing.JComponent
 
@@ -57,11 +58,13 @@ internal class GeneralVcsSettingsProviderEP(project: Project) : ConfigurableEP<U
   }
 }
 
+@ApiStatus.Internal
 enum class Location {
   Confirmations,
   Other
 }
 
+@ApiStatus.Internal
 class VcsGeneralSettingsConfigurable(val project: Project) : BoundCompositeSearchableConfigurable<UnnamedConfigurable>(
   message("configurable.VcsGeneralConfigurationConfigurable.display.name"),
   "project.propVCSSupport.Confirmation"
@@ -258,6 +261,7 @@ private enum class ShowPatchAfterCreationEnum(private val text: () -> @Nls Strin
   }
 }
 
+@ApiStatus.Internal
 class OptionEnabledPredicate(private val comboBox: ComboBox<VcsShowConfirmationOption.Value>) : ComponentPredicate() {
   override fun addListener(listener: (Boolean) -> Unit) {
     comboBox.addItemListener { listener(invoke()) }
@@ -266,6 +270,7 @@ class OptionEnabledPredicate(private val comboBox: ComboBox<VcsShowConfirmationO
   override fun invoke(): Boolean = comboBox.item == VcsShowConfirmationOption.Value.DO_ACTION_SILENTLY
 }
 
+@ApiStatus.Internal
 class OptionVisibleForVcsesPredicate(private val project: Project,
                                      private val setting: PersistentVcsSetting,
                                      private val vcsListeners: MutableList<Runnable>) : ComponentPredicate() {

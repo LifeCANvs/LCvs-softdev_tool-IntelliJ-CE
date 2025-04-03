@@ -3,6 +3,7 @@ package com.intellij.collaboration.ui.codereview.diff.model
 
 import com.intellij.collaboration.async.MappingScopedItemsContainer
 import com.intellij.collaboration.async.collectScoped
+import com.intellij.collaboration.ui.util.selectedItem
 import com.intellij.collaboration.util.ComputedResult
 import com.intellij.collaboration.util.onFailure
 import com.intellij.collaboration.util.onInProgress
@@ -10,15 +11,12 @@ import com.intellij.collaboration.util.onSuccess
 import com.intellij.openapi.ListSelection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.*
-import org.jetbrains.annotations.ApiStatus.Internal
-import java.util.concurrent.CopyOnWriteArrayList
 
-@Internal
+/**
+ * A viewmodel for a diff processor which can show multiple diffs and switch between them
+ */
 interface CodeReviewDiffProcessorViewModel<C : Any> {
   val changes: StateFlow<ComputedResult<State<C>>?>
 
@@ -37,7 +35,6 @@ interface CodeReviewDiffProcessorViewModel<C : Any> {
  * @param C change type
  * @param CVM change view model type
  */
-@Internal
 interface PreLoadingCodeReviewAsyncDiffViewModelDelegate<C : Any, CVM : AsyncDiffViewModel> {
   val changes: Flow<ComputedResult<CodeReviewDiffProcessorViewModel.State<CVM>>?>
 
@@ -49,7 +46,7 @@ interface PreLoadingCodeReviewAsyncDiffViewModelDelegate<C : Any, CVM : AsyncDif
   companion object {
     fun <D : Any, C : Any, CVM : AsyncDiffViewModel> create(
       preloadedDataFlow: Flow<ComputedResult<D>?>,
-      changesPreProcessor: Flow<(ListSelection<C>) -> ListSelection<C>>,
+      changesPreProcessor: Flow<(List<C>) -> List<C>> = flowOf { it },
       createViewModel: CoroutineScope.(D, C) -> CVM,
     ): PreLoadingCodeReviewAsyncDiffViewModelDelegate<C, CVM> =
       PreLoadingCodeReviewAsyncDiffViewModelDelegateImpl(preloadedDataFlow, changesPreProcessor, createViewModel)
@@ -59,11 +56,10 @@ interface PreLoadingCodeReviewAsyncDiffViewModelDelegate<C : Any, CVM : AsyncDif
 @OptIn(ExperimentalCoroutinesApi::class)
 private class PreLoadingCodeReviewAsyncDiffViewModelDelegateImpl<D : Any, C : Any, CVM : AsyncDiffViewModel>(
   preloadedDataFlow: Flow<ComputedResult<D>?>,
-  private val changesPreProcessor: Flow<(ListSelection<C>) -> ListSelection<C>>,
+  private val changesPreProcessor: Flow<(List<C>) -> List<C>>,
   private val createViewModel: CoroutineScope.(D, C) -> CVM,
 ) : PreLoadingCodeReviewAsyncDiffViewModelDelegate<C, CVM> {
-  private val changesToShow = MutableStateFlow(ChangesState<C>())
-  private val selectionListeners = CopyOnWriteArrayList<ChangesSelectionListener<C>>()
+  private val delegate: CodeReviewAsyncDiffViewModelDelegate<C> = CodeReviewAsyncDiffViewModelDelegate.create()
 
   override val changes: Flow<ComputedResult<CodeReviewDiffProcessorViewModel.State<CVM>>?> =
     preloadedDataFlow.transformLatest { dataLoadingResult ->
@@ -81,87 +77,33 @@ private class PreLoadingCodeReviewAsyncDiffViewModelDelegateImpl<D : Any, C : An
       val vmsContainer = MappingScopedItemsContainer.byEquality<C, CVM>(this) {
         createViewModel(preloadedData, it)
       }
-      var lastList: ListSelection<C> = ListSelection.empty()
+      var lastList: List<C> = emptyList()
       changesPreProcessor.collectLatest { preProcessor ->
-        changesToShow.collectScoped { changesState ->
-          if (changesState.selectedChanges.list != lastList.list) {
-            emit(ComputedResult.loading())
-            val processedList = preProcessor(changesState.selectedChanges)
-            vmsContainer.update(processedList.list)
-            lastList = processedList
+        delegate.changesToShow.collectScoped { changesState ->
+          try {
+            if (changesState.selectedChanges.list != lastList) {
+              emit(ComputedResult.loading())
+              val processedList = preProcessor(changesState.selectedChanges.list)
+              vmsContainer.update(processedList)
+              lastList = changesState.selectedChanges.list
+            }
+            val mappingState = vmsContainer.mappingState.value
+            val vms = mappingState.values.toList()
+            val selectedVmIdx = mappingState.keys.indexOf(changesState.selectedChanges.selectedItem)
+            val newState = ViewModelsState(ListSelection.createAt(vms, selectedVmIdx), changesState.scrollRequests)
+            emit(ComputedResult.success(newState))
           }
-          val vms = vmsContainer.mappingState.value.values.toList()
-          val selectedVmIdx = lastList.selectedIndex
-          val newState = ViewModelsState(ListSelection.createAt(vms, selectedVmIdx), changesState.scrollRequests)
-          emit(ComputedResult.success(newState))
+          catch (e: Exception) {
+            emit(ComputedResult.failure(e))
+          }
         }
       }
     }
   }
 
-  override fun showChanges(changes: ListSelection<C>, scrollRequest: DiffViewerScrollRequest?) {
-    val state = changesToShow.updateAndGet {
-      if (it.selectedChanges == changes) it else ChangesState(changes)
-    }
-    notifySelection(state.selectedChanges)
+  override fun showChanges(changes: ListSelection<C>, scrollRequest: DiffViewerScrollRequest?) = delegate.showChanges(changes, scrollRequest)
 
-    if (scrollRequest != null) {
-      state.scroll(scrollRequest)
-    }
-  }
+  override fun showChange(change: C, scrollRequest: DiffViewerScrollRequest?) = delegate.showChange(change, scrollRequest)
 
-  override fun showChange(change: C, scrollRequest: DiffViewerScrollRequest?) {
-    val current = changesToShow.value
-    val newIdx = current.selectedChanges.list.indexOf(change)
-    if (newIdx < 0) return
-    val newChanges = ListSelection.createAt(current.selectedChanges.list, newIdx)
-    val newState = current.copy(selectedChanges = newChanges)
-    if (!changesToShow.compareAndSet(current, newState)) {
-      return
-    }
-    notifySelection(newState.selectedChanges)
-
-    if (scrollRequest != null) {
-      newState.scroll(scrollRequest)
-    }
-  }
-
-  private fun notifySelection(selection: ListSelection<C>) =
-    selectionListeners.forEach {
-      try {
-        it.invoke(selection)
-      }
-      catch (e: Exception) {
-        // notification failed
-      }
-    }
-
-  override suspend fun handleSelection(listener: ChangesSelectionListener<C>): Nothing {
-    try {
-      selectionListeners.add(listener)
-      listener(changesToShow.value.selectedChanges)
-      awaitCancellation()
-    }
-    finally {
-      selectionListeners.remove(listener)
-    }
-  }
-
-  private data class ChangesState<C : Any>(val selectedChanges: ListSelection<C>) {
-    constructor() : this(ListSelection.empty())
-
-    private val _scrollRequests = Channel<DiffViewerScrollRequest>(1, BufferOverflow.DROP_OLDEST)
-    val scrollRequests: Flow<DiffViewerScrollRequest> = _scrollRequests.receiveAsFlow()
-
-    fun scroll(cmd: DiffViewerScrollRequest) {
-      _scrollRequests.trySend(cmd)
-    }
-  }
-
-  private data class ViewModelsState<CVM : Any>(
-    override val selectedChanges: ListSelection<CVM>,
-    override val scrollRequests: Flow<DiffViewerScrollRequest>,
-  ) : CodeReviewDiffProcessorViewModel.State<CVM>, DiffViewerScrollRequestProducer
+  override suspend fun handleSelection(listener: ChangesSelectionListener<C>): Nothing = delegate.handleSelection(listener)
 }
-
-private typealias ChangesSelectionListener<C> = (ListSelection<C>) -> Unit

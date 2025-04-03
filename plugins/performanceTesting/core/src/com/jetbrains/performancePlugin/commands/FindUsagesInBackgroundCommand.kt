@@ -32,12 +32,12 @@ class FindUsagesInBackgroundCommand(text: String, line: Int) : PerformanceComman
     const val NAME: @NonNls String = "findUsagesInBackground"
     const val PREFIX: @NonNls String = CMD_PREFIX + NAME
     const val SPAN_NAME: @NonNls String = NAME
-    const val FIRST_USAGE_SPAN_BACKGROUND = "${SPAN_NAME}_firstUsage"
+    const val FIRST_USAGE_SPAN_BACKGROUND: String = "${SPAN_NAME}_firstUsage"
   }
 
   override suspend fun doExecute(context: PlaybackContext) {
     val options = FindUsagesArguments()
-    Args.parse(options, extractCommandArgument(PREFIX).split("|").flatMap { it.split(" ", limit = 2) }.toTypedArray())
+    Args.parse(options, extractCommandArgument(PREFIX).split("|").flatMap { it.split(" ", limit = 2) }.toTypedArray(), false)
 
     val project = context.project
     val elementName = options.expectedName

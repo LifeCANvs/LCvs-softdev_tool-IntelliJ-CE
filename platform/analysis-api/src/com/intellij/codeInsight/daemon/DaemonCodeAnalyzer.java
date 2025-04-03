@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.daemon;
 
 import com.intellij.lang.annotation.Annotation;
@@ -27,6 +27,7 @@ public abstract class DaemonCodeAnalyzer {
 
   public abstract void settingsChanged();
 
+  @ApiStatus.Internal
   public abstract void setUpdateByTimerEnabled(boolean value);
 
   public abstract void disableUpdateByTimer(@NotNull Disposable parentDisposable);
@@ -35,6 +36,8 @@ public abstract class DaemonCodeAnalyzer {
 
   public abstract void setImportHintsEnabled(@NotNull PsiFile file, boolean value);
 
+  @Deprecated(forRemoval = true)
+  @ApiStatus.Internal
   public abstract void resetImportHintsEnabledForProject();
 
   public abstract void setHighlightingEnabled(@NotNull PsiFile file, boolean value);
@@ -58,6 +61,11 @@ public abstract class DaemonCodeAnalyzer {
   public abstract void restart(@NotNull PsiFile file);
 
   public abstract void autoImportReferenceAtCursor(@NotNull Editor editor, @NotNull PsiFile file);
+
+  @ApiStatus.Internal
+  public boolean isRunning() {
+    return false;
+  }
 
   @Topic.ProjectLevel
   public static final Topic<DaemonListener> DAEMON_EVENT_TOPIC = new Topic<>(DaemonListener.class, Topic.BroadcastDirection.NONE, true);
@@ -111,8 +119,7 @@ public abstract class DaemonCodeAnalyzer {
      * Internal class for reporting annotator-related statistics
      */
     @ApiStatus.Internal
-    final
-    class AnnotatorStatistics {
+    final class AnnotatorStatistics {
       /** the annotator this statistics is generated for */
       public final Annotator annotator;
       /** timestamp (in {@link System#nanoTime} sense) of the {@link #annotator} creation */
@@ -128,7 +135,7 @@ public abstract class DaemonCodeAnalyzer {
       /** timestamp (in {@link System#nanoTime} sense) of the moment when all the {@link Annotator#annotate(PsiElement, AnnotationHolder)} methods are called */
       public long annotatorFinishStamp;
 
-      AnnotatorStatistics(@NotNull Annotator annotator) {
+      public AnnotatorStatistics(@NotNull Annotator annotator) {
         this.annotator = annotator;
       }
 

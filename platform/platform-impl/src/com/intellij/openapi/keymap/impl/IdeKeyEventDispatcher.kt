@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplacePutWithAssignment", "ReplaceGetOrSet")
 
 package com.intellij.openapi.keymap.impl
@@ -14,7 +14,6 @@ import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.ex.AnActionListener
 import com.intellij.openapi.actionSystem.impl.ActionMenu
-import com.intellij.openapi.actionSystem.impl.EdtDataContext
 import com.intellij.openapi.actionSystem.impl.PresentationFactory
 import com.intellij.openapi.actionSystem.impl.Utils
 import com.intellij.openapi.application.ApplicationManager
@@ -93,7 +92,9 @@ class IdeKeyEventDispatcher(private val queue: IdeEventQueue?) {
   private val keyGestureProcessor = KeyboardGestureProcessor(this)
 
   var state: KeyState
+    @ApiStatus.Internal 
     get() = keyState
+    @ApiStatus.Internal
     set(state) {
       keyState = state
       queue?.maybeReady()
@@ -516,6 +517,7 @@ class IdeKeyEventDispatcher(private val queue: IdeEventQueue?) {
                          shortcut = context.shortcut)
   }
 
+  @JvmName("processAction")
   internal fun processAction(e: InputEvent,
                              place: String,
                              context: DataContext,
@@ -802,7 +804,8 @@ private fun hasMnemonicInBalloons(container: Container?, code: Int): Boolean {
   return false
 }
 
-data class UpdateResult(val action: AnAction, val event: AnActionEvent, val startedAt: Long)
+@ApiStatus.Internal
+data class UpdateResult(@JvmField val action: AnAction, @JvmField val event: AnActionEvent, @JvmField val startedAt: Long)
 
 private suspend fun doUpdateActionsInner(actions: List<AnAction>,
                                          updater: suspend (AnAction) -> Presentation,
@@ -837,10 +840,6 @@ private fun doPerformActionInner(e: InputEvent,
                                  actionEvent: AnActionEvent) {
   processor.onUpdatePassed(e, action, actionEvent)
   val eventCount = IdeEventQueue.getInstance().eventCount
-  // this is not true for test data contexts
-  if (context is EdtDataContext) {
-    context.setEventCount(eventCount)
-  }
 
   ActionUtil.performDumbAwareWithCallbacks(action, actionEvent) {
     LOG.assertTrue(eventCount == IdeEventQueue.getInstance().eventCount, "Event counts do not match: $eventCount != ${IdeEventQueue.getInstance().eventCount}")

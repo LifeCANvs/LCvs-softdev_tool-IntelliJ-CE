@@ -1,11 +1,11 @@
-- name: lib/client/kotlin-frontend.jar
+- name: lib/frontend-split/kotlin-frontend.jar
   modules:
   - name: kotlin.frontend
 - name: lib/jps/kotlin-jps-plugin.jar
   projectLibraries:
   - name: kotlinc.kotlin-jps-plugin-classpath
     files:
-    - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/kotlin-jps-plugin-classpath/1/kotlin-jps-plugin-classpath-1.jar
+    - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/kotlin-jps-plugin-classpath/2/kotlin-jps-plugin-classpath-2.jar
     reason: withProjectLibrary
 - name: lib/kotlin-base-jps.jar
   modules:
@@ -32,15 +32,17 @@
   - name: kotlin.formatter.minimal
 - name: lib/kotlin-plugin.jar
   projectLibraries:
-  - name: javaslang
+  - name: jackson-dataformat-toml
     files:
-    - name: $MAVEN_REPOSITORY$/io/javaslang/javaslang/2/javaslang-2.jar
-    - name: $MAVEN_REPOSITORY$/io/javaslang/javaslang-match/2/javaslang-match-2.jar
+    - name: $MAVEN_REPOSITORY$/com/fasterxml/jackson/dataformat/jackson-dataformat-toml/2/jackson-dataformat-toml-2.jar
     reason: withProjectLibrary
   - name: javax-inject
     files:
     - name: $MAVEN_REPOSITORY$/javax/inject/javax.inject/1/javax.inject-1.jar
     reason: withProjectLibrary
+  - name: kotlin-metadata
+    files:
+    - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/kotlin-metadata-jvm/2/kotlin-metadata-jvm-2.jar
   - name: kotlinc.analysis-api
     files:
     - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/analysis-api-for-ide/2/analysis-api-for-ide-2.jar
@@ -71,6 +73,9 @@
   - name: kotlinc.kotlin-scripting-compiler-impl
     files:
     - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/kotlin-scripting-compiler-impl/2/kotlin-scripting-compiler-impl-2.jar
+  - name: kotlinc.kotlin-scripting-dependencies
+    files:
+    - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/kotlin-scripting-dependencies/2/kotlin-scripting-dependencies-2.jar
   - name: kotlinc.kotlin-scripting-jvm
     files:
     - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/kotlin-scripting-jvm/2/kotlin-scripting-jvm-2.jar
@@ -80,6 +85,11 @@
   - name: kotlinc.symbol-light-classes
     files:
     - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/symbol-light-classes-for-ide/2/symbol-light-classes-for-ide-2.jar
+  - name: vavr
+    files:
+    - name: $MAVEN_REPOSITORY$/io/vavr/vavr/0/vavr-0.jar
+    - name: $MAVEN_REPOSITORY$/io/vavr/vavr-match/0/vavr-match-0.jar
+    reason: withProjectLibrary
   modules:
   - name: kotlin.plugin.common
   - name: kotlin.plugin.k1
@@ -95,6 +105,15 @@
   - name: kotlin.base.project-structure
   - name: kotlin.base.external-build-system
   - name: kotlin.base.scripting
+    libraries:
+      amper.dependency.resolution.kotlin.base.scripting:
+      - name: $MAVEN_REPOSITORY$/org/jetbrains/amper/dependency-resolution-jvm/0/dependency-resolution-jvm-0.jar
+      - name: $MAVEN_REPOSITORY$/org/jetbrains/amper/concurrency-jvm/0/concurrency-jvm-0.jar
+      - name: $MAVEN_REPOSITORY$/org/slf4j/slf4j-api/2/slf4j-api-2.jar
+      - name: $MAVEN_REPOSITORY$/io/github/pdvrieze/xmlutil/serialization-jvm/0/serialization-jvm-0.jar
+      - name: $MAVEN_REPOSITORY$/io/github/pdvrieze/xmlutil/core-jvm/0/core-jvm-0.jar
+      - name: $MAVEN_REPOSITORY$/org/apache/maven/maven-artifact/3/maven-artifact-3.jar
+      - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlinx/kotlinx-coroutines-core/1/kotlinx-coroutines-core-1.jar
   - name: kotlin.base.analysis-api-platform
   - name: kotlin.base.analysis
   - name: kotlin.base.code-insight
@@ -113,7 +132,9 @@
   - name: kotlin.ide
   - name: kotlin.idea
   - name: kotlin.fir.frontend-independent
-  - name: kotlin.jvm
+  - name: kotlin.jvm.shared
+  - name: kotlin.jvm.k2
+  - name: kotlin.jvm.k1
   - name: kotlin.compiler-reference-index
   - name: kotlin.compiler-plugins.parcelize.common
   - name: kotlin.compiler-plugins.parcelize.k1
@@ -153,6 +174,11 @@
   - name: kotlin.gradle.gradle
   - name: kotlin.gradle.code-insight-common
   - name: kotlin.gradle.gradle-java
+  - name: kotlin.gradle.gradle-java.k1
+  - name: kotlin.gradle.gradle-java.k2
+  - name: kotlin.gradle.scripting.k1
+  - name: kotlin.gradle.scripting.k2
+  - name: kotlin.gradle.scripting.shared
   - name: kotlin.gradle.code-insight-groovy
   - name: kotlin.gradle.code-insight-toml
   - name: kotlin.native
@@ -215,6 +241,7 @@
   - name: kotlin.base.fir.analysis-api-platform
   - name: kotlin.base.fir.code-insight
   - name: kotlin.base.fir.project-structure
+  - name: kotlin.base.fir.scripting
   - name: kotlin.code-insight.api
   - name: kotlin.code-insight.utils
   - name: kotlin.code-insight.intentions.shared
@@ -248,7 +275,6 @@
   - name: kotlin.highlighting.k2
   - name: kotlin.uast.uast-kotlin.k2
   - name: kotlin.uast.uast-kotlin-idea.k2
-  - name: kotlin.fir.fir-low-level-api-ide-impl
   - name: kotlin.navigation
   - name: kotlin.refactorings.common
   - name: kotlin.refactorings.k2
@@ -257,6 +283,7 @@
   - name: kotlin.performanceExtendedPlugin
   - name: kotlin.bundled-compiler-plugins-support
   - name: kotlin.jsr223
+  - name: kotlin.k2.internal
   - name: kotlin-ultimate.common-native
   - name: kotlin-ultimate.javascript.debugger
   - name: kotlin-ultimate.javascript.nodeJs
@@ -287,6 +314,12 @@
   - name: kotlinc.compose-compiler-plugin
     files:
     - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/compose-compiler-plugin-for-ide/2/compose-compiler-plugin-for-ide-2.jar
+    reason: withProjectLibrary
+- name: lib/kotlinc.js-plain-objects-compiler-plugin.jar
+  projectLibraries:
+  - name: kotlinc.js-plain-objects-compiler-plugin
+    files:
+    - name: $MAVEN_REPOSITORY$/org/jetbrains/kotlin/js-plain-objects-compiler-plugin-for-ide/2/js-plain-objects-compiler-plugin-for-ide-2.jar
     reason: withProjectLibrary
 - name: lib/kotlinc.kotlin-compiler-common.jar
   projectLibraries:

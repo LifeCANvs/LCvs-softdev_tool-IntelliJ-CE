@@ -3,12 +3,7 @@ package com.intellij.openapi.vcs.changes
 
 import com.intellij.diff.DiffDialogHints
 import com.intellij.diff.chains.DiffRequestProducer
-import com.intellij.diff.editor.DiffEditorEscapeAction
-import com.intellij.diff.editor.DiffEditorTabFilesManager
-import com.intellij.diff.editor.DiffEditorViewerFileEditor
-import com.intellij.diff.editor.DiffViewerVirtualFile
-import com.intellij.diff.editor.DiffVirtualFileWithProducers
-import com.intellij.diff.editor.DiffVirtualFileWithTabName
+import com.intellij.diff.editor.*
 import com.intellij.diff.impl.DiffEditorViewer
 import com.intellij.diff.tools.external.ExternalDiffTool
 import com.intellij.openapi.ListSelection
@@ -23,6 +18,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.CheckedDisposable
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
 import java.lang.ref.WeakReference
 
@@ -52,7 +48,7 @@ abstract class EditorTabDiffPreview(val project: Project) : CheckedDisposable, D
 
   override fun openPreview(requestFocus: Boolean): Boolean {
     if (!hasContent()) return false
-    DiffEditorTabFilesManager.Companion.getInstance(project).showDiffFile(previewFile, requestFocus)
+    DiffEditorTabFilesManager.getInstance(project).showDiffFile(previewFile, requestFocus)
     return true
   }
 
@@ -137,6 +133,7 @@ abstract class EditorTabDiffPreview(val project: Project) : CheckedDisposable, D
 
 }
 
+@ApiStatus.Internal
 fun showExternalToolIfNeeded(project: Project?, diffProducers: ListSelection<out DiffRequestProducer>?): Boolean {
   if (diffProducers == null || diffProducers.isEmpty) return false
 

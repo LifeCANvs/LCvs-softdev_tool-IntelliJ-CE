@@ -3,7 +3,7 @@ package org.jetbrains.intellij.build.impl.compilation
 
 import com.intellij.openapi.util.io.NioFiles
 import com.intellij.util.io.Decompressor
-import com.intellij.util.lang.JavaVersion
+import com.intellij.util.currentJavaVersion
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.Span
@@ -209,8 +209,8 @@ internal suspend fun doCompile(
   context: CompilationContext,
   handleCompilationFailureBeforeRetry: (suspend (successMessage: String) -> String)?,
 ) {
-  check(JavaVersion.current().isAtLeast(17)) {
-    "Build script must be executed under Java 17 to compile intellij project but it's executed under Java ${JavaVersion.current()}"
+  check(currentJavaVersion().isAtLeast(17)) {
+    "Build script must be executed under Java 17 to compile intellij project but it's executed under Java ${currentJavaVersion()}"
   }
   check(isCompilationRequired(context.options)) {
     "Unexpected compilation request, unable to proceed"
@@ -296,7 +296,7 @@ private suspend fun retryCompilation(
   var successMessage = "Clean build retry"
   when {
     e is TimeoutCancellationException -> {
-      context.messages.warning("Incremental compilation timed out. Re-trying with clean build.")
+      context.messages.reportBuildProblem("Incremental compilation timed out. Re-trying with clean build.")
       successMessage = "$successMessage after timeout"
       cleanOutput(context = context, keepCompilationState = false)
       context.options.incrementalCompilation = false

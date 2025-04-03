@@ -8,7 +8,7 @@ import com.intellij.openapi.vfs.newvfs.AttributeOutputStreamImpl;
 import com.intellij.openapi.vfs.newvfs.FileAttribute;
 import com.intellij.util.io.*;
 import com.intellij.util.io.blobstorage.ByteBufferReader;
-import com.intellij.openapi.vfs.newvfs.persistent.dev.blobstorage.RecordAlreadyDeletedException;
+import com.intellij.platform.util.io.storages.blobstorage.RecordAlreadyDeletedException;
 import com.intellij.util.io.blobstorage.StreamlinedBlobStorage;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
@@ -224,7 +224,7 @@ public final class AttributesStorageOverBlobStorage implements VFSAttributesStor
   }
 
   @Override
-  public boolean isEmpty() {
+  public boolean isEmpty() throws IOException {
     return storage.liveRecordsCount() == 0;
   }
 

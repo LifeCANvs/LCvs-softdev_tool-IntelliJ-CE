@@ -1,7 +1,6 @@
 // Copyright 2000-2017 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.jetbrains.jsonSchema;
 
-import com.intellij.idea.HardwareAgentRequired;
 import com.intellij.json.JsonFileType;
 import com.intellij.json.psi.JsonFile;
 import com.intellij.json.psi.JsonObject;
@@ -26,7 +25,6 @@ import java.util.Collections;
 
 import static com.jetbrains.jsonSchema.JsonSchemaHighlightingTestBase.registerJsonSchema;
 
-@HardwareAgentRequired
 public class JsonSchemaPerformanceTest extends JsonSchemaHeavyAbstractTest {
   public static final String BASE_PATH = "/tests/testData/jsonSchema/performance/";
 
@@ -54,7 +52,7 @@ public class JsonSchemaPerformanceTest extends JsonSchemaHeavyAbstractTest {
       registerJsonSchema(myFixture, schemaText, "json", it -> true);
       myFixture.configureByFile("/azure-file.json");
       myFixture.checkHighlighting(true, false, true);
-    }).start();
+    }).attempts(5).start();
   }
 
   public void testSwaggerHighlighting() {

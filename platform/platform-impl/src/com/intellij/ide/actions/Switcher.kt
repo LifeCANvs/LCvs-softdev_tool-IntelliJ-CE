@@ -22,13 +22,13 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.Experiments
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.ex.IdeDocumentHistory
 import com.intellij.openapi.fileEditor.impl.*
+import com.intellij.openapi.fileEditor.impl.EditorTabPresentationUtil.getCustomEditorTabTitle
 import com.intellij.openapi.keymap.KeymapUtil
 import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.LightEditActionFactory
@@ -40,6 +40,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.io.FileUtil
+import com.intellij.openapi.util.io.toNioPathOrNull
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.util.text.Strings
@@ -48,10 +49,11 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.newvfs.VfsPresentationUtil
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.platform.ide.CoreUiCoroutineScopeHolder
+import com.intellij.psi.search.FilenameIndex
+import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.ui.*
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBScrollPane.*
 import com.intellij.ui.components.panels.HorizontalLayout
 import com.intellij.ui.hover.ListHoverListener
 import com.intellij.ui.popup.PopupUpdateProcessorBase
@@ -64,6 +66,7 @@ import com.intellij.util.ui.JBDimension
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.StartupUiUtil
 import com.intellij.util.ui.SwingTextTrimmer
+import com.intellij.util.ui.accessibility.ScreenReader
 import com.intellij.util.ui.components.BorderLayoutPanel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -94,6 +97,7 @@ private const val ACTION_PLACE = "Switcher"
 /**
  * @author Konstantin Bulenkov
  */
+@Deprecated("Use the updated implementation com.intellij.platform.recentFiles.frontend.Switcher")
 object Switcher : BaseSwitcherAction(null) {
   @ApiStatus.Internal
   val SWITCHER_KEY: Key<SwitcherPanel> = Key.create("SWITCHER_KEY")
@@ -151,12 +155,7 @@ object Switcher : BaseSwitcherAction(null) {
       pinned = !onKeyRelease.isEnabled
       val onlyEdited = true == onlyEditedFiles
       speedSearch = if (recent && Registry.`is`("ide.recent.files.speed.search")) installOn(this) else null
-      cbShowOnlyEditedFiles = if (!recent || !Experiments.getInstance().isFeatureEnabled("recent.and.edited.files.together")) {
-        null
-      }
-      else {
-        JCheckBox(IdeBundle.message("recent.files.checkbox.label"))
-      }
+      cbShowOnlyEditedFiles = if (!recent) null else JCheckBox(IdeBundle.message("recent.files.checkbox.label"))
 
       val renderer = SwitcherListRenderer(this)
       val windows = renderer.toolWindows
@@ -207,12 +206,14 @@ object Switcher : BaseSwitcherAction(null) {
       }
       if (cbShowOnlyEditedFiles != null) {
         cbShowOnlyEditedFiles.isOpaque = false
-        cbShowOnlyEditedFiles.isFocusable = false
+        if (!ScreenReader.isActive()) {
+          cbShowOnlyEditedFiles.isFocusable = false
+        }
         cbShowOnlyEditedFiles.isSelected = onlyEdited
         cbShowOnlyEditedFiles.addItemListener(ItemListener(::updateFilesByCheckBox))
         header.add(HorizontalLayout.RIGHT, cbShowOnlyEditedFiles)
         WindowMoveListener(header).installTo(header)
-        val shortcuts = KeymapUtil.getActiveKeymapShortcuts("SwitcherRecentEditedChangedToggleCheckBox")
+        val shortcuts = KeymapUtil.getActiveKeymapShortcuts("SwitcherRecentEditedChangedToggleCheckBoxFallback")
         if (shortcuts.shortcuts.isNotEmpty()) {
           val label = JLabel(KeymapUtil.getShortcutsText(shortcuts.shortcuts))
           label.foreground = JBUI.CurrentTheme.ContextHelp.FOREGROUND
@@ -343,7 +344,16 @@ object Switcher : BaseSwitcherAction(null) {
         popup.setMinimumSize(JBDimension(if (windows.isEmpty()) 300 else 500, 200))
       }
       isFocusCycleRoot = true
-      focusTraversalPolicy = LayoutFocusTraversalPolicy()
+      if (ScreenReader.isActive()) {
+        val list = mutableListOf<Component>(files, toolWindows)
+        if (cbShowOnlyEditedFiles != null) {
+          list.add(cbShowOnlyEditedFiles)
+        }
+        focusTraversalPolicy = ListFocusTraversalPolicy(list)
+      }
+      else {
+        focusTraversalPolicy = LayoutFocusTraversalPolicy()
+      }
       SwitcherListFocusAction(files, toolWindows, ListActions.Left.ID)
       SwitcherListFocusAction(toolWindows, files, ListActions.Right.ID)
       IdeEventQueue.getInstance().popupManager.closeAllPopups(false)
@@ -570,8 +580,14 @@ object Switcher : BaseSwitcherAction(null) {
       )
       ReadAction.nonBlocking<List<ListItemData>> {
         items.map {
-          val parentPath = Path(it.file.presentableUrl).parent
-          val result = if (parentPath == null || parentPath.nameCount == 0) "" else {
+          val parentPath = it.file.parent?.path?.toNioPathOrNull()
+          val sameNameFiles = FilenameIndex.getVirtualFilesByName(it.file.name, GlobalSearchScope.projectScope(project))
+          val result = if (parentPath == null ||
+                           parentPath.nameCount == 0 ||
+                           sameNameFiles.size <= 1) {
+            ""
+          }
+          else {
             val filePath = parentPath.pathString
             val projectPath = project.basePath?.let { FileUtil.toSystemDependentName(it) }
             if (projectPath != null && FileUtil.isAncestor(projectPath, filePath, true)) {
@@ -588,7 +604,7 @@ object Switcher : BaseSwitcherAction(null) {
           }
 
           ListItemData(item = it,
-                       mainText = VfsPresentationUtil.getPresentableNameForUI(it.project, it.file),
+                       mainText = getCustomEditorTabTitle(project, it.file) ?: it.mainText,
                        statusText = FileUtil.getLocationRelativeToUserHome((it.file.parent ?: it.file).presentableUrl),
                        pathText = result,
                        backgroundColor = VfsPresentationUtil.getFileBackgroundColor(it.project, it.file),

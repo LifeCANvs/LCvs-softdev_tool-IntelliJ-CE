@@ -1,7 +1,12 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.ijent.community.impl.nio
 
-import com.intellij.platform.ijent.fs.*
+import com.intellij.platform.eel.path.EelPath
+import com.intellij.platform.eel.path.EelPathException
+import com.intellij.platform.eel.path.directorySeparators
+import com.intellij.platform.ijent.fs.IjentFileSystemApi
+import com.intellij.platform.ijent.fs.IjentFileSystemPosixApi
+import com.intellij.platform.ijent.fs.IjentFileSystemWindowsApi
 import org.jetbrains.annotations.ApiStatus
 import java.net.URI
 import java.nio.file.FileStore
@@ -37,15 +42,18 @@ class IjentNioFileSystem internal constructor(
       is IjentFileSystemWindowsApi -> "\\"
     }
 
-  override fun getRootDirectories(): Iterable<IjentNioPath> = fsBlocking {
+  override fun getRootDirectories(): Iterable<IjentNioPath> =
     when (val fs = ijentFs) {
       is IjentFileSystemPosixApi -> listOf(getPath("/"))
-      is IjentFileSystemWindowsApi -> fs.getRootDirectories().map { it.toNioPath() }
+      is IjentFileSystemWindowsApi -> fsBlocking {
+        fs.getRootDirectories().map { it.toNioPath() }
+      }
     }
-  }
 
-  override fun getFileStores(): Iterable<FileStore> =
-    listOf(IjentNioFileStore(ijentFs))
+  override fun getFileStores(): Iterable<FileStore> {
+    val home = ijentFs.user.home
+    return listOf(IjentNioFileStore(home, ijentFs))
+  }
 
   override fun supportedFileAttributeViews(): Set<String> =
     when (ijentFs) {
@@ -60,14 +68,15 @@ class IjentNioFileSystem internal constructor(
 
   override fun getPath(first: String, vararg more: String): IjentNioPath {
     val os = when (ijentFs) {
-      is IjentFileSystemPosixApi -> IjentPath.Absolute.OS.UNIX
-      is IjentFileSystemWindowsApi -> IjentPath.Absolute.OS.WINDOWS
+      is IjentFileSystemPosixApi -> EelPath.OS.UNIX
+      is IjentFileSystemWindowsApi -> EelPath.OS.WINDOWS
     }
-    return IjentPath.parse(first, os)
-      .getOrThrow()
-      .resolve(IjentPath.Relative.build(*more).getOrThrow())
-      .getOrThrow()
-      .toNioPath()
+    return try {
+      more.fold(EelPath.parse(first, ijentFs.descriptor)) { path, newPart -> path.resolve(newPart) }.toNioPath()
+    }
+    catch (_: EelPathException) {
+      RelativeIjentNioPath(first.split(*os.directorySeparators) + more, this)
+    }
   }
 
   override fun getPathMatcher(syntaxAndPattern: String): PathMatcher {
@@ -82,9 +91,9 @@ class IjentNioFileSystem internal constructor(
     TODO("Not yet implemented")
   }
 
-  private fun IjentPath.toNioPath(): IjentNioPath =
-    IjentNioPath(
-      ijentPath = this,
+  private fun EelPath.toNioPath(): IjentNioPath =
+    AbsoluteIjentNioPath(
+      eelPath = this,
       nioFs = this@IjentNioFileSystem,
       cachedAttributes = null,
     )

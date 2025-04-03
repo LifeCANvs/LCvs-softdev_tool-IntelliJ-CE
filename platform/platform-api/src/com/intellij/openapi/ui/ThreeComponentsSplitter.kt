@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("FunctionName")
 
 package com.intellij.openapi.ui
@@ -283,11 +283,11 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
 
   override fun isVisible(): Boolean = super.isVisible() && (firstVisible() || innerVisible() || lastVisible())
 
-  protected fun lastVisible(): Boolean = !Splitter.isNull(lastComponent) && lastComponent!!.isVisible
+  protected fun lastVisible(): Boolean = !NullableComponent.Check.isNull(lastComponent) && lastComponent!!.isVisible
 
-  private fun innerVisible(): Boolean = !Splitter.isNull(innerComponent) && innerComponent!!.isVisible
+  private fun innerVisible(): Boolean = !NullableComponent.Check.isNull(innerComponent) && innerComponent!!.isVisible
 
-  protected fun firstVisible(): Boolean = !Splitter.isNull(firstComponent) && firstComponent!!.isVisible
+  protected fun firstVisible(): Boolean = !NullableComponent.Check.isNull(firstComponent) && firstComponent!!.isVisible
 
   private fun visibleDividersCount(): Int {
     var count = 0
@@ -313,7 +313,7 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
       val lastSize = lastComponent?.getMinimumSize() ?: JBUI.emptySize()
       val innerSize = innerComponent?.getMinimumSize() ?: JBUI.emptySize()
       if (orientation) {
-        val width = max(firstSize.width.toDouble(), max(lastSize.width.toDouble(), innerSize.width.toDouble())).toInt()
+        val width = max(firstSize.width, max(lastSize.width, innerSize.width))
         var height = visibleDividersCount() * dividerWidth
         height += firstSize.height
         height += lastSize.height
@@ -321,7 +321,7 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
         return Dimension(width, height)
       }
       else {
-        val height = max(firstSize.height.toDouble(), max(lastSize.height.toDouble(), innerSize.height.toDouble())).toInt()
+        val height = max(firstSize.height, max(lastSize.height, innerSize.height))
         var width = visibleDividersCount() * dividerWidth
         width += firstSize.width
         width += lastSize.width
@@ -361,17 +361,17 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
         val firstSizeRatio = firstComponentSize.toDouble() / (firstComponentSize + lastComponentSize)
         if (firstComponentSize > 0) {
           firstComponentSize -= (sizeLack * firstSizeRatio).toInt()
-          firstComponentSize = max(minSize.toDouble(), firstComponentSize.toDouble()).toInt()
+          firstComponentSize = max(minSize, firstComponentSize)
         }
         if (lastComponentSize > 0) {
           lastComponentSize -= (sizeLack * (1 - firstSizeRatio)).toInt()
-          lastComponentSize = max(minSize.toDouble(), lastComponentSize.toDouble()).toInt()
+          lastComponentSize = max(minSize, lastComponentSize)
         }
         innerComponentSize = getMinSize(innerComponent)
       }
       else {
-        innerComponentSize = max(getMinSize(innerComponent).toDouble(),
-                                 (componentSize - dividersCount * dividerWidth - firstSize - lastSize).toDouble()).toInt()
+        innerComponentSize = max(getMinSize(innerComponent),
+                                 (componentSize - dividersCount * dividerWidth - firstSize - lastSize))
       }
       if (!innerVisible()) {
         lastComponentSize += innerComponentSize
@@ -449,7 +449,7 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
 
   var minSize: Int = 0
     set(minSize) {
-      field = max(0.0, minSize.toDouble()).toInt()
+      field = max(0, minSize)
       doLayout()
       repaint()
     }
@@ -458,7 +458,7 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
     get() = if (firstVisible()) field else 0
     set(size) {
       val oldSize = field
-      field = max(getMinSize(true).toDouble(), size.toDouble()).toInt()
+      field = max(getMinSize(true), size)
       if (firstVisible() && oldSize != field) {
         doLayout()
         repaint()
@@ -469,7 +469,7 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
     get() = if (lastVisible()) field else 0
     set(size) {
       val oldSize = field
-      field = max(getMinSize(false).toDouble(), size.toDouble()).toInt()
+      field = max(getMinSize(false), size)
       if (lastVisible() && oldSize != field) {
         doLayout()
         repaint()
@@ -693,6 +693,7 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
       }
     }
 
+    @Suppress("RedundantVisibilityModifier")
     public override fun processMouseMotionEvent(e: MouseEvent) {
       super.processMouseMotionEvent(e)
       if (!isShowing()) {
@@ -751,6 +752,7 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
       return if (minSize <= maxSize) pos.coerceIn(minSize, maxSize) else pos
     }
 
+    @Suppress("RedundantVisibilityModifier")
     public override fun processMouseEvent(e: MouseEvent) {
       super.processMouseEvent(e)
       if (!isShowing()) {
@@ -854,7 +856,7 @@ open class ThreeComponentsSplitter @JvmOverloads constructor(vertical: Boolean =
 private val SplitGlueV = EmptyIcon.create(17, 6)
 
 private fun validateIfNeeded(c: JComponent?, rect: Rectangle) {
-  if (c != null && !Splitter.isNull(c)) {
+  if (c != null && !NullableComponent.Check.isNull(c)) {
     if (c.bounds != rect) {
       c.bounds = rect
       c.revalidate()

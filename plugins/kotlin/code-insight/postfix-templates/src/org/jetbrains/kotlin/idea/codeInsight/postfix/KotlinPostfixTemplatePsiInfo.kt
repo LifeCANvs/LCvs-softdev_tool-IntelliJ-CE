@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.analysis.api.resolution.*
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisOnEdt
+import org.jetbrains.kotlin.idea.base.analysis.api.utils.allOverriddenSymbolsWithSelf
 import org.jetbrains.kotlin.lexer.KtSingleValueToken
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.name.CallableId
@@ -18,6 +19,7 @@ import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.psiUtil.getPossiblyQualifiedCallExpression
 import org.jetbrains.kotlin.psi.psiUtil.getStartOffsetIn
 
 internal object KotlinPostfixTemplatePsiInfo : PostfixTemplatePsiInfo() {
@@ -85,13 +87,14 @@ internal object KotlinPostfixTemplatePsiInfo : PostfixTemplatePsiInfo() {
             } else if (KtPsiUtil.isFalseConstant(element)) {
                 return factory.createExpression(KtTokens.TRUE_KEYWORD.value)
             }
-        } else if (element is KtCallExpression) {
-            val calleeExpression = element.calleeExpression
+        } else if (element is KtExpression && element.getPossiblyQualifiedCallExpression() != null) {
+            val callExpression = element.getPossiblyQualifiedCallExpression()
+            val calleeExpression = callExpression?.calleeExpression
             if (calleeExpression is KtNameReferenceExpression) {
                 allowAnalysisOnEdt {
                     allowAnalysisFromWriteAction {
                         analyze(element) {
-                            val mappedCallableId = resolveToMappedCallableId(element)
+                            val mappedCallableId = resolveToMappedCallableId(callExpression)
                             if (mappedCallableId != null) {
                                 return replaceChild(element, calleeExpression, mappedCallableId.callableName.asString())
                             }
@@ -123,7 +126,7 @@ internal object KotlinPostfixTemplatePsiInfo : PostfixTemplatePsiInfo() {
             val functionSymbol = call.partiallyAppliedSymbol.symbol
             val callableId = functionSymbol.callableId
             if (callableId != null && callableId.callableName in MAPPED_CALLABLE_NAMES) {
-                for (overriddenSymbol in functionSymbol.allOverriddenSymbols) {
+                for (overriddenSymbol in functionSymbol.allOverriddenSymbolsWithSelf) {
                     val mappedCallableId = CALLABLE_MAPPINGS[overriddenSymbol.callableId]
                     if (mappedCallableId != null) {
                         return mappedCallableId

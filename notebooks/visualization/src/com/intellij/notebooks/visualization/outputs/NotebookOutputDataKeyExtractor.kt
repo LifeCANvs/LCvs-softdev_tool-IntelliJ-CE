@@ -1,19 +1,20 @@
 package com.intellij.notebooks.visualization.outputs
 
-import com.intellij.openapi.editor.impl.EditorImpl
-import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.notebooks.visualization.NotebookCellLines
 import com.intellij.notebooks.visualization.outputs.statistic.NotebookOutputKeyType
+import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.extensions.ExtensionPointName
+import kotlinx.serialization.Polymorphic
 
 /** Merely a marker for data that can be represented via some Swing component. */
+@Polymorphic
 interface NotebookOutputDataKey {
   /**
       Get content that can be used for building diff for outputs.
    */
   fun getContentForDiffing(): Any
 
-  val statisticKey: NotebookOutputKeyType
-    get() = NotebookOutputKeyType.UNKNOWN
+  fun getStatisticKey() = NotebookOutputKeyType.UNKNOWN
 }
 
 interface NotebookOutputDataKeyExtractor {
@@ -25,7 +26,7 @@ interface NotebookOutputDataKeyExtractor {
    *  An empty list if the factory managed to extract some information, and it literally means there's nothing to be shown.
    *  A non-empty list if some data can be shown.
    */
-  fun extract(editor: EditorImpl, interval: NotebookCellLines.Interval): List<NotebookOutputDataKey>?
+  fun extract(editor: Editor, interval: NotebookCellLines.Interval): List<NotebookOutputDataKey>?
 
   companion object {
     @JvmField

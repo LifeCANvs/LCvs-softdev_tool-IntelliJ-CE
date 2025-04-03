@@ -1,8 +1,8 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package fleet.util.async
 
-import fleet.util.AtomicRef
-import fleet.util.BifurcanSet
+import fleet.multiplatform.shims.AtomicRef
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.coroutines.*
 import kotlin.coroutines.CoroutineContext
 
@@ -64,11 +64,10 @@ interface HandleScope : CoroutineScope {
   fun <T> handle(launcher: Launcher<T>): Handle<T>
 }
 
-suspend fun handleScope(body: suspend HandleScope.() -> Unit) {
+suspend fun<T> handleScope(body: suspend HandleScope.() -> T): T =
   supervisorScope {
     handleScopeImpl(this, body)
   }
-}
 
 //@fleet.kernel.plugins.InternalInPluginModules(where = ["fleet.testlib"])
 suspend fun handleScopeNonSupervising(body: suspend HandleScope.() -> Unit) {
@@ -77,9 +76,9 @@ suspend fun handleScopeNonSupervising(body: suspend HandleScope.() -> Unit) {
   }
 }
 
-private suspend fun handleScopeImpl(outerScope: CoroutineScope, body: suspend HandleScope.() -> Unit) {
-  val handles = AtomicRef(BifurcanSet<Handle<*>>())
-  try {
+private suspend fun<T> handleScopeImpl(outerScope: CoroutineScope, body: suspend HandleScope.() -> T): T {
+  val handles = AtomicRef(persistentSetOf<Handle<*>>())
+  return try {
     coroutineScope {
       val context = coroutineContext
       object : HandleScope {

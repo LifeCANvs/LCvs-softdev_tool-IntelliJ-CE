@@ -1,6 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl.file.impl
 
+import com.intellij.codeInsight.multiverse.anyContext
 import com.intellij.ide.PsiCopyPasteManager
 import com.intellij.ide.impl.ProjectUtilCore
 import com.intellij.ide.plugins.DynamicPluginListener
@@ -24,10 +25,10 @@ import com.intellij.openapi.roots.*
 import com.intellij.openapi.roots.impl.PushedFilePropertiesUpdater
 import com.intellij.openapi.roots.impl.PushedFilePropertiesUpdaterImpl
 import com.intellij.openapi.startup.InitProjectActivity
-import com.intellij.openapi.util.io.FileUtilRt
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.isTooLarge
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.*
 import com.intellij.project.stateStore
@@ -101,7 +102,8 @@ class PsiVFSListener internal constructor(private val project: Project) {
       val vFile = de.file
       val parent = vFile.parent
 
-      val psiFile = fileManager.getCachedPsiFileInner(vFile)
+      // todo IJPL-339 implement proper event for multiple files
+      val psiFile = fileManager.getCachedPsiFileInner(vFile, anyContext())
       var element: PsiElement?
       if (psiFile != null) {
         fileManager.setViewProvider(vFile, null)
@@ -211,7 +213,8 @@ class PsiVFSListener internal constructor(private val project: Project) {
         }
       }
       else if (propertyName == VirtualFile.PROP_WRITABLE) {
-        val psiFile = fileManager.getCachedPsiFileInner(vFile) ?: return@ExternalChangeAction
+        // todo IJPL-339 implement proper event for multiple files
+        val psiFile = fileManager.getCachedPsiFileInner(vFile, anyContext()) ?: return@ExternalChangeAction
         treeEvent.element = psiFile
         treeEvent.propertyName = PsiTreeChangeEvent.PROP_WRITABLE
         treeEvent.oldValue = event.oldValue
@@ -402,7 +405,8 @@ class PsiVFSListener internal constructor(private val project: Project) {
         fileManager.getCachedDirectory(vFile)
       }
       else {
-        fileManager.getCachedPsiFileInner(vFile)
+        // todo IJPL-339 implement proper event for multiple files
+        fileManager.getCachedPsiFileInner(vFile, anyContext())
       }
       val oldProject = ProjectLocator.getInstance().guessProjectForFile(vFile)
       if (oldProject != null && oldProject !== project) {
@@ -652,7 +656,7 @@ private class MyFileDocumentManagerListener(private val project: Project) : File
 
   override fun fileContentReloaded(file: VirtualFile, document: Document) {
     val psiFile = fileManager.findCachedViewProvider(file)
-    if (file.isValid && psiFile != null && FileUtilRt.isTooLarge(file.length) && psiFile !is PsiLargeFile) {
+    if (file.isValid && psiFile != null && file.isTooLarge() && psiFile !is PsiLargeFile) {
       ApplicationManager.getApplication().runWriteAction(ExternalChangeAction { fileManager.reloadPsiAfterTextChange(psiFile, file) })
     }
   }

@@ -1,24 +1,19 @@
 package com.intellij.notebooks.visualization.ui
 
 import com.intellij.codeInsight.hints.presentation.InlayPresentation
+import com.intellij.notebooks.ui.bind
+import com.intellij.notebooks.ui.visualization.NotebookUtil.notebookAppearance
+import com.intellij.notebooks.visualization.UpdateContext
+import com.intellij.notebooks.visualization.ui.EditorEmbeddedComponentLayoutManager.CustomFoldingConstraint
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.editor.CustomFoldRegion
 import com.intellij.openapi.editor.CustomFoldRegionRenderer
 import com.intellij.openapi.editor.ex.EditorEx
-import com.intellij.openapi.editor.impl.EditorGutterColor
-import com.intellij.openapi.editor.impl.EditorImpl
-import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.openapi.editor.markup.TextAttributes
 import org.jetbrains.annotations.TestOnly
-import com.intellij.notebooks.visualization.UpdateContext
-import com.intellij.notebooks.visualization.ui.EditorEmbeddedComponentLayoutManager.CustomFoldingConstraint
+import java.awt.*
 import java.awt.AWTEvent.MOUSE_EVENT_MASK
 import java.awt.AWTEvent.MOUSE_MOTION_EVENT_MASK
-import java.awt.BorderLayout
-import java.awt.Dimension
-import java.awt.Graphics
-import java.awt.Graphics2D
-import java.awt.Rectangle
 import java.awt.event.MouseEvent
 import java.awt.geom.Rectangle2D
 import javax.swing.BoxLayout
@@ -29,46 +24,63 @@ class CustomFoldingEditorCellViewComponent(
   internal val component: JComponent,
   private val editor: EditorEx,
   private val cell: EditorCell,
-) : EditorCellViewComponent(), HasGutterIcon {
+) : EditorCellViewComponent() {
 
   private var foldingRegion: CustomFoldRegion? = null
 
   private var gutterActionRenderer: ActionToGutterRendererAdapter? = null
 
   private val bottomContainer = JPanel().apply {
+    isOpaque = false
     layout = BoxLayout(this, BoxLayout.Y_AXIS)
-    background = EditorGutterColor.getEditorGutterBackgroundColor(editor as EditorImpl, false)
   }
-  private val mainComponent = JPanel().also {
-    it.layout = BorderLayout()
-    it.add(component, BorderLayout.CENTER)
-    it.add(bottomContainer, BorderLayout.SOUTH)
+
+  private val mainComponent = JPanel(BorderLayout()).apply {
+    isOpaque = false
+    add(component, BorderLayout.CENTER)
+    add(bottomContainer, BorderLayout.SOUTH)
   }
+
+  private val presentationToComponent = mutableMapOf<InlayPresentation, JComponent>()
 
   @TestOnly
   fun getComponentForTest(): JComponent {
     return component
   }
 
-  override fun updateGutterIcons(gutterAction: AnAction?) {
-    gutterActionRenderer = gutterAction?.let { ActionToGutterRendererAdapter(it) }
-    foldingRegion?.update()
-  }
-
-  override fun doDispose() {
-    disposeFolding()
-  }
-
-  private fun disposeFolding() = cell.manager.update { ctx ->
-    foldingRegion?.let { region ->
-      ctx.addFoldingOperation {
-        if (region.isValid == true) {
-          editor.foldingModel.removeFoldRegion(region)
-        }
+  private fun updateGutterIcons(gutterAction: AnAction?) {
+    editor.updateManager.update { ctx ->
+      gutterActionRenderer = gutterAction?.let { ActionToGutterRendererAdapter(it) }
+      ctx.addFoldingOperation { modelEx ->
+        foldingRegion?.update()
       }
     }
+  }
+
+  init {
+    cell.gutterAction.afterChange(this) { action ->
+      updateGutterIcons(action)
+    }
+    updateGutterIcons(cell.gutterAction.get())
+    editor.notebookAppearance.editorBackgroundColor.bind(this) {
+      bottomContainer.background = it
+    }
+  }
+
+  override fun dispose(): Unit = editor.updateManager.update { ctx ->
+    disposeFolding(ctx)
+  }
+
+  private fun disposeFolding(ctx: UpdateContext) {
+    ctx.addFoldingOperation { foldingModel ->
+      foldingRegion?.let { region ->
+        if (region.isValid == true) {
+          foldingModel.removeFoldRegion(region)
+        }
+      }
+      foldingRegion = null
+    }
     editor.componentContainer.remove(mainComponent)
-    foldingRegion = null
   }
 
   override fun calculateBounds(): Rectangle {
@@ -78,31 +90,20 @@ class CustomFoldingEditorCellViewComponent(
   }
 
   override fun updateCellFolding(updateContext: UpdateContext) {
-    updateContext.addFoldingOperation {
-      foldingRegion?.dispose()
-      val fr = editor.foldingModel.addCustomLinesFolding(
+    updateContext.addFoldingOperation { foldingModel ->
+      foldingRegion?.let { foldingModel.removeFoldRegion(it) }
+      val fr = foldingModel.addCustomLinesFolding(
         cell.interval.lines.first, cell.interval.lines.last, object : CustomFoldRegionRenderer {
-        override fun calcWidthInPixels(region: CustomFoldRegion): Int {
-          return mainComponent.width
-        }
-
-        override fun calcHeightInPixels(region: CustomFoldRegion): Int {
-          return mainComponent.height
-        }
-
-        override fun paint(region: CustomFoldRegion, g: Graphics2D, targetRegion: Rectangle2D, textAttributes: TextAttributes) {
-        }
-
-        override fun calcGutterIconRenderer(region: CustomFoldRegion): GutterIconRenderer? {
-          return gutterActionRenderer
-        }
+        override fun calcWidthInPixels(region: CustomFoldRegion) = mainComponent.width
+        override fun calcHeightInPixels(region: CustomFoldRegion) = mainComponent.height
+        override fun paint(region: CustomFoldRegion, g: Graphics2D, targetRegion: Rectangle2D, textAttributes: TextAttributes) = Unit
+        override fun calcGutterIconRenderer(region: CustomFoldRegion) = gutterActionRenderer
       }) ?: error("Failed to create folding region ${cell.interval.lines}")
+      fr.putUserData(CustomFoldRegion.IMMUTABLE_FOLD_REGION, true)
       foldingRegion = fr
       editor.componentContainer.add(mainComponent, CustomFoldingConstraint(fr, true))
     }
   }
-
-  private val presentationToComponent = mutableMapOf<InlayPresentation, JComponent>()
 
   override fun addInlayBelow(presentation: InlayPresentation) {
     val inlayComponent = object : JComponent() {

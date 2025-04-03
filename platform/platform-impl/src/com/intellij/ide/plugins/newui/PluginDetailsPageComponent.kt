@@ -32,7 +32,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.openapi.util.SystemInfo
-import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.HtmlChunk
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.util.text.Strings
@@ -78,7 +77,6 @@ import javax.swing.plaf.TabbedPaneUI
 import javax.swing.text.View
 import javax.swing.text.html.ImageView
 import javax.swing.text.html.ParagraphView
-import kotlin.collections.set
 import kotlin.coroutines.coroutineContext
 
 @Internal
@@ -108,6 +106,7 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
   private var updateButton: JButton? = null
   private var gearButton: JComponent? = null
   private var myEnableDisableButton: JButton? = null
+  private var myUninstallButton: JButton? = null
   private var errorComponent: ErrorComponent? = null
   private var version: JTextField? = null
   private var isEnabledForProject: JLabel? = null
@@ -130,6 +129,12 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
   private var disableFeedbackNotification: BorderLayoutPanel? = null
   private val sentFeedbackPlugins = HashSet<PluginId>()
   private val licensePanel = LicensePanel(false)
+  private val customLicensePanel = JPanel(BorderLayout()).apply {
+    isOpaque = false
+    isVisible = false
+  }
+  private val unavailableWithoutSubscriptionBanner: InlineBannerBase? = UnavailableWithoutSubscriptionComponent.getBanner()
+  private val partiallyAvailableBanner: InlineBannerBase? = PartiallyAvailableComponent.getBanner()
   private var homePage: LinkPanel? = null
   private var forumUrl: LinkPanel? = null
   private var licenseUrl: LinkPanel? = null
@@ -173,7 +178,8 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
 
   companion object {
     @JvmStatic
-    fun isMultiTabs(): Boolean = Registry.`is`("plugins.show.multi.tabs", true)
+    @Deprecated("Always true")
+    fun isMultiTabs(): Boolean = true
 
     @JvmStatic
     fun createDescriptionComponent(imageViewHandler: Consumer<in View>?): JEditorPane {
@@ -341,6 +347,17 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
     topPanel.add(ErrorComponent().also { errorComponent = it }, VerticalLayout.FILL_HORIZONTAL)
     topPanel.add(licensePanel)
     licensePanel.border = JBUI.Borders.emptyBottom(5)
+    topPanel.add(customLicensePanel)
+    customLicensePanel.border = JBUI.Borders.emptyBottom(5)
+
+    if (unavailableWithoutSubscriptionBanner != null) {
+      topPanel.add(unavailableWithoutSubscriptionBanner, VerticalLayout.FILL_HORIZONTAL)
+      unavailableWithoutSubscriptionBanner.isVisible = false
+    }
+    if (partiallyAvailableBanner != null) {
+      topPanel.add(partiallyAvailableBanner, VerticalLayout.FILL_HORIZONTAL)
+      partiallyAvailableBanner.isVisible = false
+    }
 
     createTabs(panel!!)
   }
@@ -480,6 +497,7 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
         { this.createUninstallAction() })
       nameAndButtons.addButtonComponent(enableDisableController!!.button.also { gearButton = it })
       nameAndButtons.addButtonComponent(enableDisableController!!.bundledButton.also { myEnableDisableButton = it })
+      nameAndButtons.addButtonComponent(enableDisableController!!.uninstallButton.also { myUninstallButton = it })
     }
     else {
       gearButton = SelectionBasedPluginModelAction.createGearButton(
@@ -1064,6 +1082,11 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
     }
 
     showLicensePanel()
+
+    unavailableWithoutSubscriptionBanner?.isVisible = showComponent?.isNotFreeInFreeMode == true
+    partiallyAvailableBanner?.isVisible = showComponent?.isNotFreeInFreeMode != true &&
+                                          PluginManagerCore.dependsOnUltimateOptionally(showComponent?.pluginDescriptor)
+
     val homepage = getPluginHomepage(plugin.pluginId)
 
     if (plugin.isBundled && !plugin.allowBundledUpdate() || !isPluginFromMarketplace || homepage == null) {
@@ -1234,17 +1257,33 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
   private fun showLicensePanel() {
     val descriptor = descriptorForActions
     val productCode = descriptor!!.productCode
+    val customization = PluginInstallationCustomization.findPluginInstallationCustomization(descriptor.pluginId)
+    val customLicense = customization?.createLicensePanel(updateDescriptor != null)
+
+    if (customLicense != null) {
+      customLicensePanel.add(customLicense, BorderLayout.CENTER)
+      customLicensePanel.isVisible = true
+      licensePanel.isVisible = false
+      return
+    }
+
+    customLicensePanel.removeAll()
+    customLicensePanel.isVisible = false
+    licensePanel.isVisible = true
+
     if (descriptor.isBundled || LicensePanel.isEA2Product(productCode)) {
       licensePanel.hideWithChildren()
       return
     }
     if (productCode == null) {
-      if (updateDescriptor != null && updateDescriptor!!.productCode != null &&
-          !LicensePanel.isEA2Product(updateDescriptor!!.productCode)
+      val update = updateDescriptor
+      if (update != null && update.productCode != null &&
+          !LicensePanel.isEA2Product(update.productCode) &&
+          !LicensePanel.shouldSkipPluginLicenseDescriptionPublishing(update)
       ) {
-        licensePanel.setText(IdeBundle.message("label.next.plugin.version.is"), true, false)
-        licensePanel.showBuyPlugin({ updateDescriptor }, true)
-        licensePanel.isVisible = true
+        licensePanel.showBuyPluginWithText(IdeBundle.message("label.next.plugin.version.is"), true, false,
+                                           { update }, true,
+                                           true)
       }
       else {
         licensePanel.hideWithChildren()
@@ -1253,23 +1292,24 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
     else if (isMarketplace) {
       var requiresCommercialIde = false
 
-      if (descriptor is PluginNode) {
+      val message: String = if (descriptor is PluginNode) {
         val ideProductCode = ApplicationInfoImpl.getShadowInstanceImpl().build.productCode
 
         val trialPeriod = descriptor.getTrialPeriodByProductCode(ideProductCode)
         val isFreemium = descriptor.tags.contains(Tags.Freemium.name)
         requiresCommercialIde = descriptor.suggestedCommercialIde != null
 
-        licensePanel.setText(getPaidPluginLicenseText(isFreemium, trialPeriod), false, false)
+        getPaidPluginLicenseText(isFreemium, trialPeriod)
       }
       else {
-        licensePanel.setText(IdeBundle.message("label.install.paid.without.trial"), false, false)
+        IdeBundle.message("label.install.paid.without.trial")
       }
 
-      licensePanel.showBuyPlugin({ descriptor }, false)
-
-      // if the descriptor requires a commercial IDE, we do not show trial/price message
-      licensePanel.isVisible = !requiresCommercialIde
+      licensePanel.showBuyPluginWithText(
+        message, false, false,
+        { descriptor }, false,
+        !requiresCommercialIde // if the descriptor requires a commercial IDE, we do not show trial/price message
+      )
     }
     else {
       val instance = LicensingFacade.getInstance()
@@ -1313,6 +1353,7 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
       installButton!!.isVisible = false
       updateButton!!.isVisible = false
       gearButton!!.isVisible = false
+      myUninstallButton?.isVisible = false
       if (isMultiTabs) {
         myEnableDisableButton!!.isVisible = false
       }
@@ -1330,6 +1371,7 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
       installButton!!.isVisible = !installed
 
       updateButton!!.isVisible = false
+      myUninstallButton?.isVisible = false
       if (isMultiTabs) {
         if (installed || installedDescriptorForMarketplace == null) {
           gearButton!!.isVisible = false
@@ -1356,7 +1398,8 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
 
           val bundled = installedDescriptorForMarketplace!!.isBundled
           enableDisableController!!.update()
-          gearButton!!.isVisible = !uninstalled && !bundled
+          gearButton!!.isVisible = !uninstalled && !bundled && showComponent?.isNotFreeInFreeMode != true
+          myUninstallButton?.isVisible = !uninstalled && !bundled && showComponent?.isNotFreeInFreeMode == true
           myEnableDisableButton!!.isVisible = bundled
           updateButton!!.isVisible = !uninstalled && updateDescriptor != null && !installedWithoutRestart
           updateEnableForNameAndIcon()
@@ -1399,9 +1442,10 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
         val bundled = plugin!!.isBundled
         val isEssential = ApplicationInfo.getInstance().isEssentialPlugin(
           plugin!!.pluginId)
-        gearButton!!.isVisible = !uninstalled && !bundled
+        gearButton!!.isVisible = !uninstalled && !bundled && showComponent?.isNotFreeInFreeMode != true
         myEnableDisableButton!!.isVisible = bundled
-        myEnableDisableButton!!.isEnabled = !isEssential
+        myEnableDisableButton!!.isEnabled = !isEssential && showComponent?.isNotFreeInFreeMode != true
+        myUninstallButton?.isVisible = !uninstalled && !bundled && showComponent?.isNotFreeInFreeMode == true
       }
       else {
         gearButton!!.isVisible = !uninstalled
@@ -1425,9 +1469,11 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
   }
 
   private fun updateErrors() {
-    val errors = pluginModel.getErrors(descriptorForActions!!)
-    updateIcon(errors)
-    errorComponent!!.setErrors(errors) { this.handleErrors() }
+    if (showComponent?.isNotFreeInFreeMode != true) {
+      val errors = pluginModel.getErrors(descriptorForActions!!)
+      updateIcon(errors)
+      errorComponent!!.setErrors(errors) { this.handleErrors() }
+    }
   }
 
   private fun handleErrors() {
@@ -1529,6 +1575,7 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
     installButton!!.isVisible = false
     updateButton!!.isVisible = false
     gearButton!!.isVisible = false
+    myUninstallButton?.isVisible = false
     if (myEnableDisableButton != null) {
       myEnableDisableButton!!.isVisible = false
     }
@@ -1699,80 +1746,80 @@ private fun createBaseNotificationPanel(): BorderLayoutPanel {
 }
 
 private fun createMainBorder(): CustomLineBorder {
-      return object : CustomLineBorder(JBColor.border(), JBUI.insetsTop(1)) {
-        override fun getBorderInsets(c: Component): Insets = JBUI.insets(15, 20, 0, 20)
+  return object : CustomLineBorder(PluginManagerConfigurable.SEARCH_FIELD_BORDER_COLOR, JBUI.insetsTop(1)) {
+    override fun getBorderInsets(c: Component): Insets = JBUI.insets(15, 20, 0, 20)
+  }
+}
+
+private fun createNameComponent(): JEditorPane {
+  val editorPane: JEditorPane = object : JEditorPane() {
+    var baselineComponent: JLabel? = null
+
+    override fun getBaseline(width: Int, height: Int): Int {
+      var baselineComponent = baselineComponent
+      if (baselineComponent == null) {
+        baselineComponent = JLabel()
+        this.baselineComponent = baselineComponent
+        baselineComponent.font = font
       }
+      baselineComponent.text = text
+      val size = baselineComponent.preferredSize
+      return baselineComponent.getBaseline(size.width, size.height)
     }
 
-    private fun createNameComponent(): JEditorPane {
-      val editorPane: JEditorPane = object : JEditorPane() {
-        var baselineComponent: JLabel? = null
-
-        override fun getBaseline(width: Int, height: Int): Int {
-          var baselineComponent = baselineComponent
-          if (baselineComponent == null) {
-            baselineComponent = JLabel()
-            this.baselineComponent = baselineComponent
-            baselineComponent.font = font
-          }
-          baselineComponent.text = text
-          val size = baselineComponent.preferredSize
-          return baselineComponent.getBaseline(size.width, size.height)
-        }
-
-        override fun getPreferredSize(): Dimension {
-          val size = super.getPreferredSize()
-          if (size.height == 0) {
-            size.height = minimumSize.height
-          }
-          return size
-        }
-
-        override fun updateUI() {
-          super.updateUI()
-          font = labelFont.deriveFont(Font.BOLD, 18f)
-        }
+    override fun getPreferredSize(): Dimension {
+      val size = super.getPreferredSize()
+      if (size.height == 0) {
+        size.height = minimumSize.height
       }
-
-      UIUtil.convertToLabel(editorPane)
-      editorPane.caret = EmptyCaret.INSTANCE
-
-      editorPane.font = JBFont.create(labelFont.deriveFont(Font.BOLD, 18f))
-
-      val text: @NlsSafe String = "<html><span>Foo</span></html>"
-      editorPane.text = text
-      editorPane.minimumSize = editorPane.preferredSize
-      editorPane.text = null
-
-      return editorPane
+      return size
     }
 
-    private fun setTabContainerBorder(pane: JComponent) {
-      val tabContainer = UIUtil.uiChildren(pane).find { it.javaClass.simpleName == "TabContainer" }
-      if (tabContainer is JComponent) {
-        tabContainer.border = SideBorder(PluginManagerConfigurable.SEARCH_FIELD_BORDER_COLOR, SideBorder.BOTTOM)
-      }
+    override fun updateUI() {
+      super.updateUI()
+      font = labelFont.deriveFont(Font.BOLD, 18f)
     }
+  }
 
-    private fun createRequiredPluginsComponent(): JEditorPane {
-      val editorPane = JEditorPane()
-      UIUtil.convertToLabel(editorPane)
-      editorPane.caret = EmptyCaret.INSTANCE
-      editorPane.foreground = ListPluginComponent.GRAY_COLOR
-      editorPane.contentType = "text/plain"
-      return editorPane
-    }
+  UIUtil.convertToLabel(editorPane)
+  editorPane.caret = EmptyCaret.INSTANCE
 
-    private fun addTabWithoutBorders(pane: JBTabbedPane, callback: Runnable) {
-      val insets = pane.tabComponentInsets
-      pane.tabComponentInsets = JBInsets.emptyInsets()
-      callback.run()
-      pane.tabComponentInsets = insets
-    }
+  editorPane.font = JBFont.create(labelFont.deriveFont(Font.BOLD, 18f))
 
-    private fun setFont(component: JComponent, tiny: Boolean) {
-      component.font = labelFont
-      if (tiny) {
-        PluginManagerConfigurable.setTinyFont(component)
-      }
-    }
+  val text: @NlsSafe String = "<html><span>Foo</span></html>"
+  editorPane.text = text
+  editorPane.minimumSize = editorPane.preferredSize
+  editorPane.text = null
+
+  return editorPane
+}
+
+private fun setTabContainerBorder(pane: JComponent) {
+  val tabContainer = UIUtil.uiChildren(pane).find { it.javaClass.simpleName == "TabContainer" }
+  if (tabContainer is JComponent) {
+    tabContainer.border = SideBorder(PluginManagerConfigurable.SEARCH_FIELD_BORDER_COLOR, SideBorder.BOTTOM)
+  }
+}
+
+private fun createRequiredPluginsComponent(): JEditorPane {
+  val editorPane = JEditorPane()
+  UIUtil.convertToLabel(editorPane)
+  editorPane.caret = EmptyCaret.INSTANCE
+  editorPane.foreground = ListPluginComponent.GRAY_COLOR
+  editorPane.contentType = "text/plain"
+  return editorPane
+}
+
+private fun addTabWithoutBorders(pane: JBTabbedPane, callback: Runnable) {
+  val insets = pane.tabComponentInsets
+  pane.tabComponentInsets = JBInsets.emptyInsets()
+  callback.run()
+  pane.tabComponentInsets = insets
+}
+
+private fun setFont(component: JComponent, tiny: Boolean) {
+  component.font = labelFont
+  if (tiny) {
+    PluginManagerConfigurable.setTinyFont(component)
+  }
+}

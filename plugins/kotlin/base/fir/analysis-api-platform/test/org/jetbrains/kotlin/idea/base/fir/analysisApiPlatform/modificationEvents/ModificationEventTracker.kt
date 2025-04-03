@@ -5,16 +5,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import org.jetbrains.kotlin.analysis.api.platform.analysisMessageBus
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinCodeFragmentContextModificationListener
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinGlobalModuleStateModificationListener
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinGlobalSourceModuleStateModificationListener
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinGlobalSourceOutOfBlockModificationListener
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinModificationEventKind
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinModificationTopics
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinModuleOutOfBlockModificationListener
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinModuleStateModificationKind
-import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinModuleStateModificationListener
-import org.jetbrains.kotlin.analysis.api.platform.modification.isModuleLevel
+import org.jetbrains.kotlin.analysis.api.platform.modification.*
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaModule
 import org.junit.Assert
 
@@ -57,48 +48,38 @@ open class ModificationEventTracker(
     init {
         Disposer.register(testRootDisposable, this)
 
-        val busConnection = project.analysisMessageBus.connect(this)
-        busConnection.subscribe(
-            KotlinModificationTopics.MODULE_STATE_MODIFICATION,
-            KotlinModuleStateModificationListener { module, modificationKind ->
-                handleReceivedEvent(
-                    ReceivedEvent(
-                        KotlinModificationEventKind.MODULE_STATE_MODIFICATION,
-                        module,
-                        modificationKind == KotlinModuleStateModificationKind.REMOVAL,
-                    )
-                )
-            },
-        )
-        busConnection.subscribe(
-            KotlinModificationTopics.MODULE_OUT_OF_BLOCK_MODIFICATION,
-            KotlinModuleOutOfBlockModificationListener { module ->
-                handleReceivedEvent(KotlinModificationEventKind.MODULE_OUT_OF_BLOCK_MODIFICATION, module)
-            },
-        )
-        busConnection.subscribe(
-            KotlinModificationTopics.GLOBAL_MODULE_STATE_MODIFICATION,
-            KotlinGlobalModuleStateModificationListener {
-                handleReceivedEvent(KotlinModificationEventKind.GLOBAL_MODULE_STATE_MODIFICATION)
-            },
-        )
-        busConnection.subscribe(
-            KotlinModificationTopics.GLOBAL_SOURCE_MODULE_STATE_MODIFICATION,
-            KotlinGlobalSourceModuleStateModificationListener {
-                handleReceivedEvent(KotlinModificationEventKind.GLOBAL_SOURCE_MODULE_STATE_MODIFICATION)
-            },
-        )
-        busConnection.subscribe(
-            KotlinModificationTopics.GLOBAL_SOURCE_OUT_OF_BLOCK_MODIFICATION,
-            KotlinGlobalSourceOutOfBlockModificationListener {
-                handleReceivedEvent(KotlinModificationEventKind.GLOBAL_SOURCE_OUT_OF_BLOCK_MODIFICATION)
-            },
-        )
-        busConnection.subscribe(
-            KotlinModificationTopics.CODE_FRAGMENT_CONTEXT_MODIFICATION,
-            KotlinCodeFragmentContextModificationListener { module ->
-                handleReceivedEvent(KotlinModificationEventKind.CODE_FRAGMENT_CONTEXT_MODIFICATION, module)
-            },
+        project.analysisMessageBus.connect(this).subscribe(
+            KotlinModificationEvent.TOPIC,
+            KotlinModificationEventListener { event ->
+                when (event) {
+                    is KotlinModuleStateModificationEvent ->
+                        handleReceivedEvent(
+                            ReceivedEvent(
+                                KotlinModificationEventKind.MODULE_STATE_MODIFICATION,
+                                event.module,
+                                event.modificationKind == KotlinModuleStateModificationKind.REMOVAL,
+                            )
+                        )
+
+                    is KotlinModuleOutOfBlockModificationEvent ->
+                        handleReceivedEvent(KotlinModificationEventKind.MODULE_OUT_OF_BLOCK_MODIFICATION, event.module)
+
+                    is KotlinGlobalModuleStateModificationEvent ->
+                        handleReceivedEvent(KotlinModificationEventKind.GLOBAL_MODULE_STATE_MODIFICATION)
+
+                    is KotlinGlobalSourceModuleStateModificationEvent ->
+                        handleReceivedEvent(KotlinModificationEventKind.GLOBAL_SOURCE_MODULE_STATE_MODIFICATION)
+
+                    is KotlinGlobalScriptModuleStateModificationEvent ->
+                        handleReceivedEvent(KotlinModificationEventKind.GLOBAL_SCRIPT_MODULE_STATE_MODIFICATION)
+
+                    is KotlinGlobalSourceOutOfBlockModificationEvent ->
+                        handleReceivedEvent(KotlinModificationEventKind.GLOBAL_SOURCE_OUT_OF_BLOCK_MODIFICATION)
+
+                    is KotlinCodeFragmentContextModificationEvent ->
+                        handleReceivedEvent(KotlinModificationEventKind.CODE_FRAGMENT_CONTEXT_MODIFICATION, event.module)
+                }
+            }
         )
     }
 
@@ -160,7 +141,7 @@ open class ModificationEventTracker(
         if (forbiddenEvents.isEmpty()) return
 
         Assert.fail(
-            "The following forbidden events for $label should not have been published:\n- ${forbiddenEvents.joinToString("\n -")}"
+            "The following forbidden events for '$label' should not have been published:\n- ${forbiddenEvents.joinToString("\n -")}"
         )
     }
 

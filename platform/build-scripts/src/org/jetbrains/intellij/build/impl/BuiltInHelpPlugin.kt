@@ -102,11 +102,11 @@ private suspend fun buildResourcesForHelpPlugin(resourceRoot: Path, classPath: L
       )
     }
     writeNewZipWithoutIndex(file = assetJar, compress = true) { zipCreator ->
-      val archiver = ZipArchiver(zipCreator)
+      val archiver = ZipArchiver()
       archiver.setRootDir(resourceRoot)
-      archiveDir(resourceRoot.resolve("topics"), archiver, null)
-      archiveDir(resourceRoot.resolve("images"), archiver, null)
-      archiveDir(resourceRoot.resolve("search"), archiver, null)
+      archiveDir(startDir = resourceRoot.resolve("topics"), addFile = { archiver.addFile(it, zipCreator) })
+      archiveDir(startDir = resourceRoot.resolve("images"), addFile = { archiver.addFile(it, zipCreator) })
+      archiveDir(startDir = resourceRoot.resolve("search"), addFile = { archiver.addFile(it, zipCreator) })
     }
   }
 }

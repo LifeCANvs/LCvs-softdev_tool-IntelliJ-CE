@@ -7,10 +7,12 @@ import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.startup.StartupManager
 import com.intellij.platform.backend.workspace.WorkspaceModel
 import com.intellij.platform.diagnostic.telemetry.helpers.MillisecondsMeasurer
+import com.intellij.platform.workspace.jps.JpsFileEntitySource
 import com.intellij.platform.workspace.jps.JpsMetrics
 import com.intellij.workspaceModel.ide.JpsProjectLoadedListener
 import com.intellij.workspaceModel.ide.impl.WorkspaceModelImpl
 import io.opentelemetry.api.metrics.Meter
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.annotations.VisibleForTesting
 import kotlin.system.measureTimeMillis
@@ -24,10 +26,33 @@ import kotlin.system.measureTimeMillis
  * If this synchronizer overrides your changes and you'd like to postpone the changes to be after this synchronization,
  *   you can use [com.intellij.workspaceModel.ide.JpsProjectLoadingManager].
  */
+@ApiStatus.Internal
 @VisibleForTesting
 class DelayedProjectSynchronizer : ProjectActivity {
   override suspend fun execute(project: Project) {
+    fun logJpsEntities(state: String) {
+      val logger = thisLogger()
+      if (logger.isDebugEnabled) {
+        try {
+          fun <T> List<T>.safeSubList(fromIndex: Int, toIndex: Int): List<T> =
+            this.subList(fromIndex.coerceAtLeast(0), toIndex.coerceAtMost(this.size))
+
+          val wsm = WorkspaceModel.getInstance(project).currentSnapshot
+          val jpsEntities = wsm.entitiesBySource { entitySource -> entitySource is JpsFileEntitySource }.toList()
+          val sampleSize = 50
+          val entitySources = jpsEntities.stream().map { e -> e.entitySource }.distinct().limit(sampleSize.toLong()).toList()
+          logger.warn("$state: ${jpsEntities.size} entities.\n" +
+                      "First $sampleSize entities are: ${jpsEntities.safeSubList(0, sampleSize)}.\n" +
+                      "First $sampleSize entity sources are: ${entitySources}")
+        } catch (_: Throwable) {
+          // do nothing. Imagine that this code was never existed. We are debugging BAZEL-1750.
+        }
+      }
+    }
+
+    logJpsEntities("Before Util.doSync")
     Util.doSync(project)
+    logJpsEntities("After Util.doSync")
   }
 
   object Util {
@@ -43,7 +68,8 @@ class DelayedProjectSynchronizer : ProjectActivity {
       }
 
       val loadingTime = measureTimeMillis {
-        projectModelSynchronizer.loadProject(project)
+        val projectEntities = projectModelSynchronizer.loadProjectToEmptyStorage(project)
+        projectModelSynchronizer.applyLoadedStorage(projectEntities)
         project.messageBus.syncPublisher(JpsProjectLoadedListener.LOADED).loaded()
       }
       syncTimeMs.duration.addAndGet(loadingTime)

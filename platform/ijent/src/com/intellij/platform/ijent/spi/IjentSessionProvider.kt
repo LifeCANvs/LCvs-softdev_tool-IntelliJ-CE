@@ -2,8 +2,12 @@
 package com.intellij.platform.ijent.spi
 
 import com.intellij.openapi.components.serviceAsync
+import com.intellij.platform.eel.EelDescriptor
 import com.intellij.platform.eel.EelPlatform
-import com.intellij.platform.ijent.*
+import com.intellij.platform.ijent.IjentApi
+import com.intellij.platform.ijent.IjentPosixApi
+import com.intellij.platform.ijent.IjentSessionRegistry
+import com.intellij.platform.ijent.IjentWindowsApi
 
 /**
  * Given that there is some IJent process launched, this extension gets handles to stdin+stdout of the process and returns
@@ -16,6 +20,7 @@ interface IjentSessionProvider {
   suspend fun connect(
     strategy: IjentConnectionStrategy,
     platform: EelPlatform,
+    descriptor: EelDescriptor,
     mediator: IjentSessionMediator,
   ): IjentApi
 
@@ -40,7 +45,7 @@ sealed class IjentStartupError : RuntimeException {
 }
 
 internal class DefaultIjentSessionProvider : IjentSessionProvider {
-  override suspend fun connect(strategy: IjentConnectionStrategy, platform: EelPlatform, mediator: IjentSessionMediator): IjentApi {
+  override suspend fun connect(strategy: IjentConnectionStrategy, platform: EelPlatform, descriptor: EelDescriptor, mediator: IjentSessionMediator): IjentApi {
     throw IjentStartupError.MissingImplPlugin()
   }
 }
@@ -50,22 +55,26 @@ internal class DefaultIjentSessionProvider : IjentSessionProvider {
  * [ijentName] is used for debugging utilities like logs and thread names.
  *
  * The process terminates automatically only when the IDE exits, or if [IjentApi.close] is called explicitly.
- * [com.intellij.platform.ijent.bindToScope] may be useful for terminating the IJent process earlier.
  */
-suspend fun connectToRunningIjent(ijentName: String, strategy: IjentConnectionStrategy, platform: EelPlatform, process: Process): IjentApi {
-  val ijentSessionRegistry = IjentSessionRegistry.instanceAsync()
-  val ijentId = ijentSessionRegistry.register(ijentName, oneOff = true) { ijentId ->
-    val mediator = IjentSessionMediator.create(process, ijentId)
-    mediator.expectedErrorCode = IjentSessionMediator.ExpectedErrorCode.ZERO
-    IjentSessionProvider.instanceAsync().connect(strategy, platform, mediator)
-  }
-  return ijentSessionRegistry.get(ijentId)
+suspend fun connectToRunningIjent(strategy: IjentConnectionStrategy, platform: EelPlatform, descriptor: EelDescriptor, mediator: IjentSessionMediator): IjentApi {
+  mediator.myExitPolicy = IjentSessionMediator.ProcessExitPolicy.CHECK_CODE
+  return IjentSessionProvider.instanceAsync().connect(strategy, platform, descriptor, mediator)
 }
 
 /** A specialized overload of [connectToRunningIjent] */
-suspend fun connectToRunningIjent(ijentName: String, strategy: IjentConnectionStrategy, platform: EelPlatform.Posix, process: Process): IjentPosixApi =
-  connectToRunningIjent(ijentName, strategy, platform as EelPlatform, process) as IjentPosixApi
+suspend fun connectToRunningIjent(
+  strategy: IjentConnectionStrategy,
+  platform: EelPlatform.Posix,
+  descriptor: EelDescriptor,
+  mediator: IjentSessionMediator,
+): IjentPosixApi =
+  connectToRunningIjent(strategy, platform as EelPlatform, descriptor, mediator) as IjentPosixApi
 
 /** A specialized overload of [connectToRunningIjent] */
-suspend fun connectToRunningIjent(ijentName: String, strategy: IjentConnectionStrategy, platform: EelPlatform.Windows, process: Process): IjentWindowsApi =
-  connectToRunningIjent(ijentName, strategy, platform as EelPlatform, process) as IjentWindowsApi
+suspend fun connectToRunningIjent(
+  strategy: IjentConnectionStrategy,
+  platform: EelPlatform.Windows,
+  descriptor: EelDescriptor,
+  mediator: IjentSessionMediator,
+): IjentWindowsApi =
+  connectToRunningIjent(strategy, platform as EelPlatform, descriptor, mediator) as IjentWindowsApi

@@ -11,11 +11,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.selects.select
+import kotlin.time.TimeSource
 
 private val logger = logger<Transport<*>>()
 
-class Transport<T>(val outgoing: SendChannel<T>,
-                   val incoming: ReceiveChannel<T>)
+class Transport<T>(
+  val outgoing: SendChannel<T>,
+  val incoming: ReceiveChannel<T>,
+)
 
 fun interface FleetTransportFactory {
   /*
@@ -23,9 +26,19 @@ fun interface FleetTransportFactory {
    * If the connection isn't possible, rethrow the cause as [TransportDisconnectedException].
    * When the underlying transport is broken, e.g. a socket is closed, both channels should be closed with [TransportDisconnectedException]
    */
-  suspend fun connect(transportStats: MutableStateFlow<TransportStats>?,
-                      body: suspend CoroutineScope.(Transport<TransportMessage>) -> Unit)
+  suspend fun connect(
+    transportStats: MutableStateFlow<TransportStats>?,
+    body: suspend CoroutineScope.(Transport<TransportMessage>) -> Unit,
+  )
 }
+
+/**
+ * Use this function when you want to re-create your factory on each connection attempt.
+ */
+fun dynamicTransportFactory(f: suspend () -> FleetTransportFactory): FleetTransportFactory =
+  FleetTransportFactory { socketStats, body ->
+    f().connect(socketStats, body)
+  }
 
 enum class DebugConnectionState {
   Connect,
@@ -43,9 +56,9 @@ fun FleetTransportFactory.debugDisconnect(control: StateFlow<DebugConnectionStat
   val underlying = this
   return FleetTransportFactory { transportStats, body ->
     logger.debug { "Waiting for control flow to allow connection $debugToken" }
-    val t = System.nanoTime()
+    val t = TimeSource.Monotonic.markNow()
     control.first { it == DebugConnectionState.Connect }
-    val nanos = System.nanoTime() - t
+    val nanos = t.elapsedNow().inWholeNanoseconds
     logger.debug { "Connection $debugToken allowed, ${nanos / 1_000_000}ms spent waiting" }
     underlying.connect(transportStats) { transport ->
       val bodyJob = launch { body(transport) }

@@ -3,24 +3,18 @@ package com.intellij.find.actions;
 
 import com.intellij.find.FindBundle;
 import com.intellij.find.FindManager;
-import com.intellij.find.FindSettings;
+import com.intellij.find.FindUsagesSettings;
 import com.intellij.find.findUsages.FindUsagesOptions;
 import com.intellij.find.usages.api.SearchTarget;
-import com.intellij.lang.Language;
-import com.intellij.lang.findUsages.EmptyFindUsagesProvider;
-import com.intellij.lang.findUsages.LanguageFindUsages;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.editor.Editor;
-import com.intellij.openapi.editor.EditorGutter;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
-import com.intellij.psi.PsiFile;
 import com.intellij.psi.search.SearchScope;
-import com.intellij.psi.util.PsiUtilBase;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import org.jetbrains.annotations.ApiStatus.Experimental;
@@ -62,7 +56,7 @@ public class FindUsagesAction extends AnAction {
     PsiDocumentManager.getInstance(project).commitAllDocuments();
     DataContext dataContext = e.getDataContext();
     SearchScope searchScope = FindUsagesOptions.findScopeByName(
-      project, dataContext, FindSettings.getInstance().getDefaultScopeName()
+      project, dataContext, FindUsagesSettings.getInstance().getDefaultScopeName()
     );
     Editor editor = e.getData(CommonDataKeys.EDITOR);
     JBPopupFactory popupFactory = JBPopupFactory.getInstance();
@@ -95,42 +89,7 @@ public class FindUsagesAction extends AnAction {
 
   @Override
   public void update(@NotNull AnActionEvent event) {
-    updateFindUsagesAction(event);
-  }
-
-  private static boolean isEnabled(DataContext dataContext) {
-    Project project = CommonDataKeys.PROJECT.getData(dataContext);
-    if (project == null ||
-        EditorGutter.KEY.getData(dataContext) != null ||
-        Boolean.TRUE.equals(dataContext.getData(CommonDataKeys.EDITOR_VIRTUAL_SPACE))) {
-      return false;
-    }
-    return canFindUsages(project, dataContext) ||
-           !allTargets(dataContext).isEmpty();
-  }
-
-  private static boolean canFindUsages(@NotNull Project project, @NotNull DataContext dataContext) {
-    Editor editor = CommonDataKeys.EDITOR.getData(dataContext);
-    if (editor == null) {
-      return false;
-    }
-    PsiFile file = PsiDocumentManager.getInstance(project).getPsiFile(editor.getDocument());
-    if (file == null) {
-      return false;
-    }
-    Language language = PsiUtilBase.getLanguageInEditor(editor, project);
-    if (language == null) {
-      language = file.getLanguage();
-    }
-    return !(LanguageFindUsages.INSTANCE.forLanguage(language) instanceof EmptyFindUsagesProvider);
-  }
-
-  public static void updateFindUsagesAction(@NotNull AnActionEvent event) {
-    Presentation presentation = event.getPresentation();
-    DataContext dataContext = event.getDataContext();
-    boolean enabled = isEnabled(dataContext);
-    presentation.setVisible(enabled || !event.isFromContextMenu());
-    presentation.setEnabled(enabled);
+    FindUsagesInFileAction.updateFindUsagesAction(event);
   }
 
   public static final class ShowSettingsAndFindUsages extends FindUsagesAction {

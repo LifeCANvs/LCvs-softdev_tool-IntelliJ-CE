@@ -47,8 +47,8 @@ import com.intellij.vcs.commit.AbstractCommitWorkflow.Companion.PROGRESS_FRACTIO
 import com.intellij.vcs.commit.AbstractCommitWorkflow.Companion.PROGRESS_FRACTION_POST
 import com.intellij.vcs.commit.AbstractCommitWorkflow.Companion.getCommitExecutors
 import kotlinx.coroutines.*
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
-import java.lang.Runnable
 import kotlin.properties.Delegates.observable
 
 private val LOG = logger<NonModalCommitWorkflowHandler<*, *>>()
@@ -298,6 +298,7 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
     }
   }
 
+  @ApiStatus.Internal
   override suspend fun doExecuteSession(sessionInfo: CommitSessionInfo, commitInfo: DynamicCommitInfo): Boolean {
     if (!sessionInfo.isVcsCommit) {
       return workflow.executeSession(sessionInfo, commitInfo)

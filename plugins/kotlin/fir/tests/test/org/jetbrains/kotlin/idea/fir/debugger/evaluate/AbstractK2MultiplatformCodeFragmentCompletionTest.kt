@@ -3,8 +3,6 @@ package org.jetbrains.kotlin.idea.fir.debugger.evaluate
 
 import com.intellij.debugger.engine.evaluation.CodeFragmentKind
 import com.intellij.debugger.engine.evaluation.TextWithImportsImpl
-import com.intellij.openapi.util.registry.Registry
-import com.intellij.testFramework.LightProjectDescriptor
 import com.intellij.testFramework.VfsTestUtil
 import org.jetbrains.kotlin.idea.debugger.evaluate.KotlinK2CodeFragmentFactory
 import org.jetbrains.kotlin.idea.framework.KotlinSdkType
@@ -23,7 +21,7 @@ abstract class AbstractK2MultiplatformCodeFragmentCompletionTest : AbstractK2Cod
         val elementAt = file?.findElementAt(caretOffset)
         val fragmentText = File("$testPath.fragment").readText()
         val textWithImports = TextWithImportsImpl(CodeFragmentKind.CODE_BLOCK, fragmentText)
-        val file = KotlinK2CodeFragmentFactory().createCodeFragment(textWithImports, elementAt, project)
+        val file = KotlinK2CodeFragmentFactory().createPsiCodeFragment(textWithImports, elementAt, project)!!
         configureFromExistingVirtualFile(file.virtualFile!!)
     }
 
@@ -35,13 +33,16 @@ abstract class AbstractK2MultiplatformCodeFragmentCompletionTest : AbstractK2Cod
 
     override fun tearDown() {
         runAll(
-            { KotlinMultiPlatformProjectDescriptor.cleanupSourceRoots() },
+            { projectDescriptor.cleanupSourceRoots() },
             { KotlinSdkType.removeKotlinSdkInTests() },
             { super.tearDown() },
         )
     }
 
-    override fun getProjectDescriptor(): LightProjectDescriptor {
-        return KotlinMultiPlatformProjectDescriptor
+    override fun getProjectDescriptor(): KotlinMultiPlatformProjectDescriptor {
+        // de-optimization!
+        // recreate descriptor each time to ensure sdk is created before the project
+        // otherwise super.tearDown removes KotlinSdk and the next test method has no Sdk set
+        return KotlinMultiPlatformProjectDescriptor()
     }
 }

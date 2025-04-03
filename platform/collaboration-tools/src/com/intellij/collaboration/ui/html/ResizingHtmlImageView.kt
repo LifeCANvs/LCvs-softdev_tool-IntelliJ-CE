@@ -2,8 +2,10 @@
 package com.intellij.collaboration.ui.html
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.application.UI
 import com.intellij.openapi.application.invokeAndWaitIfNeeded
 import com.intellij.util.containers.ComparatorUtil.min
+import com.intellij.util.ui.JBImageToolkit
 import com.intellij.util.ui.StartupUiUtil
 import kotlinx.coroutines.*
 import java.awt.*
@@ -207,13 +209,12 @@ private class ImageLoader(
       return Job().apply { cancel() }
     }
 
-    val toolkit = Toolkit.getDefaultToolkit()
     try {
       if (src.startsWith("data:image") && src.contains("base64")) {
         val result = Job()
         val base64Image = tryCreateBase64Image(src)
         if (base64Image != null) {
-          toolkit.prepareImage(base64Image, -1, -1, this)
+          JBImageToolkit.prepareImage(base64Image, -1, -1, this)
           result.complete()
         }
         else {
@@ -227,8 +228,8 @@ private class ImageLoader(
       }
       else {
         val url = baseUrl?.let { URL(it, src) } ?: URL(src)
-        return toolkit.createImage(url).also {
-          toolkit.prepareImage(it, -1, -1, this)
+        return JBImageToolkit.createImage(url).also {
+          JBImageToolkit.prepareImage(it, -1, -1, this)
         }.let {
           Job().apply { complete() }
         }
@@ -241,7 +242,7 @@ private class ImageLoader(
 
   @OptIn(DelicateCoroutinesApi::class)
   private fun requestImageAsync(loader: AsyncHtmlImageLoader, baseUrl: URL?, src: String): Job =
-    GlobalScope.launch(Dispatchers.Main + CoroutineName("HTML image requestor")) {
+    GlobalScope.launch(Dispatchers.UI + CoroutineName("HTML image requestor")) {
       state = State.Loading()
       val image = try {
         loader.load(baseUrl, src)!!
@@ -254,7 +255,7 @@ private class ImageLoader(
         state = State.Loaded(image, Dimension(image.width, image.height))
       }
       else {
-        Toolkit.getDefaultToolkit().prepareImage(image, -1, -1, this@ImageLoader)
+        JBImageToolkit.prepareImage(image, -1, -1, this@ImageLoader)
       }
     }
 
@@ -303,5 +304,5 @@ private class ImageLoader(
 private fun tryCreateBase64Image(src: String): Image? {
   val encodedImage = src.split(',').takeIf { it.size == 2 }?.get(1) ?: return null
   val decodedImage = Base64.getDecoder().decode(encodedImage)
-  return Toolkit.getDefaultToolkit().createImage(decodedImage)
+  return JBImageToolkit.createImage(decodedImage)
 }

@@ -1,6 +1,7 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.actionSystem;
 
+import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.util.ReflectionUtil;
 import com.intellij.util.containers.ContainerUtil;
@@ -98,6 +99,7 @@ public abstract class ActionPlaces {
   public static final String SHOW_USAGES_POPUP_TOOLBAR = "ShowUsagesPopupToolbar";
   public static final String STRUCTURE_VIEW_POPUP = "StructureViewPopup";
   public static final String STRUCTURE_VIEW_TOOLBAR = "StructureViewToolbar";
+  public static final String STRUCTURE_VIEW_FLOATING_TOOLBAR = "StructureViewFloatingToolbar";
   public static final String NAVIGATION_BAR_POPUP = "NavBar";
   public static final String NAVIGATION_BAR_TOOLBAR = "NavBarToolbar";
   public static final String RUN_TOOLBAR_LEFT_SIDE = "RunToolbarLeftSide";
@@ -144,6 +146,7 @@ public abstract class ActionPlaces {
 
   public static final String DATABASE_VIEW_TOOLBAR = "DatabaseViewToolbar";
   public static final String DATABASE_VIEW_POPUP = "DatabaseViewPopup";
+  public static final String GRID_FLOATING_PAGING_TOOLBAR = "GridFloatingPagingToolbar";
 
   public static final String REMOTE_HOST_VIEW_POPUP = "RemoteHostPopup";
   public static final String REMOTE_HOST_DIALOG_POPUP = "RemoteHostDialogPopup";
@@ -219,6 +222,10 @@ public abstract class ActionPlaces {
   public static final String RIDER_UNIT_TESTS_PROGRESSBAR_POPUP = "UnitTests.ProgressBarPopup";
   public static final String RIDER_UNIT_TESTS_QUICKLIST = "UnitTests.QuickList";
 
+  // Marker to avoid executing editor action on backend for patch engine
+  @ApiStatus.Internal
+  public static final Key<Boolean> EXECUTE_EDITOR_ACTION_ON_FRONTEND = Key.create("EXECUTE_EDITOR_ACTION_ON_FRONTEND");
+
   public static final String IMPORT_SETTINGS_DIALOG = "Import.Settings.Dialog";
 
   public static final String JUPYTER_NOTEBOOK_CELL_OUTPUT_POPUP = "Editor.Jupyter.Cell.Output.Popup";
@@ -280,8 +287,8 @@ public abstract class ActionPlaces {
            place.startsWith(POPUP_PREFIX) && isCommonPlace(place.substring(POPUP_PREFIX.length()));
   }
 
-  public static @NotNull String getActionGroupPopupPlace(@Nullable String actionId) {
-    return actionId == null ? POPUP : POPUP_PREFIX + actionId;
+  public static @NotNull String getActionGroupPopupPlace(@Nullable String place) {
+    return place == null ? POPUP : POPUP_PREFIX + place;
   }
 
   public static @NotNull String getPopupPlace(@Nullable String place) {

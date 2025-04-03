@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.roots.impl
 
 import com.intellij.openapi.application.*
@@ -22,11 +22,15 @@ import com.intellij.openapi.vfs.pointers.VirtualFilePointerListener
 import com.intellij.util.EventDispatcher
 import com.intellij.util.SmartList
 import com.intellij.util.io.URLUtil
+import com.intellij.workspaceModel.ide.impl.legacyBridge.module.roots.ModuleRootComponentBridge
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jdom.Element
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.jps.model.module.JpsModuleSourceRootType
+import java.util.concurrent.ConcurrentHashMap
 
 private val LOG = logger<ProjectRootManagerImpl>()
 
@@ -36,9 +40,13 @@ private const val PROJECT_JDK_TYPE_ATTR = "project-jdk-type"
 private const val ATTRIBUTE_VERSION = "version"
 
 @State(name = "ProjectRootManager")
-open class ProjectRootManagerImpl(val project: Project,
-                                  private val coroutineScope: CoroutineScope) : ProjectRootManagerEx(), PersistentStateComponent<Element> {
+@ApiStatus.Internal
+open class ProjectRootManagerImpl(
+  @JvmField val project: Project,
+  @JvmField protected val coroutineScope: CoroutineScope,
+) : ProjectRootManagerEx(), PersistentStateComponent<Element> {
   private val projectJdkEventDispatcher = EventDispatcher.create(ProjectJdkListener::class.java)
+  private val moduleRootManagerInstances = ConcurrentHashMap<Module, ModuleRootManager>()
   private var projectSdkName: String? = null
   private var projectSdkType: String? = null
   private val rootCache: OrderRootsCache
@@ -165,7 +173,7 @@ open class ProjectRootManagerImpl(val project: Project,
   }
 
   @ApiStatus.Internal
-  protected val fileTypesChanged: BatchSession<Boolean, Boolean> = object : BatchSession<Boolean, Boolean>(true) {
+  @JvmField val fileTypesChanged: BatchSession<Boolean, Boolean> = object : BatchSession<Boolean, Boolean>(true) {
     override fun fireRootsChanged(change: Boolean): Boolean {
       return this@ProjectRootManagerImpl.fireRootsChanged(true, emptyList())
     }
@@ -257,7 +265,7 @@ open class ProjectRootManagerImpl(val project: Project,
       return null
     }
 
-    val projectJdkTable = ProjectJdkTable.getInstance()
+    val projectJdkTable = ProjectJdkTable.getInstance(project)
     if (projectSdkType == null) {
       return projectJdkTable.findJdk(projectSdkName!!)
     }
@@ -338,7 +346,10 @@ open class ProjectRootManagerImpl(val project: Project,
     if (app != null) {
       val isStateLoaded = isStateLoaded
       if (stateChanged) {
-        coroutineScope.launch(ModalityState.nonModal().asContextElement()) {
+        coroutineScope.launch {
+          // make sure we execute it only after any current modality dialog
+          withContext(Dispatchers.EDT + ModalityState.nonModal().asContextElement()) {
+          }
           applyState(isStateLoaded)
         }
       }
@@ -349,7 +360,7 @@ open class ProjectRootManagerImpl(val project: Project,
   private suspend fun applyState(isStateLoaded: Boolean) {
     if (isStateLoaded) {
       LOG.debug("Run write action for projectJdkChanged()")
-      writeAction {
+      backgroundWriteAction {
         projectJdkChanged()
       }
       return
@@ -374,7 +385,7 @@ open class ProjectRootManagerImpl(val project: Project,
 
     LOG.debug("Run write action for extension.projectSdkChanged(sdk)")
     val extensions = EP_NAME.getExtensions(project)
-    writeAction {
+    backgroundWriteAction {
       for (extension in extensions) {
         extension.projectSdkChanged(sdk)
       }
@@ -468,6 +479,10 @@ open class ProjectRootManagerImpl(val project: Project,
   override fun withRootsChange(changes: RootsChangeRescanningInfo): AutoCloseable {
     rootsChanged.beforeRootsChanged()
     return AutoCloseable { rootsChanged.rootsChanged(changes) }
+  }
+
+  override fun getModuleRootManager(module: Module): ModuleRootManager {
+    return moduleRootManagerInstances.computeIfAbsent(module) { ModuleRootComponentBridge(module) }
   }
 
   @ApiStatus.Internal

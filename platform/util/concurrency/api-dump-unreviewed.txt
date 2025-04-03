@@ -65,17 +65,9 @@ f:com.intellij.util.MergeQuery
 - forEachAsync(com.intellij.util.Processor):com.intellij.concurrency.AsyncFuture
 c:com.intellij.util.TimedReference
 - com.intellij.openapi.Disposable
-- psf:SERVICE_DELAY:I
-- p:myT:java.lang.Object
 - <init>(com.intellij.openapi.Disposable):V
-- p:checkLocked():Z
-- dispose():V
 - s:disposeTimed():V
 - get():java.lang.Object
-- isCached():Z
-- p:isLocked():Z
-- pf:poll():V
-- pf:remove():V
 - set(java.lang.Object):V
 f:com.intellij.util.concurrency.AtomicFieldUpdater
 - compareAndSet(java.lang.Object,java.lang.Object,java.lang.Object):Z
@@ -251,6 +243,7 @@ f:org.jetbrains.concurrency.Promises
 - sf:createError(java.lang.String,Z):java.lang.RuntimeException
 - bs:createError$default(java.lang.String,Z,I,java.lang.Object):java.lang.RuntimeException
 - sf:errorIfNotMessage(com.intellij.openapi.diagnostic.Logger,java.lang.Throwable):Z
+- sf:first(java.util.Collection,org.jetbrains.concurrency.Obsolescent,kotlin.jvm.functions.Function1):org.jetbrains.concurrency.Promise
 - sf:isPending(org.jetbrains.concurrency.Promise):Z
 - sf:isRejected(org.jetbrains.concurrency.Promise):Z
 - sf:nullPromise():org.jetbrains.concurrency.Promise
@@ -273,6 +266,7 @@ f:org.jetbrains.concurrency.Promises
 - sf:thenRun(org.jetbrains.concurrency.Promise,kotlin.jvm.functions.Function0):org.jetbrains.concurrency.Promise
 - sf:toActionCallback(org.jetbrains.concurrency.Promise):com.intellij.openapi.util.ActionCallback
 - sf:toPromise(com.intellij.openapi.util.ActionCallback):org.jetbrains.concurrency.Promise
+- sf:waitAll(java.util.Collection,org.jetbrains.concurrency.Obsolescent):org.jetbrains.concurrency.Promise
 a:org.jetbrains.concurrency.ValueNodeAsyncFunction
 - com.intellij.util.Function
 - org.jetbrains.concurrency.Obsolescent

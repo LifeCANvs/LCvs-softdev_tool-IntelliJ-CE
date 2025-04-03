@@ -128,7 +128,7 @@ internal data class JbProductInfo(
     }
 
     // check for incompatibilities
-    for (ic in descriptor.incompatibilities) {
+    for (ic in descriptor.incompatiblePlugins) {
       if (PluginManagerCore.getPluginSet().isPluginEnabled(ic)) {
         logger.info("Plugin \"${descriptor.name}\" from \"$name\" could not be migrated to \"${IDEData.getSelf()?.fullName}\", " +
                                      "because it is incompatible with ${ic}")
@@ -137,7 +137,7 @@ internal data class JbProductInfo(
     }
 
     // check for missing dependencies
-    for (dependency in descriptor.pluginDependencies) {
+    for (dependency in descriptor.dependencies) {
       if (dependency.isOptional)
         continue
       if (!(PluginManagerCore.getPluginSet().isPluginEnabled(dependency.pluginId) || descriptorsMap.containsKey(dependency.pluginId))) {
@@ -277,6 +277,10 @@ class JbImportServiceImpl(private val coroutineScope: CoroutineScope) : JbServic
                                                customBrokenPluginVersions = emptyMap(),
                                                productBuildNumber = { PluginManagerCore.buildNumber })
     for (parentDir in parentDirs) {
+      if (!parentDir.exists() || !parentDir.isDirectory()) {
+        logger.info("Parent dir $parentDir doesn't exist or not a directory. Skipping it")
+        continue
+      }
       val configDirectoriesCandidates = parentDir
         .listDirectoryEntries()
         .filter { it.isDirectory() }

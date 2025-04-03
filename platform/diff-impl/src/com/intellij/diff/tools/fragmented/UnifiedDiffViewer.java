@@ -49,6 +49,7 @@ import com.intellij.openapi.editor.impl.event.MarkupModelListener;
 import com.intellij.openapi.editor.markup.MarkupModel;
 import com.intellij.openapi.editor.textarea.EmptyInlayModel;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
+import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider;
 import com.intellij.openapi.progress.EmptyProgressIndicator;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
@@ -73,35 +74,35 @@ import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.update.MergingUpdateQueue;
 import com.intellij.util.ui.update.Update;
 import com.intellij.xml.breadcrumbs.NavigatableCrumb;
-import org.jetbrains.annotations.Nls;
-import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import javax.swing.*;
+import java.awt.*;
+import java.awt.geom.Point2D;
 import java.util.*;
+import java.util.List;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
 
 public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorDiffViewer {
-  @NotNull protected final EditorEx myEditor;
-  @NotNull protected final Document myDocument;
-  @NotNull protected final UnifiedDiffPanel myPanel;
-  @NotNull private final OnesideContentPanel myContentPanel;
+  protected final @NotNull EditorEx myEditor;
+  protected final @NotNull Document myDocument;
+  protected final @NotNull UnifiedDiffPanel myPanel;
+  private final @NotNull OnesideContentPanel myContentPanel;
 
-  @NotNull private final SetEditorSettingsAction myEditorSettingsAction;
-  @NotNull private final PrevNextDifferenceIterable myPrevNextDifferenceIterable;
-  @NotNull private final MyStatusPanel myStatusPanel;
+  private final @NotNull SetEditorSettingsAction myEditorSettingsAction;
+  private final @NotNull PrevNextDifferenceIterable myPrevNextDifferenceIterable;
+  private final @NotNull MyStatusPanel myStatusPanel;
 
-  @NotNull private final MyInitialScrollHelper myInitialScrollHelper = new MyInitialScrollHelper();
-  @NotNull private final MyFoldingModel myFoldingModel;
-  @NotNull private final MarkupUpdater myMarkupUpdater;
+  private final @NotNull MyInitialScrollHelper myInitialScrollHelper = new MyInitialScrollHelper();
+  private final @NotNull MyFoldingModel myFoldingModel;
+  private final @NotNull MarkupUpdater myMarkupUpdater;
 
-  @NotNull protected final TwosideTextDiffProvider.NoIgnore myTextDiffProvider;
+  protected final @NotNull TwosideTextDiffProvider.NoIgnore myTextDiffProvider;
 
-  @NotNull protected Side myMasterSide = Side.RIGHT;
+  protected @NotNull Side myMasterSide = Side.RIGHT;
 
-  @NotNull protected final UnifiedDiffModel myModel = new UnifiedDiffModel(this);
+  @ApiStatus.Internal protected final @NotNull UnifiedDiffModel myModel = new UnifiedDiffModel(this);
 
   private final boolean[] myForceReadOnlyFlags;
   private boolean myReadOnlyLockSet = false;
@@ -196,8 +197,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     myFoldingModel.updateContext(myRequest, getFoldingModelSettings());
   }
 
-  @Nullable
-  protected JComponent createTitles() {
+  protected @Nullable JComponent createTitles() {
     List<JComponent> titles = DiffUtil.createTextTitles(this, myRequest, Arrays.asList(myEditor, myEditor));
     assert titles.size() == 2;
 
@@ -223,10 +223,9 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     myDocument.addDocumentListener(new MyOnesideDocumentListener());
   }
 
-  @NotNull
   @Override
   @RequiresEdt
-  public List<AnAction> createToolbarActions() {
+  public @NotNull List<AnAction> createToolbarActions() {
     List<AnAction> group = new ArrayList<>(myTextDiffProvider.getToolbarActions());
     group.add(new MyToggleExpandByDefaultAction());
     group.add(new MyReadOnlyLockAction());
@@ -238,10 +237,9 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     return group;
   }
 
-  @NotNull
   @Override
   @RequiresEdt
-  public List<AnAction> createPopupActions() {
+  public @NotNull List<AnAction> createPopupActions() {
     List<AnAction> group = new ArrayList<>(myTextDiffProvider.getPopupActions());
     group.add(new MyToggleExpandByDefaultAction());
 
@@ -251,8 +249,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     return group;
   }
 
-  @NotNull
-  protected List<AnAction> createEditorPopupActions() {
+  protected @NotNull List<AnAction> createEditorPopupActions() {
     List<AnAction> group = new ArrayList<>();
 
     group.add(new ReplaceSelectedChangesAction(Side.LEFT));
@@ -268,8 +265,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     new TextDiffViewerUtil.EditorActionsPopup(createEditorPopupActions()).install(getEditors(), myPanel);
   }
 
-  @NotNull
-  protected UnifiedDiffChangeUi createUi(@NotNull UnifiedDiffChange change) {
+  @ApiStatus.Internal
+  protected @NotNull UnifiedDiffChangeUi createUi(@NotNull UnifiedDiffChange change) {
     return new UnifiedDiffChangeUi(this, change);
   }
 
@@ -297,8 +294,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   @Override
-  @NotNull
-  protected Runnable performRediff(@NotNull final ProgressIndicator indicator) {
+  protected @NotNull Runnable performRediff(final @NotNull ProgressIndicator indicator) {
     try {
       return computeDifferences(indicator);
     }
@@ -317,16 +313,14 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     }
   }
 
-  @NotNull
-  protected Runnable applyErrorNotification() {
+  protected @NotNull Runnable applyErrorNotification() {
     return () -> {
       clearDiffPresentation();
       myPanel.setErrorContent();
     };
   }
 
-  @NotNull
-  protected Runnable computeDifferences(@NotNull ProgressIndicator indicator) {
+  protected @NotNull Runnable computeDifferences(@NotNull ProgressIndicator indicator) {
     final Document document1 = getContent1().getDocument();
     final Document document2 = getContent2().getDocument();
 
@@ -366,15 +360,14 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     myModel.updateGutterActions();
   }
 
-  @Nullable
-  private static EditorHighlighter buildHighlighter(@Nullable Project project,
-                                                    @NotNull Document document,
-                                                    @NotNull DocumentContent content1,
-                                                    @NotNull DocumentContent content2,
-                                                    @NotNull CharSequence text1,
-                                                    @NotNull CharSequence text2,
-                                                    @NotNull List<HighlightRange> ranges,
-                                                    int textLength) {
+  private static @Nullable EditorHighlighter buildHighlighter(@Nullable Project project,
+                                                              @NotNull Document document,
+                                                              @NotNull DocumentContent content1,
+                                                              @NotNull DocumentContent content2,
+                                                              @NotNull CharSequence text1,
+                                                              @NotNull CharSequence text2,
+                                                              @NotNull List<HighlightRange> ranges,
+                                                              int textLength) {
     EditorHighlighter highlighter1 = DiffUtil.initEditorHighlighter(project, content1, text1);
     EditorHighlighter highlighter2 = DiffUtil.initEditorHighlighter(project, content2, text2);
 
@@ -385,10 +378,9 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     return new UnifiedEditorHighlighter(document, highlighter1, highlighter2, ranges, textLength);
   }
 
-  @NotNull
-  protected Runnable apply(@NotNull UnifiedDiffState builder,
-                           CharSequence @NotNull [] texts,
-                           @NotNull ProgressIndicator indicator) {
+  protected @NotNull Runnable apply(@NotNull UnifiedDiffState builder,
+                                    CharSequence @NotNull [] texts,
+                                    @NotNull ProgressIndicator indicator) {
     final DocumentContent content1 = getContent1();
     final DocumentContent content2 = getContent2();
 
@@ -482,8 +474,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     };
   }
 
-  @NotNull
-  private RangeMarker createGuardedBlock(int start, int end) {
+  private @NotNull RangeMarker createGuardedBlock(int start, int end) {
     RangeMarker block = myDocument.createGuardedBlock(start, end);
     block.setGreedyToLeft(true);
     block.setGreedyToRight(true);
@@ -521,8 +512,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   /*
    * This convertor returns 'good enough' position, even if exact matching is impossible
    */
-  @NotNull
-  public Pair<int[], @NotNull Side> transferLineFromOneside(int line) {
+  public @NotNull Pair<int[], @NotNull Side> transferLineFromOneside(int line) {
     int[] lines = new int[2];
 
     ChangedBlockData blockData = myModel.getData();
@@ -671,7 +661,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   //
 
   private abstract class ApplySelectedChangesActionBase extends AnAction implements DumbAware {
-    @NotNull protected final Side myModifiedSide;
+    protected final @NotNull Side myModifiedSide;
 
     ApplySelectedChangesActionBase(@NotNull Side modifiedSide) {
       myModifiedSide = modifiedSide;
@@ -706,7 +696,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     }
 
     @Override
-    public void actionPerformed(@NotNull final AnActionEvent e) {
+    public void actionPerformed(final @NotNull AnActionEvent e) {
       final List<UnifiedDiffChange> selectedChanges = getSelectedChanges();
       if (selectedChanges.isEmpty()) return;
 
@@ -788,7 +778,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   @RequiresWriteLock
-  public void appendChange(@NotNull UnifiedDiffChange change, @NotNull final Side sourceSide) {
+  public void appendChange(@NotNull UnifiedDiffChange change, final @NotNull Side sourceSide) {
     Side outputSide = sourceSide.other();
 
     Document document1 = getDocument(Side.LEFT);
@@ -803,9 +793,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
                                sourceSide.getStartLine(lineFragment), sourceSide.getEndLine(lineFragment));
   }
 
-  @NotNull
   @RequiresEdt
-  protected List<UnifiedDiffChange> getSelectedChanges() {
+  protected @NotNull List<UnifiedDiffChange> getSelectedChanges() {
     final BitSet lines = DiffUtil.getSelectedLines(myEditor);
     List<UnifiedDiffChange> changes = ContainerUtil.notNullize(myModel.getDiffChanges());
     return ContainerUtil.filter(changes, change -> isChangeSelected(change, lines));
@@ -820,18 +809,15 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   //
 
 
-  @NotNull
-  public TextDiffSettings getTextSettings() {
+  public @NotNull TextDiffSettings getTextSettings() {
     return TextDiffViewerUtil.getTextSettings(myContext);
   }
 
-  @NotNull
-  public FoldingModelSupport.Settings getFoldingModelSettings() {
+  public @NotNull FoldingModelSupport.Settings getFoldingModelSettings() {
     return TextDiffViewerUtil.getFoldingModelSettings(myContext);
   }
 
-  @NotNull
-  public FoldingModelSupport getFoldingModel() {
+  public @NotNull FoldingModelSupport getFoldingModel() {
     return myFoldingModel;
   }
 
@@ -859,69 +845,57 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   //
 
 
-  @NotNull
-  public Side getMasterSide() {
+  public @NotNull Side getMasterSide() {
     return myMasterSide;
   }
 
-  @NotNull
-  public EditorEx getEditor() {
+  public @NotNull EditorEx getEditor() {
     return myEditor;
   }
 
-  @NotNull
   @Override
-  public List<? extends EditorEx> getEditors() {
+  public @NotNull List<? extends EditorEx> getEditors() {
     return Collections.singletonList(myEditor);
   }
 
-  @NotNull
-  public List<? extends DocumentContent> getContents() {
+  public @NotNull List<? extends DocumentContent> getContents() {
     //noinspection unchecked,rawtypes
     return (List)myRequest.getContents();
   }
 
-  @NotNull
-  public DocumentContent getContent(@NotNull Side side) {
+  public @NotNull DocumentContent getContent(@NotNull Side side) {
     return side.select(getContents());
   }
 
-  @NotNull
-  public DocumentContent getContent1() {
+  public @NotNull DocumentContent getContent1() {
     return getContent(Side.LEFT);
   }
 
-  @NotNull
-  public DocumentContent getContent2() {
+  public @NotNull DocumentContent getContent2() {
     return getContent(Side.RIGHT);
   }
 
-  @Nullable
-  public List<UnifiedDiffChange> getDiffChanges() {
+  public @Nullable List<UnifiedDiffChange> getDiffChanges() {
     return myModel.getDiffChanges();
   }
 
-  @NotNull
-  private List<UnifiedDiffChange> getNonSkippedDiffChanges() {
+  private @NotNull List<UnifiedDiffChange> getNonSkippedDiffChanges() {
     return ContainerUtil.filter(ContainerUtil.notNullize(getDiffChanges()), it -> !it.isSkipped());
   }
 
-  @NotNull
   @Override
-  public JComponent getComponent() {
+  public @NotNull JComponent getComponent() {
     return myPanel;
   }
 
-  @Nullable
   @Override
-  public JComponent getPreferredFocusedComponent() {
+  public @Nullable JComponent getPreferredFocusedComponent() {
     if (!myPanel.isGoodContent()) return null;
     return myEditor.getContentComponent();
   }
 
-  @NotNull
   @Override
-  protected StatusPanel getStatusPanel() {
+  protected @NotNull StatusPanel getStatusPanel() {
     return myStatusPanel;
   }
 
@@ -932,8 +906,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     return DiffUtil.canMakeWritable(getDocument(side));
   }
 
-  @NotNull
-  public Document getDocument(@NotNull Side side) {
+  public @NotNull Document getDocument(@NotNull Side side) {
     return getContent(side).getDocument();
   }
 
@@ -945,15 +918,13 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   // Misc
   //
 
-  @Nullable
   @Override
-  public Navigatable getNavigatable() {
+  public @Nullable Navigatable getNavigatable() {
     return getNavigatable(LineCol.fromCaret(myEditor));
   }
 
   @RequiresEdt
-  @Nullable
-  protected UnifiedDiffChange getCurrentChange() {
+  protected @Nullable UnifiedDiffChange getCurrentChange() {
     List<UnifiedDiffChange> changes = myModel.getDiffChanges();
     if (changes == null) return null;
 
@@ -966,8 +937,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   @RequiresEdt
-  @Nullable
-  protected Navigatable getNavigatable(@NotNull LineCol position) {
+  protected @Nullable Navigatable getNavigatable(@NotNull LineCol position) {
     Pair<int[], Side> pair = transferLineFromOneside(position.line);
     int line1 = pair.first[0];
     int line2 = pair.first[1];
@@ -992,15 +962,13 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   //
 
   private class MyPrevNextDifferenceIterable extends PrevNextDifferenceIterableBase<UnifiedDiffChange> {
-    @NotNull
     @Override
-    protected List<UnifiedDiffChange> getChanges() {
+    protected @NotNull List<UnifiedDiffChange> getChanges() {
       return getNonSkippedDiffChanges();
     }
 
-    @NotNull
     @Override
-    protected EditorEx getEditor() {
+    protected @NotNull EditorEx getEditor() {
       return myEditor;
     }
 
@@ -1056,7 +1024,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   //
 
   private final class ChangedLinesIterator extends BufferedLineIterator {
-    @NotNull private final List<? extends UnifiedDiffChange> myChanges;
+    private final @NotNull List<? extends UnifiedDiffChange> myChanges;
 
     private int myIndex = 0;
 
@@ -1093,6 +1061,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   // Helpers
   //
 
+  @ApiStatus.Internal
   @Override
   public @Nullable PrevNextDifferenceIterable getDifferenceIterable() {
     return myPrevNextDifferenceIterable;
@@ -1107,6 +1076,9 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       sink.set(DiffDataKeys.CURRENT_CHANGE_RANGE, new LineRange(change.getLine1(), change.getLine2()));
     }
     sink.set(DiffDataKeys.EDITOR_CHANGED_RANGE_PROVIDER, new MyChangedRangeProvider());
+
+    sink.set(PlatformCoreDataKeys.FILE_EDITOR,
+             TextEditorProvider.getInstance().getTextEditor(myEditor));
   }
 
   @Override
@@ -1141,15 +1113,13 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   private class MyStatusPanel extends StatusPanel {
-    @Nullable
     @Override
-    protected String getMessage() {
+    protected @Nullable String getMessage() {
       return getStatusTextMessage();
     }
   }
 
-  @Nullable
-  protected @Nls String getStatusTextMessage() {
+  protected @Nullable @Nls String getStatusTextMessage() {
     ChangedBlockData blockData = myModel.getData();
     if (blockData == null) return null;
 
@@ -1160,9 +1130,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   private class MyInitialScrollHelper extends InitialScrollPositionSupport.TwosideInitialScrollHelper {
-    @NotNull
     @Override
-    protected List<? extends Editor> getEditors() {
+    protected @NotNull List<? extends Editor> getEditors() {
       return UnifiedDiffViewer.this.getEditors();
     }
 
@@ -1204,8 +1173,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       return true;
     }
 
-    @NotNull
-    private static LogicalPosition getPosition(int line, int column) {
+    private static @NotNull LogicalPosition getPosition(int line, int column) {
       if (line == -1) return new LogicalPosition(0, 0);
       return new LogicalPosition(line, column);
     }
@@ -1251,18 +1219,17 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   private static class MyFoldingModel extends FoldingModelSupport {
-    @NotNull private DisposableLineNumberConvertor myLineNumberConvertor = new DisposableLineNumberConvertor(null);
+    private @NotNull DisposableLineNumberConvertor myLineNumberConvertor = new DisposableLineNumberConvertor(null);
 
     MyFoldingModel(@Nullable Project project, @NotNull EditorEx editor, @NotNull Disposable disposable) {
       super(project, new EditorEx[]{editor}, disposable);
     }
 
-    @Nullable
-    public Data createState(@Nullable List<? extends LineRange> changedLines,
-                            @NotNull Settings settings,
-                            @NotNull Document document,
-                            @NotNull LineNumberConvertor lineConvertor,
-                            int lineCount) {
+    public @Nullable Data createState(@Nullable List<? extends LineRange> changedLines,
+                                      @NotNull Settings settings,
+                                      @NotNull Document document,
+                                      @NotNull LineNumberConvertor lineConvertor,
+                                      int lineCount) {
       Iterator<int[]> it = map(changedLines, line -> new int[]{
         line.start,
         line.end
@@ -1280,8 +1247,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     }
 
     private static final class MyFoldingBuilder extends FoldingBuilderBase {
-      @NotNull private final Document myDocument;
-      @NotNull private final DisposableLineNumberConvertor myLineConvertor;
+      private final @NotNull Document myDocument;
+      private final @NotNull DisposableLineNumberConvertor myLineConvertor;
 
       private MyFoldingBuilder(@NotNull Document document,
                                @NotNull DisposableLineNumberConvertor lineConvertor,
@@ -1292,9 +1259,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
         myLineConvertor = lineConvertor;
       }
 
-      @Nullable
       @Override
-      protected FoldedRangeDescription getDescription(@NotNull Project project, int lineNumber, int index) {
+      protected @Nullable FoldedRangeDescription getDescription(@NotNull Project project, int lineNumber, int index) {
         int masterLine = myLineConvertor.convert(lineNumber);
         if (masterLine == -1) return null;
         return getLineSeparatorDescription(project, myDocument, masterLine);
@@ -1302,7 +1268,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     }
 
     private static final class DisposableLineNumberConvertor {
-      @Nullable private volatile LineNumberConvertor myConvertor;
+      private volatile @Nullable LineNumberConvertor myConvertor;
 
       private DisposableLineNumberConvertor(@Nullable LineNumberConvertor convertor) {
         myConvertor = convertor;
@@ -1327,10 +1293,10 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   private final class MarkupUpdater implements Disposable {
-    @NotNull private final MergingUpdateQueue myUpdateQueue =
+    private final @NotNull MergingUpdateQueue myUpdateQueue =
       new MergingUpdateQueue("UnifiedDiffViewer.MarkupUpdater", 300, true, myPanel, this);
 
-    @NotNull private volatile ProgressIndicator myUpdateIndicator = new EmptyProgressIndicator();
+    private volatile @NotNull ProgressIndicator myUpdateIndicator = new EmptyProgressIndicator();
     private volatile boolean mySuspended;
 
     private MarkupUpdater(@NotNull List<? extends DocumentContent> contents) {
@@ -1407,8 +1373,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       });
     }
 
-    @NotNull
-    private HighlightersData updateHighlighters(@NotNull ChangedBlockData blockData) {
+    private @NotNull HighlightersData updateHighlighters(@NotNull ChangedBlockData blockData) {
       List<HighlightRange> ranges = blockData.getRanges();
       Document document1 = getContent1().getDocument();
       Document document2 = getContent2().getDocument();
@@ -1443,8 +1408,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   private static class HighlightersData {
-    @Nullable private final EditorHighlighter myHighlighter;
-    @Nullable private final UnifiedEditorRangeHighlighter myRangeHighlighter;
+    private final @Nullable EditorHighlighter myHighlighter;
+    private final @Nullable UnifiedEditorRangeHighlighter myRangeHighlighter;
 
     private HighlightersData(@Nullable EditorHighlighter highlighter,
                              @Nullable UnifiedEditorRangeHighlighter rangeHighlighter) {
@@ -1471,24 +1436,33 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   private final class UnifiedBreadcrumbsPanel extends DiffBreadcrumbsPanel {
-    private final VirtualFile myFile1;
-    private final VirtualFile myFile2;
+    private final @Nullable VirtualFile myFile1;
+    private final @Nullable VirtualFile myFile2;
+
+    // effectively nullable: The 'com.intellij.xml.breadcrumbs.BreadcrumbsPanel.<init>' may synchronously execute update in tests
+    private final @Nullable DiffBreadcrumbCollectorHolder myCollectorHolder1;
+    private final @Nullable DiffBreadcrumbCollectorHolder myCollectorHolder2;
 
     private UnifiedBreadcrumbsPanel() {
       super(getEditor(), UnifiedDiffViewer.this);
 
       myFile1 = FileDocumentManager.getInstance().getFile(getDocument(Side.LEFT));
       myFile2 = FileDocumentManager.getInstance().getFile(getDocument(Side.RIGHT));
+
+      myCollectorHolder1 = new DiffBreadcrumbCollectorHolder();
+      myCollectorHolder2 = new DiffBreadcrumbCollectorHolder();
     }
 
     @Override
     protected boolean updateCollectors(boolean enabled) {
-      return enabled && (findCollector(myFile1) != null || findCollector(myFile2) != null);
+      // null check: The 'com.intellij.xml.breadcrumbs.BreadcrumbsPanel.<init>' may synchronously execute update in tests
+      boolean update1 = myCollectorHolder1 != null && myCollectorHolder1.update(myFile1, enabled);
+      boolean update2 = myCollectorHolder2 != null && myCollectorHolder2.update(myFile2, enabled);
+      return update1 || update2;
     }
 
-    @Nullable
     @Override
-    protected Iterable<? extends Crumb> computeCrumbs(int offset) {
+    protected @Nullable Iterable<? extends Crumb> computeCrumbs(int offset) {
       Pair<Integer, Side> pair = transferOffsetToTwoside(offset);
       if (pair == null) return null;
 
@@ -1496,7 +1470,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       int twosideOffset = pair.first;
 
       VirtualFile file = side.select(myFile1, myFile2);
-      FileBreadcrumbsCollector collector = side.select(findCollector(myFile1), findCollector(myFile2));
+      DiffBreadcrumbCollectorHolder holder = side.select(myCollectorHolder1, myCollectorHolder2);
+      FileBreadcrumbsCollector collector = holder != null ? holder.getBreadcrumbsCollector() : null;
       if (file == null || collector == null) return null;
 
       Iterable<? extends Crumb> crumbs = collector.computeCrumbs(file, getDocument(side), twosideOffset, null);
@@ -1510,8 +1485,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       }
     }
 
-    @Nullable
-    private Pair<Integer, Side> transferOffsetToTwoside(int offset) {
+    private @Nullable Pair<Integer, Side> transferOffsetToTwoside(int offset) {
       LineCol onesidePosition = LineCol.fromOffset(myDocument, offset);
 
       Pair<int[], Side> pair = transferLineFromOneside(onesidePosition.line);
@@ -1536,8 +1510,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
 
 
     private final class UnifiedNavigatableCrumb implements NavigatableCrumb {
-      @NotNull private final NavigatableCrumb myDelegate;
-      @NotNull private final Side mySide;
+      private final @NotNull NavigatableCrumb myDelegate;
+      private final @NotNull Side mySide;
 
       private UnifiedNavigatableCrumb(@NotNull NavigatableCrumb delegate, @NotNull Side side) {
         myDelegate = delegate;
@@ -1551,8 +1525,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       }
 
       @Override
-      @Nullable
-      public TextRange getHighlightRange() {
+      public @Nullable TextRange getHighlightRange() {
         TextRange range = myDelegate.getHighlightRange();
         if (range == null) return null;
         int start = transferOffsetFromTwoside(mySide, range.getStartOffset());
@@ -1588,14 +1561,12 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       }
 
       @Override
-      @Nullable
-      public String getTooltip() {
+      public @Nullable String getTooltip() {
         return myDelegate.getTooltip();
       }
 
       @Override
-      @NotNull
-      public List<? extends Action> getContextActions() {
+      public @NotNull List<? extends Action> getContextActions() {
         return myDelegate.getContextActions();
       }
     }
@@ -1613,6 +1584,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   private class UnifiedImaginaryEditor extends ImaginaryEditor {
+    private static final Set<String> ourReportedMockMethods = ContainerUtil.newConcurrentSet();
     private static boolean ourDisableImaginaryEditor = false;
 
     private final Side mySide;
@@ -1627,6 +1599,19 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       //noinspection AssignmentToStaticFieldFromInstanceMethod
       ourDisableImaginaryEditor = true;
       return new UnsupportedOperationException("Not implemented. UnifiedDiffViewer.UnifiedImaginaryEditor will be disabled.");
+    }
+
+    protected void warnMockImplementation(@NotNull String methodName) {
+      if (ourReportedMockMethods.add(methodName)) {
+        String message = "Method is not applicable. Consider using 'editor instanceOf ImaginaryEditor'";
+        if (ApplicationManager.getApplication().isInternal() ||
+            ApplicationManager.getApplication().isUnitTestMode()) {
+          LOG.error(message);
+        }
+        else {
+          LOG.warn(message);
+        }
+      }
     }
 
     @Override
@@ -1704,6 +1689,75 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     @Override
     public @NotNull FoldingModel getFoldingModel() {
       return new EmptyFoldingModel();
+    }
+
+    @Override
+    public boolean hasHeaderComponent() {
+      return false;
+    }
+
+    @Override
+    public @Nullable JComponent getHeaderComponent() {
+      return null;
+    }
+
+    @Override
+    public void setHeaderComponent(@Nullable JComponent header) {
+      warnMockImplementation("setHeaderComponent");
+    }
+
+    @Override
+    public int getLineHeight() {
+      warnMockImplementation("getLineHeight");
+      return myEditor.getLineHeight();
+    }
+
+    @Override
+    public @NotNull LogicalPosition visualToLogicalPosition(@NotNull VisualPosition visiblePos) {
+      warnMockImplementation("visualToLogicalPosition");
+      return new LogicalPosition(0, 0);
+    }
+
+    @Override
+    public @NotNull LogicalPosition xyToLogicalPosition(@NotNull Point p) {
+      warnMockImplementation("xyToLogicalPosition");
+      return new LogicalPosition(0, 0);
+    }
+
+    @Override
+    public @NotNull VisualPosition logicalToVisualPosition(@NotNull LogicalPosition logicalPos) {
+      warnMockImplementation("logicalToVisualPosition");
+      return new VisualPosition(0, 0);
+    }
+
+    @Override
+    public @NotNull VisualPosition xyToVisualPosition(@NotNull Point p) {
+      warnMockImplementation("xyToVisualPosition");
+      return new VisualPosition(0, 0);
+    }
+
+    @Override
+    public @NotNull VisualPosition xyToVisualPosition(@NotNull Point2D p) {
+      warnMockImplementation("xyToVisualPosition");
+      return new VisualPosition(0, 0);
+    }
+
+    @Override
+    public @NotNull Point logicalPositionToXY(@NotNull LogicalPosition pos) {
+      warnMockImplementation("logicalPositionToXY");
+      return new Point(0, 0);
+    }
+
+    @Override
+    public @NotNull Point visualPositionToXY(@NotNull VisualPosition visible) {
+      warnMockImplementation("visualPositionToXY");
+      return new Point(0, 0);
+    }
+
+    @Override
+    public @NotNull Point2D visualPositionToPoint2D(@NotNull VisualPosition pos) {
+      warnMockImplementation("visualPositionToPoint2D");
+      return new Point(0, 0);
     }
   }
 }

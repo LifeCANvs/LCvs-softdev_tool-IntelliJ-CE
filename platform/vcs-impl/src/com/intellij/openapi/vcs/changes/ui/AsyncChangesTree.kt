@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.vcs.changes.ui
 
 import com.intellij.openapi.application.EDT
@@ -18,6 +18,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
+import org.jetbrains.annotations.ApiStatus
 import java.awt.Color
 import java.awt.Dimension
 import java.util.concurrent.atomic.AtomicInteger
@@ -54,13 +55,21 @@ abstract class AsyncChangesTree : ChangesTree {
   constructor(project: Project,
               showCheckboxes: Boolean,
               highlightProblems: Boolean)
-    : this(project, showCheckboxes, highlightProblems, true)
+    : this(project, showCheckboxes, highlightProblems, true, false)
 
   constructor(project: Project,
               showCheckboxes: Boolean,
               highlightProblems: Boolean,
-              withSpeedSearch: Boolean)
-    : super(project, showCheckboxes, highlightProblems, withSpeedSearch) {
+              showConflictsNode: Boolean)
+    : this(project, showCheckboxes, highlightProblems, true, showConflictsNode)
+
+  internal constructor(
+    project: Project,
+    showCheckboxes: Boolean,
+    highlightProblems: Boolean,
+    withSpeedSearch: Boolean,
+    showConflictsNode: Boolean,
+  ) : super(project, showCheckboxes, highlightProblems, withSpeedSearch, showConflictsNode) {
     start()
   }
 
@@ -93,7 +102,7 @@ abstract class AsyncChangesTree : ChangesTree {
                               onRefreshed = null)
   }
 
-  fun requestRefresh(treeStateStrategy: TreeStateStrategy<*>) {
+  open fun requestRefresh(treeStateStrategy: TreeStateStrategy<*>) {
     return requestRefreshImpl(treeStateStrategy = treeStateStrategy,
                               onRefreshed = null)
   }
@@ -280,6 +289,7 @@ abstract class SimpleAsyncChangesTreeModel : AsyncChangesTreeModel {
 /**
  * [com.intellij.openapi.progress.ProgressIndicator]-friendly wrapper with two-step model updates.
  */
+@ApiStatus.Internal
 abstract class TwoStepAsyncChangesTreeModel<T>(val scope: CoroutineScope) : AsyncChangesTreeModel {
   private val deferredData: AtomicReference<Deferred<T>?> = AtomicReference()
 

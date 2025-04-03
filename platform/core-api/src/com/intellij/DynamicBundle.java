@@ -189,10 +189,8 @@ public class DynamicBundle extends AbstractBundle {
    * It's to be refactored with "ResourceBundleProvider" since 'core-api' module will use java 1.9+
    */
   private static class DynamicBundleInternal {
-    @NotNull
-    private static final MethodHandle SET_PARENT;
-    @NotNull
-    private static final MethodHandle GET_PARENT;
+    private static final @NotNull MethodHandle SET_PARENT;
+    private static final @NotNull MethodHandle GET_PARENT;
 
     static {
       try {
@@ -214,11 +212,19 @@ public class DynamicBundle extends AbstractBundle {
   @ApiStatus.Internal
   protected ResourceBundle getBundle(boolean isDefault, @NotNull ClassLoader classLoader) {
     ResourceBundle bundle = super.getBundle(isDefault, classLoader);
-    if (bundle != null &&
-        !isDefault &&
-        (getBundleFromCache(classLoader, bundle.getBaseBundleName()) == null ||
-         getBundleFromCache(classLoader, bundle.getBaseBundleName()) != bundle)) {
-      LOG.info("Cleanup bundle cache for " + bundle.getBaseBundleName());
+    if (bundle == null || isDefault) {
+      return bundle;
+    }
+
+    String bundleName = bundle.getBaseBundleName();
+    if (bundleName == null) {
+      LOG.warn("Bundle without name cannot be properly cached: " + bundle);
+      return bundle;
+    }
+
+    if (getBundleFromCache(classLoader, bundleName) == null ||
+        getBundleFromCache(classLoader, bundleName) != bundle) {
+      LOG.info("Cleanup bundle cache for " + bundleName);
       return null;
     }
     return bundle;
@@ -365,9 +371,7 @@ public class DynamicBundle extends AbstractBundle {
   }
 
   @ApiStatus.Internal
-  @NotNull
-  @Unmodifiable
-  public static Map<String, ResourceBundle> getResourceBundles() {
+  public static @NotNull @Unmodifiable Map<String, ResourceBundle> getResourceBundles() {
     return Collections.unmodifiableMap(bundles);
   }
 

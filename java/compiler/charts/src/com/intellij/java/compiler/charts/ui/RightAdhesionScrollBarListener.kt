@@ -8,14 +8,23 @@ import java.awt.event.AdjustmentListener
 import java.awt.event.MouseWheelEvent
 import java.awt.event.MouseWheelListener
 import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
 import javax.swing.JViewport
 
-internal class RightAdhesionScrollBarListener(private val viewport: JViewport) : AdjustmentListener, MouseWheelListener {
-  private var shouldScroll = true
+internal class RightAdhesionScrollBarListener(
+  private val viewport: JViewport,
+  private val zoom: Zoom,
+  private val shouldScroll: AutoScrollingType
+) : AdjustmentListener, MouseWheelListener {
   private val executor = AppExecutorUtil.createBoundedScheduledExecutorService("Compilation charts adjust value listener", 1)
+  private var lastZoomEvent = ZoomEvent.RESET
   private var updateShouldScrollTask: ScheduledFuture<*>? = null
+  private var lastNewPosition: Point? = null
   override fun adjustmentValueChanged(e: AdjustmentEvent) {
+    val point = lastNewPosition
+    lastNewPosition = null
+    if (point != null && !shouldScroll.isActive()) {
+      viewport.viewPosition = point
+    }
     if (e.valueIsAdjusting) {
       updateShouldScroll()
     }
@@ -24,34 +33,59 @@ internal class RightAdhesionScrollBarListener(private val viewport: JViewport) :
 
   override fun mouseWheelMoved(e: MouseWheelEvent) {
     if (e.isControlDown) {
-      shouldScroll = false
+      shouldScroll.stop()
       scheduleUpdateShouldScroll()
     } else {
       updateShouldScroll(e.unitsToScroll)
     }
   }
 
-  internal fun scheduleUpdateShouldScroll() {
+  private fun scheduleUpdateShouldScroll() {
     updateShouldScrollTask?.cancel(false)
-    updateShouldScrollTask = executor.schedule(::updateShouldScroll, 100, TimeUnit.MILLISECONDS)
+    updateShouldScrollTask = executor.schedule(::updateShouldScroll, Settings.Scroll.timeout, Settings.Scroll.unit)
   }
 
   private fun adjustHorizontalScrollToRightIfNeeded() {
-    if (shouldScroll) {
+    if (shouldScroll.isActive()) {
       viewport.viewPosition = Point(viewport.viewSize.width - viewport.width, viewport.viewPosition.y)
     }
   }
 
   private fun updateShouldScroll(additionalValue: Int = 0) {
-    shouldScroll = viewport.viewPosition.x + viewport.width + additionalValue >= viewport.viewSize.width
+    if (!shouldScroll.isEnabled()) return
+    if (viewport.viewPosition.x + viewport.width + additionalValue >= viewport.viewSize.width)
+      shouldScroll.start()
+    else
+      shouldScroll.stop()
   }
 
   internal fun scrollToEnd() {
-    shouldScroll = true
+    shouldScroll.start()
     adjustHorizontalScrollToRightIfNeeded()
   }
 
-  internal fun disableShouldScroll() {
-    shouldScroll = false
+  private fun disableShouldScroll() {
+    shouldScroll.stop()
   }
+
+  fun increase() = applyZoomTransformation(ZoomEvent.IN) { adjust(viewport, viewport.getMiddlePoint(), Settings.Zoom.IN) }
+
+  fun decrease() = applyZoomTransformation(ZoomEvent.OUT) { adjust(viewport, viewport.getMiddlePoint(), Settings.Zoom.OUT) }
+
+  fun reset() = applyZoomTransformation(ZoomEvent.RESET) {
+    val shouldScrollAfterResetting = viewport.width >= viewport.viewSize.width
+    lastNewPosition = reset(viewport, viewport.getMiddlePoint())
+    if (shouldScrollAfterResetting) scrollToEnd()
+  }
+
+  private fun applyZoomTransformation(event: ZoomEvent, transformation: Zoom.() -> Unit) {
+    if (lastZoomEvent == ZoomEvent.RESET && event == ZoomEvent.RESET) return
+    lastZoomEvent = event
+    disableShouldScroll()
+    zoom.transformation()
+    scheduleUpdateShouldScroll()
+  }
+
+  private fun JViewport.getMiddlePoint(): Int = viewPosition.x + width / 2
 }
+

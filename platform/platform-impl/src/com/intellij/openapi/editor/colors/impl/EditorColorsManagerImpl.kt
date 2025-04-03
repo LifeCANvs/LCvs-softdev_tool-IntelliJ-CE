@@ -1,4 +1,6 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+@file:ApiStatus.Internal
+
 package com.intellij.openapi.editor.colors.impl
 
 import com.intellij.configurationStore.BundledSchemeEP
@@ -109,7 +111,7 @@ class EditorColorsManagerImpl @NonInjectable constructor(schemeManagerFactory: S
       schemeManager.addScheme(defaultScheme)
     }
     if (!isHeadlessMode) {
-      schemeManager.loadBundledSchemes(createLoadBundledSchemeRequests(additionalTextAttributes))
+      schemeManager.loadBundledSchemes(createLoadBundledSchemeRequests(additionalTextAttributes, checkId = false, schemeManager::findSchemeByName))
     }
     schemeManager.loadSchemes()
     loadRemainAdditionalTextAttributes(additionalTextAttributes)
@@ -156,7 +158,7 @@ class EditorColorsManagerImpl @NonInjectable constructor(schemeManagerFactory: S
     }
   }
 
-  override fun getSchemeModificationCounter() = schemeModificationCounter.get()
+  override fun getSchemeModificationCounter(): Long = schemeModificationCounter.get()
 
   override fun reloadKeepingActiveScheme() {
     val activeScheme = schemeManager.currentSchemeName
@@ -377,7 +379,7 @@ class EditorColorsManagerImpl @NonInjectable constructor(schemeManagerFactory: S
   override fun getActiveVisibleScheme(): EditorColorsScheme? {
     val scheme = schemeManager.activeScheme
     if (scheme is AbstractColorsScheme && !scheme.isReadOnly && !scheme.isVisible) {
-      return when (val parentScheme = scheme.parentScheme) {
+      return when (val parentScheme = scheme.getParentScheme()) {
         null -> {
           LOG.error("Parent scheme for '${scheme.name}' is null!")
           null
@@ -549,10 +551,11 @@ class EditorColorsManagerImpl @NonInjectable constructor(schemeManagerFactory: S
       // 2) in the future, user copies of bundled schemes will use a bundled scheme as parent (not as full copy)
       if (isBundled ||
           (ApplicationManager.getApplication().isUnitTestMode() && scheme.metaProperties.getProperty("forceOptimize").toBoolean())) {
-        if (scheme.parentScheme is AbstractColorsScheme) {
-          val attributesEPs = additionalTextAttributes.remove(scheme.parentScheme.getName())
+        val parentScheme = scheme.getParentScheme()
+        if (parentScheme is AbstractColorsScheme) {
+          val attributesEPs = additionalTextAttributes.remove(parentScheme.name)
           if (!attributesEPs.isNullOrEmpty()) {
-            loadAdditionalTextAttributesForScheme(scheme = scheme.parentScheme as AbstractColorsScheme, attributeEps = attributesEPs)
+            loadAdditionalTextAttributesForScheme(scheme = parentScheme, attributeEps = attributesEPs)
           }
         }
 
@@ -607,7 +610,7 @@ class EditorColorsManagerImpl @NonInjectable constructor(schemeManagerFactory: S
 
     override fun reloaded(schemeManager: SchemeManager<EditorColorsScheme>, schemes: Collection<EditorColorsScheme>) {
       if (!isHeadlessMode) {
-        schemeManager.loadBundledSchemes(createLoadBundledSchemeRequests(additionalTextAttributes))
+        schemeManager.loadBundledSchemes(createLoadBundledSchemeRequests(additionalTextAttributes, checkId = false, schemeManager::findSchemeByName))
       }
       initEditableDefaultSchemesCopies()
       initEditableBundledSchemesCopies()
@@ -762,6 +765,7 @@ private val BUNDLED_EP_NAME = ExtensionPointName<BundledSchemeEP>("com.intellij.
 fun createLoadBundledSchemeRequests(
   additionalTextAttributes: MutableMap<String, MutableList<AdditionalTextAttributesEP>>,
   checkId: Boolean = false,
+  nameResolver: ((String) -> EditorColorsScheme?)?
 ) : Sequence<SchemeManager.LoadBundleSchemeRequest<EditorColorsScheme>> {
   return sequence {
     for (item in BUNDLED_EP_NAME.filterableLazySequence()) {
@@ -776,7 +780,7 @@ fun createLoadBundledSchemeRequests(
           get() {
             val idFromExtension = item.id
             if (idFromExtension == null) {
-              LOG.error("id is not specified for extension ${bean.path}")
+              LOG.warn("id is not specified for extension ${bean.path}")
             }
             else if (!checkId) {
               return idFromExtension
@@ -786,7 +790,7 @@ fun createLoadBundledSchemeRequests(
             try {
               val idFromFile = readEditorSchemeNameFromXml(reader)!!
               if (checkId && idFromFile != idFromExtension) {
-                LOG.error("id specified for extension $item is not equal to id from file $resourcePath")
+                LOG.warn("id specified for extension $item is not equal to id from file $resourcePath")
               }
               return idFromFile
             }
@@ -799,7 +803,7 @@ fun createLoadBundledSchemeRequests(
           ResourceUtil.getResourceAsBytes(resourcePath, pluginDescriptor.classLoader)!!
 
         override fun createScheme(): EditorColorsScheme =
-          createBundledEditorColorScheme(resourcePath, additionalTextAttributes, loadBytes(), pluginId)
+          createBundledEditorColorScheme(resourcePath, additionalTextAttributes, loadBytes(), pluginId, nameResolver)
       })
     }
 
@@ -841,7 +845,7 @@ fun createLoadBundledSchemeRequests(
         override val schemeKey: String = colorSchemeId
         override fun loadBytes(): ByteArray = data
         override fun createScheme(): EditorColorsScheme =
-          createBundledEditorColorScheme(resourcePath, additionalTextAttributes, loadBytes(), pluginId)
+          createBundledEditorColorScheme(resourcePath, additionalTextAttributes, loadBytes(), pluginId, nameResolver)
       })
     }
   }
@@ -852,17 +856,21 @@ private fun createBundledEditorColorScheme(
   additionalTextAttributes: MutableMap<String, MutableList<AdditionalTextAttributesEP>>,
   data: ByteArray,
   pluginId: PluginId,
+  nameResolver: ((String) -> EditorColorsScheme?)?
 ): BundledEditorColorScheme {
   val scheme = BundledEditorColorScheme(resourcePath)
   // todo be lazy
   scheme.readExternal(JDOMUtil.load(data))
+  if (nameResolver != null)
+    scheme.resolveParent(nameResolver)
   // We don't need to update digest for a bundled scheme because:
   // 1) it can be computed on demand later (because a bundled scheme is not mutable)
   // 2) in the future, user copies of bundled schemes will use a bundled scheme as parent (not as full copy)
-  if (scheme.parentScheme is AbstractColorsScheme) {
-    val attributesEPs = additionalTextAttributes.remove(scheme.parentScheme.getName())
+  val parentScheme = scheme.getParentScheme()
+  if (parentScheme is AbstractColorsScheme) {
+    val attributesEPs = additionalTextAttributes.remove(parentScheme.name)
     if (!attributesEPs.isNullOrEmpty()) {
-      loadAdditionalTextAttributesForScheme(scheme.parentScheme as AbstractColorsScheme, attributesEPs)
+      loadAdditionalTextAttributesForScheme(parentScheme, attributesEPs)
     }
   }
 

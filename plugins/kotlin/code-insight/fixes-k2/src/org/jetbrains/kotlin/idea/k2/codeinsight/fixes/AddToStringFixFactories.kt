@@ -10,10 +10,9 @@ import org.jetbrains.kotlin.idea.quickfix.AddToStringFix
 import org.jetbrains.kotlin.psi.KtExpression
 import org.jetbrains.kotlin.psi.KtProperty
 
-object AddToStringFixFactories {
+internal object AddToStringFixFactories {
 
-    context(KaSession)
-    private fun getFixes(element: PsiElement?, expectedType: KaType, actualType: KaType): List<AddToStringFix> {
+    private fun KaSession.getFixes(element: PsiElement?, expectedType: KaType, actualType: KaType): List<AddToStringFix> {
         if (element !is KtExpression) return emptyList()
         return buildList {
             if (expectedType.isStringType || expectedType.isCharSequenceType) {

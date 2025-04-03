@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.actionSystem;
 
 import com.intellij.ide.DataManager;
@@ -19,7 +19,7 @@ import java.awt.event.MouseEvent;
 /**
  * Container for the information necessary to execute or update an {@link AnAction}.
  *
- * @see <a href="https://plugins.jetbrains.com/docs/intellij/basic-action-system.html">Actions (IntelliJ Platform Docs)</a>
+ * @see <a href="https://plugins.jetbrains.com/docs/intellij/action-system.html">Action System (IntelliJ Platform Docs)</a>
  * @see AnAction#actionPerformed(AnActionEvent)
  * @see AnAction#update(AnActionEvent)
  */
@@ -210,37 +210,17 @@ public class AnActionEvent implements PlaceProvider {
     return myPresentation.isPreferInjectedPsi() ? getInjectedDataContext(myDataContext) : myDataContext;
   }
 
-  /**
-   * @see #getRequiredData(DataKey)
-   */
   public final @Nullable <T> T getData(@NotNull DataKey<T> key) {
     return getDataContext().getData(key);
   }
 
   /**
-   * Returns not null data by a data key. This method assumes that data has been checked for {@code null} in {@code AnAction#update} method.
-   * <br/><br/>
-   * Example of proper usage:
+   * Returns not null data by a data key. This method assumes that data has been checked for {@code null} before.
    *
-   * <pre>
-   *
-   * public class MyAction extends AnAction {
-   *   public void update(AnActionEvent e) {
-   *     // perform action if and only if EDITOR != null
-   *     boolean enabled = e.getData(CommonDataKeys.EDITOR) != null;
-   *     e.getPresentation().setEnabled(enabled);
-   *   }
-   *
-   *   public void actionPerformed(AnActionEvent e) {
-   *     // if we're here then EDITOR != null
-   *     Document doc = e.getRequiredData(CommonDataKeys.EDITOR).getDocument();
-   *     doSomething(doc);
-   *   }
-   * }
-   *
-   * </pre>
+   * @deprecated See the {@link AnAction#beforeActionPerformedUpdate(AnActionEvent)} javadoc.
    * @see #getData(DataKey)
    */
+  @Deprecated
   public final @NotNull <T> T getRequiredData(@NotNull DataKey<T> key) {
     T data = getData(key);
     if (data == null) throw new AssertionError(key.getName() + " is missing");

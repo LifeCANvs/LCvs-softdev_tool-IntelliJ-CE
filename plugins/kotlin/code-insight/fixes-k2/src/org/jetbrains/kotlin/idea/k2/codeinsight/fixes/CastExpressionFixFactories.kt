@@ -9,6 +9,7 @@ import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
 import org.jetbrains.kotlin.analysis.api.renderer.types.impl.KaTypeRendererForSource
+import org.jetbrains.kotlin.analysis.api.types.KaDefinitelyNotNullType
 import org.jetbrains.kotlin.analysis.api.types.KaErrorType
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.shortenReferences
@@ -25,11 +26,12 @@ import org.jetbrains.kotlin.psi.psiUtil.endOffset
 import org.jetbrains.kotlin.types.Variance
 
 @OptIn(KaExperimentalApi::class)
-object CastExpressionFixFactories {
+internal object CastExpressionFixFactories {
 
     private data class ElementContext(
         val typePresentation: String,
         val typeSourceCode: String,
+        val isDefinitelyNotNull: Boolean,
     )
 
     private class CastExpressionModCommandAction(
@@ -59,9 +61,10 @@ object CastExpressionFixFactories {
             elementContext: ElementContext,
             updater: ModPsiUpdater,
         ) {
+            val pattern = if (elementContext.isDefinitelyNotNull) "$0 as ($1)" else "$0 as $1"
             val expressionToInsert = KtPsiFactory(actionContext.project)
                 .createExpressionByPattern(
-                    "$0 as $1",
+                    pattern,
                     element,
                     elementContext.typeSourceCode,
                 )
@@ -110,8 +113,7 @@ object CastExpressionFixFactories {
         )
     }
 
-    context(KaSession)
-    private fun createFixes(
+    private fun KaSession.createFixes(
         isDueToNullability: Boolean,
         actualType: KaType,
         expectedType: KaType,
@@ -136,6 +138,7 @@ object CastExpressionFixFactories {
         val elementContext = ElementContext(
             expectedType.render(KaTypeRendererForSource.WITH_SHORT_NAMES, position = Variance.OUT_VARIANCE),
             expectedType.render(KaTypeRendererForSource.WITH_QUALIFIED_NAMES, position = Variance.OUT_VARIANCE),
+            expectedType is KaDefinitelyNotNullType,
         )
 
         return listOf(

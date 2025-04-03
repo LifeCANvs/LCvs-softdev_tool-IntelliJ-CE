@@ -1,8 +1,9 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight;
 
 import com.intellij.codeInsight.intention.preview.IntentionPreviewUtils;
 import com.intellij.modcommand.ModCommand;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
@@ -21,8 +22,12 @@ import java.util.Set;
 public class ModCommandAwareExternalAnnotationsManager extends ReadableExternalAnnotationsManager {
   public ModCommandAwareExternalAnnotationsManager(PsiManager psiManager) { super(psiManager); }
 
-  @Nullable
-  protected List<XmlFile> findExternalAnnotationsXmlFiles(@NotNull PsiModifierListOwner listOwner) {
+  @SuppressWarnings("MethodOverridesStaticMethodOfSuperclass")
+  public static ModCommandAwareExternalAnnotationsManager getInstance(@NotNull Project project) {
+    return (ModCommandAwareExternalAnnotationsManager)ExternalAnnotationsManager.getInstance(project);
+  }
+
+  protected @Nullable List<XmlFile> findExternalAnnotationsXmlFiles(@NotNull PsiModifierListOwner listOwner) {
     List<PsiFile> psiFiles = findExternalAnnotationsFiles(listOwner);
     if (psiFiles == null) {
       return null;
@@ -63,6 +68,12 @@ public class ModCommandAwareExternalAnnotationsManager extends ReadableExternalA
         }
       }
     });
+  }
+
+  public @NotNull ModCommand annotateExternallyModCommand(@NotNull PsiModifierListOwner listOwner,
+                                                          @NotNull String annotationFQName,
+                                                          PsiNameValuePair @Nullable [] value) {
+    throw new UnsupportedOperationException("annotateExternallyModCommand is not implemented in " + getClass().getName());
   }
 
   protected static @NotNull List<XmlTag> getTagsToProcess(@NotNull XmlFile file, @NotNull PsiModifierListOwner listOwner, @NotNull String annotationFQN) {
@@ -160,9 +171,8 @@ public class ModCommandAwareExternalAnnotationsManager extends ReadableExternalA
     }
   }
 
-  @NonNls
   @VisibleForTesting
-  public static @NotNull String createAnnotationTag(@NotNull String annotationFQName, PsiNameValuePair @Nullable [] values) {
+  public static @NonNls @NotNull String createAnnotationTag(@NotNull String annotationFQName, PsiNameValuePair @Nullable [] values) {
     @NonNls String text;
     if (values != null && values.length != 0) {
       text = "  <annotation name='" + annotationFQName + "'>\n";

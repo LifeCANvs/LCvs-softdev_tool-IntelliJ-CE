@@ -2,7 +2,7 @@
 package com.intellij.pycharm.community.ide.impl
 
 import com.intellij.concurrency.SensitiveProgressWrapper
-import com.intellij.ide.impl.isTrusted
+import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.runInEdt
 import com.intellij.openapi.diagnostic.Logger
@@ -32,6 +32,7 @@ import com.jetbrains.python.sdk.configuration.PyProjectSdkConfiguration.setReady
 import com.jetbrains.python.sdk.configuration.PyProjectSdkConfiguration.setSdkUsingExtension
 import com.jetbrains.python.sdk.configuration.PyProjectSdkConfiguration.suppressTipAndInspectionsFor
 import com.jetbrains.python.sdk.configuration.PyProjectSdkConfigurationExtension
+import org.jetbrains.annotations.ApiStatus.Internal
 
 /**
  * @see [PyConfigureSdkOnWslTest]
@@ -60,7 +61,7 @@ class PythonSdkConfigurator : DirectoryProjectConfigurator {
     if (sdk != null || isProjectCreatedWithWizard) {
       return
     }
-    if (PySdkFromEnvironmentVariableConfigurator.getPycharmPythonPathProperty()?.isNotBlank() == true) {
+    if (PySdkFromEnvironmentVariable.getPycharmPythonPathProperty()?.isNotBlank() == true) {
       return
     }
 
@@ -78,15 +79,16 @@ class PythonSdkConfigurator : DirectoryProjectConfigurator {
   }
 
   private fun findExtension(module: Module): PyProjectSdkConfigurationExtension? {
-    return if (!module.project.isTrusted() || ApplicationManager.getApplication().isUnitTestMode) {
+    return if (!TrustedProjects.isProjectTrusted(module.project) || ApplicationManager.getApplication().isUnitTestMode) {
       null
     }
     else PyProjectSdkConfigurationExtension.EP_NAME.findFirstSafe {
       it.getIntention(module) != null && (!ApplicationManager.getApplication().isHeadlessEnvironment || it.supportsHeadlessModel())
     }
   }
-
-  fun configureSdk(
+  // TODO: PythonInterpreterService: detect and validate system python
+@Internal
+fun configureSdk(
     project: Project,
     module: Module,
     extension: PyProjectSdkConfigurationExtension?,
@@ -108,7 +110,7 @@ class PythonSdkConfigurator : DirectoryProjectConfigurator {
       runInEdt { it.forEach { module.excludeInnerVirtualEnv(it) } }
     }
 
-    if (!project.isTrusted()) {
+    if (!TrustedProjects.isProjectTrusted(project)) {
       // com.jetbrains.python.inspections.PyInterpreterInspection will ask for confirmation
       LOGGER.info("Python interpreter has not been configured since project is not trusted")
       return

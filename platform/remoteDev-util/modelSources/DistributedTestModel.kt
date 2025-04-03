@@ -71,17 +71,23 @@ object DistributedTestModel : Ext(TestRoot) {
     signal("sendException", RdTestSessionException).async
     signal("exitApp", void).async
     signal("showNotification", string)
-    call("closeProject", void, bool).async
     call("forceLeaveAllModals", bool, void).async
-    call("closeProjectIfOpened", void, bool).async
+    call("closeAllOpenedProjects", void, bool).async
     call("runNextAction", RdTestActionParameters, string.nullable).async
     call("runNextActionGetComponentData", RdTestActionParameters, RdTestComponentData).async
-    call("requestFocus", string, bool).async
+    call("requestFocus", bool, bool).async
+    call("isFocused", void, bool).async
     call("visibleFrameNames", void, immutableList(string)).async
     call("projectsNames", void, immutableList(string)).async
     call("makeScreenshot", string, bool).async
     call("isResponding", void, bool).async
     call("projectsAreInitialised", void, bool).async
+    call("getProductCodeAndVersion", void, RdProductInfo).async
+  }
+
+  private val RdProductInfo = structdef {
+    field("productCode", string)
+    field("productVersion", string)
   }
 
   init {

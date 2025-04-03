@@ -14,11 +14,13 @@ import com.intellij.openapi.vcs.changes.ChangesUtil;
 import com.intellij.openapi.vcs.changes.ContentRevision;
 import com.intellij.openapi.vcs.history.actions.GetVersionAction;
 import com.intellij.util.containers.ContainerUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
+@ApiStatus.Internal
 public final class GetVersionFromRepositoryActionProvider implements AnActionExtensionProvider {
   @Override
   public boolean isActive(@NotNull AnActionEvent e) {
@@ -54,15 +56,14 @@ public final class GetVersionFromRepositoryActionProvider implements AnActionExt
   }
 
   private static class MyFileContentProvider implements GetVersionAction.FileRevisionProvider {
-    @NotNull private final Change myChange;
+    private final @NotNull Change myChange;
 
     private MyFileContentProvider(@NotNull Change change) {
       myChange = change;
     }
 
-    @NotNull
     @Override
-    public FilePath getFilePath() {
+    public @NotNull FilePath getFilePath() {
       return ChangesUtil.getFilePath(myChange);
     }
 

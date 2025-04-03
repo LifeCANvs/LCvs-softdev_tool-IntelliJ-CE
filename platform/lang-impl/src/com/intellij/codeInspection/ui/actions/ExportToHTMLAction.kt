@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection.ui.actions
 
 import com.intellij.codeInspection.InspectionsBundle
@@ -12,10 +12,12 @@ import com.intellij.openapi.observable.properties.GraphProperty
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
+import org.jetbrains.annotations.ApiStatus
 import java.nio.file.Path
 import java.util.function.Supplier
 import javax.swing.JPanel
 
+@ApiStatus.Internal
 @Suppress("ComponentNotRegistered")
 class ExportToHTMLAction : InspectionResultsExportActionProvider(Supplier { "HTML" },
                                                                  InspectionsBundle.messagePointer("inspection.action.export.html.description"),
@@ -38,7 +40,7 @@ class ExportToHTMLAction : InspectionResultsExportActionProvider(Supplier { "HTM
   override fun onExportSuccessful() {
     if (open) {
       val path = outputPath ?: return
-      BrowserUtil.browse(path.resolve("index.html").toFile())
+      BrowserUtil.browse(path.resolve("index.html"))
     }
   }
 

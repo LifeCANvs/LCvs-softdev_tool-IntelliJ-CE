@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build
 
 import com.intellij.openapi.util.SystemInfoRt
@@ -10,15 +10,16 @@ import com.intellij.util.lang.ZipFile
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.configuration.ConfigurationProvider
-import org.jetbrains.intellij.build.io.AddDirEntriesMode
-import org.jetbrains.intellij.build.io.zip
-import org.jetbrains.intellij.build.io.zipWithCompression
+import org.jetbrains.intellij.build.dependencies.BuildDependenciesExtractTest.Companion.data
+import org.jetbrains.intellij.build.io.*
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.api.io.TempDir
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import java.util.concurrent.ForkJoinTask
 import java.util.function.BiConsumer
 import java.util.function.Predicate
@@ -105,7 +106,8 @@ class ZipTest {
 
     checkZip(archiveFile) { zipFile ->
       for (name in list) {
-        assertThat(zipFile.getResource("test/$name")).isNotNull()
+        val path = "test/$name"
+        assertThat(zipFile.getResource(path)).describedAs("Entry $path not found").isNotNull()
       }
     }
   }
@@ -188,8 +190,9 @@ class ZipTest {
     zip(zip, mapOf(dir to ""))
 
     val archiveFile = tempDir.resolve("archive.zip")
+    val regex = Regex("^zip-excl.*")
     buildJar(archiveFile, listOf(
-      ZipSource(file = zip, excludes = listOf(Regex("^zip-excl.*")), distributionFileEntryProducer = null)
+      ZipSource(file = zip, distributionFileEntryProducer = null, filter = { name -> !regex.matches(name)})
     ))
 
     checkZip(archiveFile) { zipFile ->
@@ -227,21 +230,32 @@ class ZipTest {
     zipWithCompression(archiveFile, mapOf(dir to ""))
 
     HashMapZipFile.load(archiveFile).use { zipFile ->
-      for (name in zipFile.entries) {
-        val entry = zipFile.getRawEntry("samples/nested_dir/__init__.py")
-        assertThat(entry).isNotNull()
-        assertThat(entry!!.isCompressed).isFalse()
-        assertThat(String(entry.getData(zipFile), Charsets.UTF_8)).isEqualTo("\n")
-      }
+      val entry = zipFile.getRawEntry("samples/nested_dir/__init__.py")
+      assertThat(entry).isNotNull()
+      assertThat(entry!!.isCompressed).isFalse()
+      assertThat(entry.getData(zipFile).decodeToString()).isEqualTo("\n")
     }
   }
 
   @Test
-  fun compression(@TempDir tempDir: Path) {
+  fun `compress small`(@TempDir tempDir: Path) {
+    doCompressTest(tempDir = tempDir, fileSize = 12 * 1024)
+  }
+
+  @Test
+  fun `compress large`(@TempDir tempDir: Path) {
+    doCompressTest(tempDir = tempDir, fileSize = 15 * 1024 * 1024)
+  }
+
+  private fun doCompressTest(tempDir: Path, fileSize: Int) {
     val dir = tempDir.resolve("dir")
     Files.createDirectories(dir)
-    val data = Random(42).nextBytes(4 * 1024)
-    Files.write(dir.resolve("file"), data + data + data)
+    val random = Random(42)
+    Files.newOutputStream(dir.resolve("file")).use {
+      for (chunkSize in splitIntoChunks(size = fileSize, chunkSize = 32 * 1024)) {
+        it.write(random.nextBytes(chunkSize))
+      }
+    }
 
     val archiveFile = tempDir.resolve("archive.zip")
     zipWithCompression(archiveFile, mapOf(dir to ""))
@@ -312,6 +326,33 @@ class ZipTest {
   }
 
   @Test
+  fun uncompressedData(@TempDir tempDir: Path) {
+    val dir = tempDir.resolve("dir")
+    Files.createDirectories(dir)
+    val random = Random(42)
+
+    val archiveFile = tempDir.resolve("archive.zip")
+    val size = 2 * 1024
+    ZipFileWriter(
+      channel = FileChannel.open(archiveFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE),
+      deflater = null,
+      zipIndexWriter = ZipIndexWriter(indexWriter = null),
+    ).use { writer ->
+      repeat(3) {
+        writer.uncompressedData("file $it", data = random.nextBytes(size))
+      }
+    }
+
+    checkZip(archiveFile) { zipFile ->
+      repeat(3) {
+        val entry = zipFile.getData("file $it")
+        assertThat(entry).isNotNull()
+        assertThat(entry!!.size).isEqualTo(size)
+      }
+    }
+  }
+
+  @Test
   fun `write all dir entries`(@TempDir tempDir: Path) {
     val dir = tempDir.resolve("dir")
     Files.createDirectories(dir)
@@ -327,7 +368,7 @@ class ZipTest {
     }
   }
 
-  // check both IKV- and non-IKV variants of immutable zip file
+  // check both IKV- and non-IKV variants of an immutable zip file
   private fun checkZip(file: Path, checker: (ZipFile) -> Unit) {
     HashMapZipFile.load(file).use { zipFile ->
       checker(zipFile)
@@ -343,4 +384,13 @@ private fun runInThread(block: () -> Unit): Thread {
   thread.isDaemon = true
   thread.start()
   return thread
+}
+
+private fun splitIntoChunks(size: Int, @Suppress("SameParameterValue") chunkSize: Int): Sequence<Int> = sequence {
+  var remaining = size
+  while (remaining > 0) {
+    val chunk = if (remaining >= chunkSize) chunkSize else remaining
+    yield(chunk)
+    remaining -= chunk
+  }
 }

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplacePutWithAssignment", "LeakingThis")
 
 package com.intellij.ui.tabs.impl
@@ -288,7 +288,7 @@ open class JBTabsImpl internal constructor(
       totalFrames = 2,
       cycleDuration = 500,
       isRepeatable = true,
-      coroutineScope = coroutineScope,
+      disposable = parentDisposable,
     ) {
       override fun paintNow(frame: Int, totalFrames: Int, cycle: Int) {
         repaintAttractions()
@@ -516,6 +516,7 @@ open class JBTabsImpl internal constructor(
       }
     }.addTo(this)
     scrollBarChangeListener = ChangeListener { updateTabsOffsetFromScrollBar() }
+    setTabsPosition(tabsPosition)
   }
 
   @Internal
@@ -790,7 +791,7 @@ open class JBTabsImpl internal constructor(
           withContext(Dispatchers.EDT + anyModality) {
             writeIntentReadAction {
               val modalityState = ModalityState.stateForComponent(this@JBTabsImpl)
-              if (!ModalityState.current().dominates(modalityState)) {
+              if (ModalityState.current().accepts(modalityState)) {
                 updateTabActions(validateNow = false)
               }
             }
@@ -3321,7 +3322,7 @@ open class JBTabsImpl internal constructor(
       })
     }
 
-    override fun getAccessibleName(): String {
+    override fun getAccessibleName(): String? {
       var name = accessibleName ?: getClientProperty(ACCESSIBLE_NAME_PROPERTY) as String?
       if (name == null) {
         // Similar to JTabbedPane, we return the name of our selected tab as our own name.

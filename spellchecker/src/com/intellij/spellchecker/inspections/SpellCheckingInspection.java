@@ -13,6 +13,7 @@ import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.registry.Registry;
+import com.intellij.profile.codeInspection.InspectionProfileManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiElementVisitor;
 import com.intellij.psi.PsiFile;
@@ -72,11 +73,18 @@ public final class SpellCheckingInspection extends LocalInspectionTool implement
   }
 
   @Override
-  public @NotNull PsiElementVisitor buildVisitor(final @NotNull ProblemsHolder holder, final boolean isOnTheFly) {
-    if (!Registry.is("spellchecker.inspection.enabled", true)) {
+  public @NotNull PsiElementVisitor buildVisitor(@NotNull ProblemsHolder holder, boolean isOnTheFly) {
+    return super.buildVisitor(holder, isOnTheFly);
+  }
+
+  @Override
+  public @NotNull PsiElementVisitor buildVisitor(@NotNull ProblemsHolder holder,
+                                                 boolean isOnTheFly,
+                                                 @NotNull LocalInspectionToolSession session) {
+    if (!Registry.is("spellchecker.inspection.enabled", true) || InspectionProfileManager.hasTooLowSeverity(session, this)) {
       return PsiElementVisitor.EMPTY_VISITOR;
     }
-    final SpellCheckerManager manager = SpellCheckerManager.getInstance(holder.getProject());
+    SpellCheckerManager manager = SpellCheckerManager.getInstance(holder.getProject());
     var scope = buildAllowedScopes();
 
     return new PsiElementVisitor() {
@@ -91,11 +99,13 @@ public final class SpellCheckingInspection extends LocalInspectionTool implement
 
         final Language language = element.getLanguage();
         var strategy = getSpellcheckingStrategy(element, language);
-        if(strategy == null)
+        if (strategy == null) {
           return;
+        }
 
-        if(!strategy.elementFitsScope(element, scope))
+        if (!strategy.elementFitsScope(element, scope)) {
           return;
+        }
 
         PsiFile containingFile = holder.getFile();
         if (Boolean.TRUE.equals(containingFile.getUserData(InjectedLanguageManager.FRANKENSTEIN_INJECTION))) {
@@ -109,12 +119,15 @@ public final class SpellCheckingInspection extends LocalInspectionTool implement
 
   private Set<SpellCheckingScope> buildAllowedScopes() {
     var result = new HashSet<SpellCheckingScope>();
-    if(processLiterals)
+    if (processLiterals) {
       result.add(SpellCheckingScope.Literals);
-    if(processComments)
+    }
+    if (processComments) {
       result.add(SpellCheckingScope.Comments);
-    if(processCode)
+    }
+    if (processCode) {
       result.add(SpellCheckingScope.Code);
+    }
     return result;
   }
 
@@ -125,8 +138,8 @@ public final class SpellCheckingInspection extends LocalInspectionTool implement
    * @param language Usually element.getLanguage()
    * @param consumer the consumer of tokens
    */
-  public static void tokenize(@NotNull final PsiElement element,
-                              @NotNull final Language language,
+  public static void tokenize(final @NotNull PsiElement element,
+                              final @NotNull Language language,
                               TokenConsumer consumer, Set<SpellCheckingScope> allowedScopes) {
     SpellcheckingStrategy factoryByLanguage = getSpellcheckingStrategy(element, language);
     if (factoryByLanguage == null) {
@@ -135,7 +148,10 @@ public final class SpellCheckingInspection extends LocalInspectionTool implement
     tokenize(factoryByLanguage, element, consumer, allowedScopes);
   }
 
-  private static void tokenize(SpellcheckingStrategy strategy, PsiElement element, TokenConsumer consumer, Set<SpellCheckingScope> allowedScopes) {
+  private static void tokenize(SpellcheckingStrategy strategy,
+                               PsiElement element,
+                               TokenConsumer consumer,
+                               Set<SpellCheckingScope> allowedScopes) {
     var tokenizer = strategy.getTokenizer(element, allowedScopes);
     //noinspection unchecked
     tokenizer.tokenize(element, consumer);
@@ -155,8 +171,8 @@ public final class SpellCheckingInspection extends LocalInspectionTool implement
     SpellcheckingStrategy strategy = getSpellcheckingStrategy(element, element.getLanguage());
 
     LocalQuickFix[] fixes = strategy != null
-                                   ? strategy.getRegularFixes(element, textRange, useRename, wordWithTypo)
-                                   : SpellcheckingStrategy.getDefaultRegularFixes(useRename, wordWithTypo, element, textRange);
+                            ? strategy.getRegularFixes(element, textRange, useRename, wordWithTypo)
+                            : SpellcheckingStrategy.getDefaultRegularFixes(useRename, wordWithTypo, element, textRange);
 
     final ProblemDescriptor problemDescriptor = createProblemDescriptor(element, textRange, fixes, true);
     holder.registerProblem(problemDescriptor);

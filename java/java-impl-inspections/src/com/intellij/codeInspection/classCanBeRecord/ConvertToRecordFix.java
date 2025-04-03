@@ -1,19 +1,20 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection.classCanBeRecord;
 
 import com.intellij.codeInsight.AnnotationTargetUtil;
 import com.intellij.codeInsight.AnnotationUtil;
 import com.intellij.codeInsight.ExceptionUtil;
-import com.intellij.codeInsight.daemon.impl.analysis.HighlightControlFlowUtil;
-import com.intellij.codeInsight.daemon.impl.analysis.HighlightUtil;
 import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo;
 import com.intellij.codeInspection.ProblemDescriptor;
 import com.intellij.codeInspection.util.IntentionFamilyName;
 import com.intellij.java.JavaBundle;
+import com.intellij.lang.jvm.JvmModifier;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import com.intellij.psi.PsiAnnotation.TargetType;
+import com.intellij.psi.controlFlow.ControlFlowUtil;
 import com.intellij.psi.search.searches.ClassInheritorsSearch;
+import com.intellij.psi.util.JavaPsiRecordUtil;
 import com.intellij.psi.util.PropertyUtil;
 import com.intellij.psi.util.PropertyUtilBase;
 import com.intellij.psi.util.PsiUtil;
@@ -24,6 +25,7 @@ import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
 import com.siyeh.ig.InspectionGadgetsFix;
 import com.siyeh.ig.callMatcher.CallMatcher;
+import com.siyeh.ig.memory.InnerClassReferenceVisitor;
 import com.siyeh.ig.psiutils.MethodUtils;
 import com.siyeh.ig.psiutils.TypeUtils;
 import org.jetbrains.annotations.NotNull;
@@ -60,12 +62,12 @@ public class ConvertToRecordFix extends InspectionGadgetsFix {
   protected void doFix(@NotNull Project project, @NotNull ProblemDescriptor descriptor) {
     final ConvertToRecordProcessor processor = getRecordProcessor(descriptor);
     if (processor == null) return;
-    processor.setPrepareSuccessfulSwingThreadCallback(() -> {});
+    processor.setPrepareSuccessfulSwingThreadCallback(() -> {
+    });
     processor.run();
   }
 
-  @Nullable
-  private ConvertToRecordProcessor getRecordProcessor(ProblemDescriptor descriptor) {
+  private @Nullable ConvertToRecordProcessor getRecordProcessor(ProblemDescriptor descriptor) {
     PsiElement psiElement = descriptor.getPsiElement();
     if (psiElement == null) return null;
     PsiClass psiClass = ObjectUtils.tryCast(psiElement.getParent(), PsiClass.class);
@@ -100,8 +102,7 @@ public class ConvertToRecordFix extends InspectionGadgetsFix {
     if (psiClassModifiers == null || psiClassModifiers.hasModifierProperty(ABSTRACT) || psiClassModifiers.hasModifierProperty(SEALED)) {
       return null;
     }
-    // todo support local classes later
-    if (PsiUtil.isLocalClass(psiClass)) return null;
+    if (PsiUtil.isLocalClass(psiClass) && containsOuterNonStaticReferences(psiClass)) return null;
     if (psiClass.getContainingClass() != null && !psiClass.hasModifierProperty(STATIC)) return null;
 
     PsiClass superClass = psiClass.getSuperClass();
@@ -113,7 +114,19 @@ public class ConvertToRecordFix extends InspectionGadgetsFix {
 
     RecordCandidate result = new RecordCandidate(psiClass, suggestAccessorsRenaming);
     if (!result.isValid()) return null;
-    return ClassInheritorsSearch.search(psiClass, false).findFirst() == null ? result : null;
+
+    boolean hasInheritors = ClassInheritorsSearch.search(psiClass, false).findFirst() != null;
+    if (hasInheritors) return null;
+    return result;
+  }
+
+  /**
+   * @see com.siyeh.ig.memory.InnerClassMayBeStaticInspection
+   */
+  private static boolean containsOuterNonStaticReferences(PsiClass psiClass) {
+    InnerClassReferenceVisitor visitor = new InnerClassReferenceVisitor(psiClass, false);
+    psiClass.accept(visitor);
+    return !visitor.canInnerClassBeStatic();
   }
 
   /**
@@ -130,7 +143,7 @@ public class ConvertToRecordFix extends InspectionGadgetsFix {
     private final MultiMap<PsiField, FieldAccessorCandidate> myFieldAccessors = new MultiMap<>(new LinkedHashMap<>());
     private final List<PsiMethod> myOrdinaryMethods = new SmartList<>();
     private final List<RecordConstructorCandidate> myConstructors = new SmartList<>();
-    
+
     private PsiMethod myEqualsMethod;
     private PsiMethod myHashCodeMethod;
 
@@ -192,7 +205,7 @@ public class ConvertToRecordFix extends InspectionGadgetsFix {
       for (var entry : myFieldAccessors.entrySet()) {
         PsiField field = entry.getKey();
         if (!field.hasModifierProperty(FINAL) || field.hasInitializer()) return false;
-        if (HighlightUtil.RESTRICTED_RECORD_COMPONENT_NAMES.contains(field.getName())) return false;
+        if (JavaPsiRecordUtil.ILLEGAL_RECORD_COMPONENT_NAMES.contains(field.getName())) return false;
         if (entry.getValue().size() > 1) return false;
         FieldAccessorCandidate firstAccessor = ContainerUtil.getFirstItem(entry.getValue());
         if (firstAccessor == null) continue;
@@ -280,8 +293,8 @@ public class ConvertToRecordFix extends InspectionGadgetsFix {
       return visitor.existsSuperMethodCalls;
     }
 
-    @Nullable
-    private FieldAccessorCandidate createFieldAccessor(@NotNull PsiMethod psiMethod) {
+    private @Nullable FieldAccessorCandidate createFieldAccessor(@NotNull PsiMethod psiMethod) {
+      if (psiMethod.hasModifier(JvmModifier.STATIC)) return null;
       if (!psiMethod.getParameterList().isEmpty()) return null;
       String methodName = psiMethod.getName();
       PsiField backingField = null;
@@ -294,7 +307,9 @@ public class ConvertToRecordFix extends InspectionGadgetsFix {
           recordStyleNaming = true;
           break;
         }
-        if (mySuggestAccessorsRenaming && fieldName.equals(PropertyUtilBase.getPropertyNameByGetter(psiMethod))) {
+        if (mySuggestAccessorsRenaming && fieldName.equals(PropertyUtilBase.getPropertyNameByGetter(psiMethod)) &&
+            !ContainerUtil.exists(psiMethod.findDeepestSuperMethods(),
+                                  superMethod -> superMethod instanceof PsiCompiledElement || superMethod instanceof SyntheticElement)) {
           backingField = field;
           break;
         }
@@ -343,7 +358,7 @@ public class ConvertToRecordFix extends InspectionGadgetsFix {
           myCanonical = false;
           return;
         }
-        if (!HighlightControlFlowUtil.variableDefinitelyAssignedIn(instanceField, ctorBody)) {
+        if (!ControlFlowUtil.variableDefinitelyAssignedIn(instanceField, ctorBody)) {
           myCanonical = false;
           return;
         }

@@ -5,6 +5,7 @@ import com.intellij.execution.filters.HyperlinkInfo;
 import com.intellij.execution.ui.ConsoleViewContentType;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.RangeMarker;
+import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.editor.ex.MarkupModelEx;
 import com.intellij.openapi.editor.ex.RangeHighlighterEx;
 import com.intellij.openapi.editor.impl.DocumentMarkupModel;
@@ -18,6 +19,7 @@ import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.concurrency.ThreadingAssertions;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -25,6 +27,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
+@ApiStatus.Internal
 public final class ConsoleTokenUtil {
   private static final char BACKSPACE = '\b';
   private static final Key<ConsoleViewContentType> CONTENT_TYPE = Key.create("ConsoleViewContentType");
@@ -143,11 +146,12 @@ public final class ConsoleTokenUtil {
         prevMarker.dispose();
       }
     }
+    TextAttributesKey key = contentType.getAttributesKey();
     model.addRangeHighlighterAndChangeAttributes(
-      contentType.getAttributesKey(), startOffset, endOffset, layer, HighlighterTargetArea.EXACT_RANGE, false,
+      key, startOffset, endOffset, layer, HighlighterTargetArea.EXACT_RANGE, false,
       rm -> {
         // fallback for contentTypes that provides only attributes
-        if (rm.getTextAttributesKey() == null) {
+        if (key == null) {
           rm.setTextAttributes(contentType.getAttributes());
         }
         saveTokenType(rm, contentType);

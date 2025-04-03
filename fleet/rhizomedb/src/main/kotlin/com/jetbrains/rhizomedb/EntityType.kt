@@ -2,9 +2,8 @@
 package com.jetbrains.rhizomedb
 
 import com.jetbrains.rhizomedb.impl.EidGen
-import com.jetbrains.rhizomedb.impl.EntityFactory
 import fleet.util.singleOrNullOrThrow
-import it.unimi.dsi.fastutil.ints.IntOpenHashSet
+import fleet.fastutil.ints.IntOpenHashSet
 import kotlinx.serialization.builtins.serializer
 import kotlin.reflect.KClass
 
@@ -139,9 +138,9 @@ val <E : Entity> E.entityType: EntityType<E>
 
 fun interface EntityBuilder<E : Entity> {
   interface Target<E : Entity> {
-    operator fun <V : Any> set(attribute: Attributes<E>.Required<V>, value: V)
-    operator fun <V : Any> set(attribute: Attributes<E>.Optional<V>, value: V?)
-    operator fun <V : Any> set(attribute: Attributes<E>.Many<V>, values: Set<V>)
+    operator fun <V : Any> set(attribute: Attributes<in E>.Required<V>, value: V)
+    operator fun <V : Any> set(attribute: Attributes<in E>.Optional<V>, value: V?)
+    operator fun <V : Any> set(attribute: Attributes<in E>.Many<V>, values: Set<V>)
   }
 
   fun build(target: Target<E>)
@@ -155,7 +154,7 @@ internal fun <E : Entity> EntityType<E>.buildAttributes(builder: EntityBuilder<E
   buildList {
     val initializedAttrs = IntOpenHashSet()
     builder.build(object : EntityBuilder.Target<E> {
-      private fun <V : Any> add(attribute: EntityAttribute<E, V>, value: V) {
+      private fun <V : Any> add(attribute: EntityAttribute<in E, V>, value: V) {
         initializedAttrs.add(attribute.attr.eid)
         @Suppress("UNCHECKED_CAST")
         val attr = attribute.attr as Attribute<Any>
@@ -163,15 +162,15 @@ internal fun <E : Entity> EntityType<E>.buildAttributes(builder: EntityBuilder<E
         add(attr to indexValue)
       }
 
-      override fun <V : Any> set(attribute: Attributes<E>.Required<V>, value: V) {
+      override fun <V : Any> set(attribute: Attributes<in E>.Required<V>, value: V) {
         add(attribute, value)
       }
 
-      override fun <V : Any> set(attribute: Attributes<E>.Optional<V>, value: V?) {
+      override fun <V : Any> set(attribute: Attributes<in E>.Optional<V>, value: V?) {
         value?.let { add(attribute, it) }
       }
 
-      override fun <V : Any> set(attribute: Attributes<E>.Many<V>, values: Set<V>) {
+      override fun <V : Any> set(attribute: Attributes<in E>.Many<V>, values: Set<V>) {
         for (v in values) {
           add(attribute, v)
         }
@@ -193,43 +192,12 @@ internal fun <E : Entity> EntityType<E>.buildAttributes(builder: EntityBuilder<E
                 add(entityAttribute.attr to defaultValue)
             }
           }
-          entityAttribute.attr.schema.required -> error("required attribute $ident was not initialized")
+          entityAttribute.attr.schema.required -> throw TxValidationException("required attribute $ident was not initialized")
         }
       }
     }
   }
 }
 
-/**
- * [Mixin] allows to attach same attributes to multiple [EntityType]s
- * Unlike [EntityType], [Mixin] has no identity and is not represeted in the database as [Entity].
- * It's only job is to carry a set of attributes, which can be attached to [EntityType]s.
- * One example of it is [Entity.Companion], which defines attributes universal to all [EntityType]s.
- * */
-abstract class Mixin<E : Entity>(
-  ident: String,
-  module: String,
-  vararg mixins: Mixin<in E>
-) : Attributes<E>(ident, module, merge(mixins.toList())) {
-
-  /**
-   * Tell [Mixin] to use qualified name of the given [KClass] as [namespace]
-   * It may be useful to guarantee the uniqueness of the [namespace].
-   * But it could backfire for durable entities,
-   * if one renames the class, or moves it to other package.
-   * */
-  constructor(
-    ident: KClass<out Entity>,
-    vararg mixins: Mixin<in E>
-  ) : this(requireNotNull(ident.qualifiedName), entityModule(ident), *mixins)
-
-  constructor(ident: KClass<*>, version: Int?, vararg mixins: Mixin<in E>) : this(
-    ident = ident.qualifiedName!! + if (version != null) ":$version" else "",
-    module = ident.java.module.name,
-    mixins = mixins,
-  )
-
-  override fun toString(): String = "Mixin($namespace)"
-}
-
-fun entityModule(entityClass: KClass<out Entity>): String = entityClass.java.module.name ?: "<unknown>"
+// todo: commented out as it's not multiplatform call. Module name is unused now, we need to invent something else when we decide to use it
+fun entityModule(entityClass: KClass<out Entity>): String = /*entityClass.java.module.name ?: */"<unknown>"

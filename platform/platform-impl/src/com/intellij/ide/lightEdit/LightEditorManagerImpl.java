@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.lightEdit;
 
 import com.intellij.openapi.Disposable;
@@ -27,8 +27,10 @@ import com.intellij.testFramework.LightVirtualFile;
 import com.intellij.util.EventDispatcher;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.containers.ContainerUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.Collection;
 import java.util.List;
@@ -36,6 +38,7 @@ import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
+@ApiStatus.Internal
 public final class LightEditorManagerImpl implements LightEditorManager, Disposable {
   private static final Logger LOG = Logger.getInstance(LightEditorManagerImpl.class);
 
@@ -210,7 +213,7 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
   }
 
   @Override
-  public @NotNull Collection<LightEditorInfo> getEditors(@NotNull VirtualFile virtualFile) {
+  public @Unmodifiable @NotNull Collection<LightEditorInfo> getEditors(@NotNull VirtualFile virtualFile) {
     return ContainerUtil.filter(myEditors, editorInfo -> virtualFile.equals(editorInfo.getFile()));
   }
 
@@ -225,6 +228,7 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
   }
 
   @NotNull
+  @Unmodifiable
   List<LightEditorInfo> getUnsavedEditors() {
     return ContainerUtil.filter(myEditors, editorInfo -> editorInfo.isSaveRequired());
   }

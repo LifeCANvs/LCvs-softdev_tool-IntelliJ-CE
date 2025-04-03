@@ -3,17 +3,31 @@
 
 package com.intellij.util
 
+import org.jetbrains.annotations.ApiStatus
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.InvocationKind
 import kotlin.contracts.contract
 import kotlin.reflect.KProperty
 
+@OptIn(ExperimentalContracts::class)
 @Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER")
-inline fun <reified T : Any> Any?.asSafely(): @kotlin.internal.NoInfer T? = this as? T
+inline fun <reified T : Any> Any?.asSafely(): @kotlin.internal.NoInfer T? {
+  contract {
+    returnsNotNull() implies (this@asSafely is T)
+  }
+  return this as? T
+}
 
-inline fun <T> runIf(condition: Boolean, block: () -> T): T? = if (condition) block() else null
+@OptIn(ExperimentalContracts::class)
+inline fun <T> runIf(condition: Boolean, block: () -> T): T? {
+  contract {
+    callsInPlace(block, InvocationKind.AT_MOST_ONCE)
+  }
+  return if (condition) block() else null
+}
 
+@ApiStatus.ScheduledForRemoval
 @Deprecated("""
   Unfortunately, this function provokes cryptic code, please do not use it.
   
@@ -30,8 +44,13 @@ inline fun <T : Any> T?.alsoIfNull(block: () -> Unit): T? {
   return this
 }
 
-inline fun <T> T.applyIf(condition: Boolean, body: T.() -> T): T =
-  if (condition) body() else this
+@OptIn(ExperimentalContracts::class)
+inline fun <T> T.applyIf(condition: Boolean, body: T.() -> T): T {
+  contract {
+    callsInPlace(body, InvocationKind.AT_MOST_ONCE)
+  }
+  return if (condition) body() else this
+}
 
 typealias AsyncSupplier<T> = suspend () -> T
 

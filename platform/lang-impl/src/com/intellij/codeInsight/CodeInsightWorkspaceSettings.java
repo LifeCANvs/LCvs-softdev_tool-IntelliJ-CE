@@ -1,7 +1,7 @@
 // Copyright 2000-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.intellij.codeInsight;
 
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
+import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerEx;
 import com.intellij.codeInspection.options.OptPane;
 import com.intellij.codeInspection.options.OptionContainer;
 import com.intellij.codeInspection.options.OptionController;
@@ -69,11 +69,10 @@ public final class CodeInsightWorkspaceSettings extends SimpleModificationTracke
   }
 
   @Override
-  public @NotNull OptionController getOptionController() {
-    return OptionContainer.super.getOptionController()
-      .withRootPane(() -> OptPane.pane(OptPane.checkbox(
-        "optimizeImportsOnTheFly",
-        ApplicationBundle.message("checkbox.optimize.imports.on.the.fly"))));
+  public @NotNull OptPane getOptionsPane() {
+    return OptPane.pane(OptPane.checkbox(
+      "optimizeImportsOnTheFly",
+      ApplicationBundle.message("checkbox.optimize.imports.on.the.fly")));
   }
 
   /**
@@ -86,7 +85,7 @@ public final class CodeInsightWorkspaceSettings extends SimpleModificationTracke
       return getInstance(project).getOptionController()
         .onValueSet((bindId, value) -> {
           SaveAndSyncHandler.getInstance().scheduleProjectSave(project, true);
-          DaemonCodeAnalyzer.getInstance(project).restart();
+          DaemonCodeAnalyzerEx.getInstanceEx(project).restart("CodeInsightWorkspaceSettings.Provider.forContext");
         });
     }
 

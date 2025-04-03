@@ -1,6 +1,7 @@
 // Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.hints.declarative.impl
 
+import com.intellij.codeInsight.hints.declarative.impl.inlayRenderer.DeclarativeInlayRendererBase
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.client.ClientSystemInfo
 import com.intellij.openapi.editor.Inlay
@@ -11,6 +12,7 @@ import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.util.EditorUtil
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.LightweightHint
+import org.jetbrains.annotations.ApiStatus
 import java.awt.Cursor
 import java.awt.Point
 import java.awt.event.InputEvent
@@ -19,6 +21,7 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.lang.ref.WeakReference
 
+@ApiStatus.Internal
 class DeclarativeInlayHintsMouseMotionListener : EditorMouseMotionListener {
   private var areaUnderCursor: InlayMouseArea? = null
   private var inlayUnderCursor: WeakReference<Inlay<*>>? = null
@@ -35,7 +38,12 @@ class DeclarativeInlayHintsMouseMotionListener : EditorMouseMotionListener {
     if (inlay != inlayUnderCursor?.get()) {
       hint?.hide()
       if (renderer != null) {
-        hint = renderer.handleHover(e)
+        // renderer != null implies inlay != null
+        val bounds = inlay!!.bounds
+        if (bounds != null) {
+          val translated = Point(e.mouseEvent.x - bounds.x, e.mouseEvent.y - bounds.y)
+          hint = renderer.handleHover(e, translated)
+        }
       }
       else {
         hint = null
@@ -88,9 +96,9 @@ class DeclarativeInlayHintsMouseMotionListener : EditorMouseMotionListener {
 
   private fun isControlDown(e: InputEvent): Boolean = (ClientSystemInfo.isMac() && e.isMetaDown) || e.isControlDown
 
-  private fun getRenderer(inlay: Inlay<*>): DeclarativeInlayRenderer? {
+  private fun getRenderer(inlay: Inlay<*>): DeclarativeInlayRendererBase<*>? {
     val renderer = inlay.renderer
-    if (renderer !is DeclarativeInlayRenderer) return null
+    if (renderer !is DeclarativeInlayRendererBase<*>) return null
     return renderer
   }
 
@@ -100,7 +108,7 @@ class DeclarativeInlayHintsMouseMotionListener : EditorMouseMotionListener {
     return e.inlay
   }
 
-  private fun getMouseAreaUnderCursor(inlay: Inlay<*>, renderer: DeclarativeInlayRenderer, event: MouseEvent): InlayMouseArea? {
+  private fun getMouseAreaUnderCursor(inlay: Inlay<*>, renderer: DeclarativeInlayRendererBase<*>, event: MouseEvent): InlayMouseArea? {
     val bounds = inlay.bounds ?: return null
     val inlayPoint = Point(bounds.x, bounds.y)
     val translated = Point(event.x - inlayPoint.x, event.y - inlayPoint.y)

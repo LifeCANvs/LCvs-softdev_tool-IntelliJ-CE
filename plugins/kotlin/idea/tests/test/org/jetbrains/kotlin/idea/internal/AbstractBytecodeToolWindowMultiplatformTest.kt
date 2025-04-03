@@ -5,11 +5,10 @@ import com.intellij.openapi.application.readAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.kotlin.config.CompilerConfiguration
-import org.jetbrains.kotlin.config.JVMConfigurationKeys
 import org.jetbrains.kotlin.config.languageVersionSettings
-import org.jetbrains.kotlin.idea.actions.bytecode.BytecodeGenerationResult
-import org.jetbrains.kotlin.idea.actions.bytecode.KotlinBytecodeToolWindow
 import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
+import org.jetbrains.kotlin.idea.jvm.shared.bytecode.BytecodeGenerationResult
+import org.jetbrains.kotlin.idea.jvm.shared.bytecode.KotlinBytecodeToolWindow
 import org.jetbrains.kotlin.idea.multiplatform.setupMppProjectFromDirStructure
 import org.jetbrains.kotlin.idea.test.AbstractMultiModuleTest
 import org.jetbrains.kotlin.idea.test.IDEA_TEST_DATA_DIR
@@ -33,7 +32,6 @@ abstract class AbstractBytecodeToolWindowMultiplatformTest : AbstractMultiModule
 
 private fun configureCompilerAndCheckBytecode(file: KtFile) {
     val configuration = CompilerConfiguration().apply {
-        put(JVMConfigurationKeys.IR, true)
         languageVersionSettings = file.languageVersionSettings
     }
 

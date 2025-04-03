@@ -20,15 +20,15 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.extensions.LoadingOrder
 import com.intellij.openapi.extensions.LoadingOrder.Orderable
 import com.intellij.openapi.fileEditor.FileEditor
-import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapi.progress.TaskInfo
-import com.intellij.openapi.progress.blockingContext
-import com.intellij.openapi.progress.util.AbstractProgressIndicatorExBase
+import com.intellij.openapi.progress.*
+import com.intellij.openapi.progress.impl.BridgeTaskSupport
+import com.intellij.openapi.progress.impl.PerProjectTaskInfoEntityCollector
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.popup.BalloonHandler
 import com.intellij.openapi.ui.popup.JBPopup
 import com.intellij.openapi.util.*
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.Strings
 import com.intellij.openapi.wm.*
 import com.intellij.openapi.wm.StatusBarWidget.*
@@ -44,7 +44,8 @@ import com.intellij.platform.diagnostic.telemetry.impl.span
 import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.platform.util.coroutines.childScope
-import com.intellij.platform.util.progress.impl.ProgressState
+import com.intellij.platform.util.progress.ProgressState
+import com.intellij.platform.util.progress.StepState
 import com.intellij.ui.*
 import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.awt.RelativeRectangle
@@ -56,6 +57,7 @@ import com.intellij.ui.util.height
 import com.intellij.util.EventDispatcher
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.*
+import fleet.util.logging.logger
 import kotlinx.collections.immutable.persistentHashSetOf
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -95,7 +97,7 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
   private val widgetMap = LinkedHashMap<String, WidgetBean>()
   private var leftPanel: JPanel? = null
 
-  private val rightPanelLayout = GridBagLayout()
+  private var rightPanelLayout = GridBagLayout()
   private val rightPanel: JPanel
 
   private val centerPanel: JPanel
@@ -117,6 +119,8 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
     internal val WIDGET_EFFECT_KEY: Key<WidgetEffect> = Key.create("TextPanel.widgetEffect")
 
     const val NAVBAR_WIDGET_KEY: String = "NavBar"
+
+    private val LOG = logger<IdeStatusBarImpl>()
   }
 
   override fun findChild(c: Component): StatusBar {
@@ -187,8 +191,6 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
     rightPanel.border = JBUI.Borders.emptyLeft(1)
     add(rightPanel, BorderLayout.EAST)
 
-    registerCloneTasks()
-
     if (addToolWindowWidget) {
       val disposable = Disposer.newDisposable()
       coroutineScope.coroutineContext.job.invokeOnCompletion { Disposer.dispose(disposable) }
@@ -209,6 +211,13 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
     enableEvents(AWTEvent.MOUSE_EVENT_MASK)
     enableEvents(AWTEvent.MOUSE_MOTION_EVENT_MASK)
     IdeEventQueue.getInstance().addDispatcher({ e -> if (e is MouseEvent) dispatchMouseEvent(e) else false }, coroutineScope)
+  }
+
+  internal fun initialize() {
+    LOG.info("Initializing status bar")
+
+    registerCloneTasks()
+    project?.service<PerProjectTaskInfoEntityCollector>()?.startCollectingActiveTasks()
   }
 
   private fun createInfoAndProgressPanel(): InfoAndProgressPanel {
@@ -454,13 +463,25 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
 
   override fun getInfo(): @NlsContexts.StatusBarText String? = info
 
+  @Suppress("UsagesOfObsoleteApi")
   override fun addProgress(indicator: ProgressIndicatorEx, info: TaskInfo) {
-    check(progressFlow.tryEmit(ProgressSetChangeEvent(newProgress = Triple(info, indicator, ClientId.currentOrNull),
-                                                      existingProgresses = infoAndProgressPanel?.backgroundProcesses ?: emptyList())))
-    createInfoAndProgressPanel().addProgress(indicator, info)
+    if (Registry.`is`("rhizome.progress")) {
+      @Suppress("DEPRECATION")
+      BridgeTaskSupport.getInstance().withBridgeBackgroundProgress(project, indicator, info)
+    }
+    else {
+      val model = ProgressIndicatorModel(indicator, info.title, info.isCancellable)
+      addProgressImpl(model, info)
+    }
   }
 
-  internal fun notifyProgressRemoved(backgroundProcesses: List<Pair<TaskInfo, ProgressIndicatorEx>>) {
+  internal fun addProgressImpl(progressModel: ProgressModel, info: TaskInfo) {
+    check(progressFlow.tryEmit(ProgressSetChangeEvent(newProgress = Triple(info, progressModel, ClientId.currentOrNull),
+                                                      existingProgresses = infoAndProgressPanel?.backgroundProcesses ?: emptyList())))
+    createInfoAndProgressPanel().addProgress(progressModel, info)
+  }
+
+  internal fun notifyProgressRemoved(backgroundProcesses: List<Pair<TaskInfo, ProgressModel>>) {
     check(progressFlow.tryEmit(ProgressSetChangeEvent(newProgress = null, existingProgresses = backgroundProcesses)))
   }
 
@@ -483,9 +504,8 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
     }
   }
 
-  @Suppress("UNCHECKED_CAST")
-  override fun getBackgroundProcesses(): List<Pair<TaskInfo, ProgressIndicator>> {
-    return (infoAndProgressPanel?.backgroundProcesses ?: emptyList()) as List<Pair<TaskInfo, ProgressIndicator>>
+  override fun getBackgroundProcessModels(): List<Pair<TaskInfo, ProgressModel>> {
+    return (infoAndProgressPanel?.backgroundProcesses ?: emptyList())
   }
 
   override fun setProcessWindowOpen(open: Boolean) {
@@ -666,11 +686,23 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
 
         val targetPanel = getTargetPanel(bean.position)
         targetPanel.remove(bean.component)
+        recreateLayoutIfIsEmptyRightPanel(targetPanel)
         targetPanel.revalidate()
         Disposer.dispose(bean.widget)
         fireWidgetRemoved(id)
       }
       updateChildren { it.removeWidget(id) }
+    }
+  }
+
+  private fun recreateLayoutIfIsEmptyRightPanel(panel: JPanel) {
+    if (panel === rightPanel && panel.components.none { it.isVisible }) {
+      // Workaround of a bug in AWT:
+      // GridBagLayout.componentAdjusting is not set to NULL after removing the last visible child component.
+      // That leads to a leak of the StatusBarWidget component, and that leads to a situation when the plugin can't be properly unloaded.
+      rightPanelLayout = GridBagLayout()
+      panel.layout = rightPanelLayout
+      sortRightWidgets()
     }
   }
 
@@ -1010,49 +1042,45 @@ class VisibleProgress(val title: @NlsContexts.ProgressTitle String,
   }
 }
 
-private val EMPTY_PROGRESS = ProgressState(null, null, -1.0)
+private val EMPTY_PROGRESS = StepState(-1.0, null, null)
 
-private fun createVisibleProgress(indicator: ProgressIndicatorEx, info: TaskInfo, clientId: ClientId?): VisibleProgress {
+private fun createVisibleProgress(progressModel: ProgressModel, info: TaskInfo, clientId: ClientId?): VisibleProgress {
   val stateFlow = MutableStateFlow(EMPTY_PROGRESS)
+  val activeFlow = MutableStateFlow(true)
   val updater = {
-    stateFlow.value = ProgressState(text = indicator.text,
-                                    details = indicator.text2,
-                                    fraction = if (indicator.isIndeterminate) -1.0 else indicator.fraction)
+    stateFlow.value = StepState(fraction = if (progressModel.isIndeterminate()) -1.0 else progressModel.getFraction(),
+                                text = progressModel.getText(),
+                                details = progressModel.getDetails())
   }
 
-  val activeFlow = MutableStateFlow(true)
   val finisher = { activeFlow.value = false }
 
-  indicator.addStateDelegate(object : AbstractProgressIndicatorExBase() {
-    override fun onProgressChange() {
-      super.onProgressChange()
-      updater.invoke()
+  progressModel.addOnChangeAction {
+    updater()
+  }
+  progressModel.addOnFinishAction { taskInfo ->
+    if (taskInfo == info) {
+      finisher()
     }
+  }
 
-    override fun finish(task: TaskInfo) {
-      super.finish(task)
-      if (task == info) {
-        finisher.invoke()
-      }
-    }
-  })
-  if (indicator.isFinished(info)) {
-    finisher.invoke()
+  if (progressModel.isFinished(info)) {
+    finisher()
+  } else {
+    updater()
   }
-  else {
-    updater.invoke()
-  }
-  val stateFlowTillCompletion = stateFlow
-    .combine(activeFlow) { state, active -> state.takeIf { active } }
+
+  val state = stateFlow.combine(activeFlow) { state, active -> state.takeIf { active } }
     .takeWhile { it != null }.map { it!! }
+
   return VisibleProgress(title = info.title,
                          clientId = clientId,
-                         canceler = { indicator.cancel() }.takeIf { info.isCancellable },
-                         state = stateFlowTillCompletion)
+                         canceler = { progressModel.cancel() }.takeIf { info.isCancellable },
+                         state = state)
 }
 
-private class ProgressSetChangeEvent(private val newProgress: Triple<TaskInfo, ProgressIndicatorEx, ClientId?>?,
-                                     private val existingProgresses: List<Pair<TaskInfo, ProgressIndicatorEx>>) {
+private class ProgressSetChangeEvent(private val newProgress: Triple<TaskInfo, ProgressModel, ClientId?>?,
+                                     private val existingProgresses: List<Pair<TaskInfo, ProgressModel>>) {
   val newVisibleProgress by lazy {
     newProgress?.let { createVisibleProgress(it.second, it.first, it.third) }
   }

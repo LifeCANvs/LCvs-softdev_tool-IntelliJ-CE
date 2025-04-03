@@ -7,9 +7,8 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.platform.util.coroutines.flow.mapStateIn
 import com.intellij.util.text.nullize
-import com.jetbrains.python.sdk.add.ProjectLocationContext
-import com.jetbrains.python.sdk.add.ProjectLocationContexts
-import com.jetbrains.python.sdk.add.target.conda.suggestCondaPath
+import com.jetbrains.python.sdk.add.v2.conda.toExecutor
+import com.jetbrains.python.sdk.conda.suggestCondaPath
 import com.jetbrains.python.sdk.flavors.conda.PyCondaEnv
 import com.jetbrains.python.sdk.flavors.conda.PyCondaEnvIdentity
 import kotlinx.coroutines.*
@@ -26,7 +25,7 @@ import kotlin.coroutines.CoroutineContext
  * @param state is the model for this presented in Model-View-Presenter pattern
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-open class PythonAddInterpreterPresenter(val state: PythonAddInterpreterState, val uiContext: CoroutineContext) {
+internal open class PythonAddInterpreterPresenter(val state: PythonAddInterpreterState, val uiContext: CoroutineContext) {
 
   lateinit var controller: PythonAddInterpreterModel
 

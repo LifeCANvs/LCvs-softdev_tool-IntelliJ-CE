@@ -3,13 +3,13 @@ package com.intellij.openapi.externalSystem.action;
 
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnActionEvent;
-import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.externalSystem.ExternalSystemManager;
 import com.intellij.openapi.externalSystem.importing.ImportSpecBuilder;
 import com.intellij.openapi.externalSystem.model.ExternalSystemDataKeys;
 import com.intellij.openapi.externalSystem.model.ProjectSystemId;
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskType;
 import com.intellij.openapi.externalSystem.service.internal.ExternalSystemProcessingManager;
+import com.intellij.openapi.externalSystem.service.project.trusted.ExternalSystemTrustedProjectDialog;
 import com.intellij.openapi.externalSystem.statistics.ExternalSystemActionsCollector;
 import com.intellij.openapi.externalSystem.util.ExternalSystemBundle;
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil;
@@ -52,8 +52,7 @@ public class RefreshAllExternalProjectsAction extends DumbAwareAction {
     e.getPresentation().setText(ExternalSystemBundle.messagePointer("action.refresh.all.projects.text", name));
     e.getPresentation().setDescription(ExternalSystemBundle.messagePointer("action.refresh.all.projects.description", name));
 
-    ExternalSystemProcessingManager processingManager =
-      ApplicationManager.getApplication().getService(ExternalSystemProcessingManager.class);
+    var processingManager = ExternalSystemProcessingManager.getInstance();
     e.getPresentation().setEnabled(!processingManager.hasTaskOfTypeInProgress(ExternalSystemTaskType.RESOLVE_PROJECT, project));
   }
 
@@ -74,7 +73,7 @@ public class RefreshAllExternalProjectsAction extends DumbAwareAction {
     // We save all documents because there is a possible case that there is an external system config file changed inside the ide.
     FileDocumentManager.getInstance().saveAllDocuments();
 
-    if (ExternalSystemUtil.confirmLoadingUntrustedProject(project, systemIds)) {
+    if (ExternalSystemTrustedProjectDialog.confirmLoadingUntrustedProject(project, systemIds)) {
       for (ProjectSystemId externalSystemId : systemIds) {
         ExternalSystemActionsCollector.trigger(project, externalSystemId, this, e);
         ExternalSystemUtil.refreshProjects(new ImportSpecBuilder(project, externalSystemId));
@@ -87,8 +86,7 @@ public class RefreshAllExternalProjectsAction extends DumbAwareAction {
     return ActionUpdateThread.BGT;
   }
 
-  @NotNull
-  private static List<ProjectSystemId> getSystemIds(@NotNull AnActionEvent e) {
+  private static @NotNull List<ProjectSystemId> getSystemIds(@NotNull AnActionEvent e) {
     List<ProjectSystemId> systemIds = new ArrayList<>();
     ProjectSystemId externalSystemId = e.getData(ExternalSystemDataKeys.EXTERNAL_SYSTEM_ID);
     if (externalSystemId == null) {

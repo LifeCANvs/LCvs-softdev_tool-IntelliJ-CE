@@ -3,6 +3,7 @@ package com.jetbrains.python;
 
 import com.intellij.openapi.util.NlsSafe;
 import com.jetbrains.python.psi.LanguageLevel;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -48,6 +49,11 @@ public final @NonNls class PyNames {
   public static final String TYPE_BYTEARRAY = "bytearray";
 
   public static final String TYPE_ENUM = "enum.Enum";
+  public static final String TYPE_ENUM_META = "enum.EnumMeta";
+  public static final String TYPE_ENUM_FLAG = "enum.Flag";
+  public static final String TYPE_ENUM_AUTO = "enum.auto";
+  public static final String TYPE_ENUM_MEMBER = "enum.member";
+  public static final String TYPE_ENUM_NONMEMBER = "enum.nonmember";
 
   public static final String PYTHON_SDK_ID_NAME = "Python SDK";
   public static final String VERBOSE_REG_EXP_LANGUAGE_ID = "PythonVerboseRegExp";
@@ -71,7 +77,8 @@ public final @NonNls class PyNames {
   public static final String NEW = "__new__";
   public static final String GETATTR = "__getattr__";
   public static final String GETATTRIBUTE = "__getattribute__";
-  public static final String GET = "__get__";
+  public static final String DUNDER_GET = "__get__";
+  public static final String DUNDER_SET = "__set__";
   public static final String __CLASS__ = "__class__";
   public static final String DUNDER_METACLASS = "__metaclass__";
   public static final @NlsSafe String METACLASS = "metaclass";
@@ -102,6 +109,7 @@ public final @NonNls class PyNames {
   public static final String SETTER = "setter";
   public static final String DELETER = "deleter";
   public static final String GETTER = "getter";
+  public static final String CACHED_PROPERTY = "cached_property";
 
   public static final String ALL = "__all__";
   public static final String SLOTS = "__slots__";
@@ -179,6 +187,7 @@ public final @NonNls class PyNames {
   public static final String ROUND = "__round__";
   public static final String CLASS_GETITEM = "__class_getitem__";
   public static final String PREPARE = "__prepare__";
+  public static final String MATCH_ARGS = "__match_args__";
 
   public static final String NAME = "__name__";
   public static final String ENTER = "__enter__";
@@ -447,6 +456,7 @@ public final @NonNls class PyNames {
   /**
    * @deprecated use {@link #getBuiltinMethods(LanguageLevel)} instead
    */
+  @ApiStatus.Internal
   @Deprecated
   public static final Map<String, BuiltinDescription> PY36_BUILTIN_METHODS = concat(
     PY35_BUILTIN_METHODS,
@@ -576,6 +586,17 @@ public final @NonNls class PyNames {
     FOR,
     LAMBDA,
     TRY
+  );
+
+  // As per: https://docs.python.org/3/reference/lexical_analysis.html#keywords
+  public static final Set<String> PY3_KEYWORDS = Set.of(
+    FALSE,  AWAIT,    ELSE,    IMPORT,   PASS,
+    NONE,   BREAK,    EXCEPT,  IN,       RAISE,
+    TRUE,   CLASS,    FINALLY, IS,       RETURN,
+    AND,    CONTINUE, FOR,     LAMBDA,   TRY,
+    AS,     DEF,      FROM,    NONLOCAL, WHILE,
+    ASSERT, DEL,      GLOBAL,  NOT,      WITH,
+    ASYNC,  ELIF,     IF,      OR,       YIELD
   );
 
   public static final Set<String> BUILTIN_INTERFACES = Set.of(

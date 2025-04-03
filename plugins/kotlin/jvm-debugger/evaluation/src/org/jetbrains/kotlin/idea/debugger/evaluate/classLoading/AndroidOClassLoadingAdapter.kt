@@ -6,12 +6,12 @@ import com.intellij.debugger.engine.JVMNameUtil
 import com.intellij.debugger.engine.evaluation.EvaluateException
 import com.intellij.debugger.impl.DebuggerUtilsEx.mirrorOfByteArray
 import com.sun.jdi.*
-import org.jetbrains.kotlin.idea.debugger.base.util.DexDebugFacility
+import com.intellij.debugger.impl.DexDebugFacility
 import org.jetbrains.kotlin.idea.debugger.base.util.evaluate.ExecutionContext
 
 class AndroidOClassLoadingAdapter : AbstractAndroidClassLoadingAdapter() {
     override fun isApplicable(context: ExecutionContext, info: ClassLoadingAdapter.Companion.ClassInfoForEvaluator) = with(info) {
-        isCompilingEvaluatorPreferred && DexDebugFacility.isDex(context.debugProcess)
+        isCompilingEvaluatorPreferred && DexDebugFacility.isDex(context.evaluationContext.virtualMachineProxy.virtualMachine)
     }
 
     private fun resolveClassLoaderClass(context: ExecutionContext): ClassType? {

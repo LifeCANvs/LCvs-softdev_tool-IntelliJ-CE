@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.evaluate.quick.common;
 
 import com.intellij.codeInsight.hint.HintManager;
@@ -6,6 +6,7 @@ import com.intellij.codeInsight.hint.HintManagerImpl;
 import com.intellij.codeInsight.hint.HintUtil;
 import com.intellij.codeInsight.navigation.NavigationUtil;
 import com.intellij.ide.TooltipEvent;
+import com.intellij.openapi.application.WriteIntentReadAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.colors.EditorColors;
@@ -41,6 +42,7 @@ import com.intellij.xdebugger.frame.XFullValueEvaluator;
 import com.intellij.xdebugger.frame.XValue;
 import com.intellij.xdebugger.frame.presentation.XValuePresentation;
 import com.intellij.xdebugger.impl.actions.XDebuggerActions;
+import com.intellij.xdebugger.impl.evaluate.ValueLookupManagerController;
 import com.intellij.xdebugger.impl.evaluate.quick.XDebuggerTreeCreator;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.ExecutionPointHighlighter;
@@ -69,7 +71,7 @@ public abstract class AbstractValueHint {
     @Override
     public void keyReleased(KeyEvent e) {
       if (!isAltMask(e.getModifiers())) {
-        ValueLookupManager.getInstance(myProject).hideHint();
+        ValueLookupManagerController.getInstance(myProject).hideHint();
       }
     }
   };
@@ -77,8 +79,10 @@ public abstract class AbstractValueHint {
   private RangeHighlighter myHighlighter;
   private boolean myCursorSet;
   private final Project myProject;
-  private final Editor myEditor;
-  private final ValueHintType myType;
+  @ApiStatus.Internal
+  protected final Editor myEditor;
+  @ApiStatus.Internal
+  protected final ValueHintType myType;
   protected final Point myPoint;
   private EditorMouseEvent myEditorMouseEvent;
 
@@ -90,6 +94,13 @@ public abstract class AbstractValueHint {
   private TextRange myCurrentRange;
   private Runnable myHideRunnable;
 
+  HintListener hintListener = new HintListener() {
+    @Override
+    public void hintHidden(@NotNull EventObject event) {
+      processHintHidden();
+    }
+  };
+
   public AbstractValueHint(@NotNull Project project, @NotNull Editor editor, @NotNull Point point, @NotNull ValueHintType type,
                            final TextRange textRange) {
     myPoint = point;
@@ -97,10 +108,6 @@ public abstract class AbstractValueHint {
     myEditor = editor;
     myType = type;
     myCurrentRange = textRange;
-  }
-
-  protected boolean canShowHint() {
-    return true;
   }
 
   protected abstract void evaluateAndShowHint();
@@ -143,14 +150,17 @@ public abstract class AbstractValueHint {
   public void invokeHint(Runnable hideRunnable) {
     myHideRunnable = hideRunnable;
 
-    if (!canShowHint() || !isCurrentRangeValid()) {
+    if (!isCurrentRangeValid()) {
       hideHint();
       return;
     }
 
     createHighlighter();
     if (myType != ValueHintType.MOUSE_ALT_OVER_HINT) {
-      evaluateAndShowHint();
+      //noinspection RedundantTypeArguments, fixes compilation error
+      WriteIntentReadAction.<Object, Throwable>run(() -> {
+        evaluateAndShowHint();
+      });
     }
   }
 
@@ -207,12 +217,12 @@ public abstract class AbstractValueHint {
     return myProject;
   }
 
-  @NotNull
-  protected final Editor getEditor() {
+  protected final @NotNull Editor getEditor() {
     return myEditor;
   }
 
-  protected ValueHintType getType() {
+  @ApiStatus.Internal
+  public ValueHintType getType() {
     return myType;
   }
 
@@ -220,6 +230,7 @@ public abstract class AbstractValueHint {
     EDT.assertIsEdt();
     if (myCurrentHint != null) {
       myCurrentHint.hide();
+      myCurrentHint.removeHintListener(hintListener);
       myCurrentHint = null;
     }
     if (myCurrentPopup != null) {
@@ -228,9 +239,10 @@ public abstract class AbstractValueHint {
     }
   }
 
-  private boolean myInsideShow = false; // to avoid invoking myHideRunnable for new popups with updated presentation
+  @ApiStatus.Internal
+  protected boolean myInsideShow = false; // to avoid invoking myHideRunnable for new popups with updated presentation
 
-  private void processHintHidden() {
+  protected void processHintHidden() {
     if (!myInsideShow) {
       if (myHideRunnable != null) {
         myHideRunnable.run();
@@ -279,12 +291,7 @@ public abstract class AbstractValueHint {
         }
       };
       myCurrentHint.setForceShowAsPopup(true);
-      myCurrentHint.addHintListener(new HintListener() {
-        @Override
-        public void hintHidden(@NotNull EventObject event) {
-          processHintHidden();
-        }
-      });
+      myCurrentHint.addHintListener(hintListener);
 
       // editor may be disposed before later invokator process this action
       if (myEditor.isDisposed()) {
@@ -319,7 +326,8 @@ public abstract class AbstractValueHint {
   protected void onHintHidden() {
   }
 
-  protected boolean isHintHidden() {
+  @ApiStatus.Internal
+  public boolean isHintHidden() {
     return myHintHidden;
   }
 
@@ -369,8 +377,14 @@ public abstract class AbstractValueHint {
             }
           }
           else {
-            hideCurrentHint();
-            expand.run();
+            myInsideShow = true;
+            try {
+              hideCurrentHint();
+              expand.run();
+            }
+            finally {
+              myInsideShow = false;
+            }
           }
           return true;
         }
@@ -397,8 +411,7 @@ public abstract class AbstractValueHint {
     }
   }
 
-  @Nullable
-  protected TextRange getCurrentRange() {
+  protected @Nullable TextRange getCurrentRange() {
     return myCurrentRange;
   }
 
@@ -408,8 +421,7 @@ public abstract class AbstractValueHint {
                                                          XDebuggerActions.QUICK_EVALUATE_EXPRESSION);
   }
 
-  @Nullable
-  public static ValueHintType getHintType(final EditorMouseEvent e) {
+  public static @Nullable ValueHintType getHintType(final EditorMouseEvent e) {
     int modifiers = e.getMouseEvent().getModifiers();
     if (modifiers == 0) {
       return ValueHintType.MOUSE_OVER_HINT;
@@ -523,12 +535,19 @@ public abstract class AbstractValueHint {
     return Objects.hash(myProject, myEditor, myType, myCurrentRange);
   }
 
-  void setEditorMouseEvent(EditorMouseEvent editorMouseEvent) {
+  @ApiStatus.Internal
+  public void setEditorMouseEvent(EditorMouseEvent editorMouseEvent) {
     myEditorMouseEvent = editorMouseEvent;
   }
 
   @ApiStatus.Internal
+  protected @Nullable EditorMouseEvent getEditorMouseEvent() {
+    return myEditorMouseEvent;
+  }
+
+  @ApiStatus.Internal
   protected void resizePopup(int widthDelta, int hightDelta) {
+    if (myCurrentPopup == null) return;
     final Window popupWindow = SwingUtilities.windowForComponent(myCurrentPopup.getContent());
     if (popupWindow == null) return;
 

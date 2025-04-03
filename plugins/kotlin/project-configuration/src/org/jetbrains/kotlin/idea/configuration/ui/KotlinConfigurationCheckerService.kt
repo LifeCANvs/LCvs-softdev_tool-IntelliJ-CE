@@ -2,15 +2,16 @@
 
 package org.jetbrains.kotlin.idea.configuration.ui
 
+import com.intellij.facet.ProjectFacetManager
 import com.intellij.ide.util.PropertiesComponent
+import com.intellij.openapi.application.edtWriteAction
 import com.intellij.openapi.application.readAction
-import com.intellij.openapi.application.writeAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.extensions.InternalIgnoreDependencyViolation
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.modules
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.util.IntellijInternalApi
 import com.intellij.platform.ide.progress.TaskCancellation
@@ -23,16 +24,20 @@ import org.jetbrains.kotlin.idea.compiler.configuration.KotlinJpsPluginSettings
 import org.jetbrains.kotlin.idea.compiler.configuration.isKotlinLanguageVersionConfigured
 import org.jetbrains.kotlin.idea.configuration.getModulesWithKotlinFiles
 import org.jetbrains.kotlin.idea.facet.KotlinFacet
+import org.jetbrains.kotlin.idea.facet.KotlinFacetType
 import org.jetbrains.kotlin.idea.facet.getLibraryLanguageLevel
 import org.jetbrains.kotlin.idea.projectConfiguration.KotlinProjectConfigurationBundle
 import org.jetbrains.kotlin.platform.idePlatformKind
 import java.util.concurrent.atomic.AtomicInteger
 
+@InternalIgnoreDependencyViolation
 private class KotlinConfigurationCheckerStartupActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
         KotlinConfigurationCheckerService.getInstance(project).performProjectPostOpenActions()
     }
 }
+
+const val KOTLIN_LANGUAGE_VERSION_CONFIGURED_PROPERTY_NAME: String = "kotlin-language-version-configured"
 
 @Service(Service.Level.PROJECT)
 class KotlinConfigurationCheckerService(private val project: Project) {
@@ -65,7 +70,9 @@ class KotlinConfigurationCheckerService(private val project: Project) {
             KotlinJpsPluginSettings.validateSettings(project)
 
             // pick up modules with kotlin faces those use custom (non project) settings
-            val modulesWithKotlinFacets = readAction { project.modules }
+            val modulesWithKotlinFacets = readAction {
+                ProjectFacetManager.getInstance(project).getModulesWithFacet(KotlinFacetType.TYPE_ID)
+            }
                 .filter {
                     val facetSettings = KotlinFacet.get(it)?.configuration?.settings ?: return@filter false
                     // module uses custom (not a project-wide) kotlin facet settings and LV or ApiVersion is missed
@@ -106,7 +113,7 @@ class KotlinConfigurationCheckerService(private val project: Project) {
             }
         }
         if (writeActionContinuations.isNotEmpty()) {
-            writeAction {
+            edtWriteAction {
                 writeActionContinuations.forEach { it.invoke() }
             }
         }
@@ -149,7 +156,6 @@ class KotlinConfigurationCheckerService(private val project: Project) {
         }
     }
 
-
     val isSyncing: Boolean get() = syncDepth.get() > 0
 
     fun syncStarted() {
@@ -161,8 +167,6 @@ class KotlinConfigurationCheckerService(private val project: Project) {
     }
 
     companion object {
-        const val CONFIGURE_NOTIFICATION_GROUP_ID = "Configure Kotlin in Project"
-        const val KOTLIN_LANGUAGE_VERSION_CONFIGURED_PROPERTY_NAME = "kotlin-language-version-configured"
         private val LOG = logger<KotlinConfigurationCheckerService>()
 
         fun getInstance(project: Project): KotlinConfigurationCheckerService = project.service()

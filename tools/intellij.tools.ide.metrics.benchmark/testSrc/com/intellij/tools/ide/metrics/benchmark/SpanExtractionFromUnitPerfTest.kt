@@ -5,17 +5,17 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.util.BuildNumber
 import com.intellij.testFramework.BenchmarkTestInfo
-import com.intellij.tools.ide.metrics.collector.publishing.CIServerBuildInfo
 import com.intellij.tools.ide.metrics.collector.publishing.PerformanceMetricsDto
+import com.intellij.util.io.URLUtil
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInfo
+import java.nio.file.FileSystemAlreadyExistsException
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Paths
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 import kotlin.io.path.div
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
@@ -51,7 +51,15 @@ class SpanExtractionFromUnitPerfTest {
   }
 
   private val openTelemetryReports by lazy {
-    Paths.get(this::class.java.classLoader.getResource("telemetry")!!.toURI())
+    val uri = this::class.java.classLoader.getResource("telemetry")!!.toURI()
+    if (uri.scheme == URLUtil.JAR_PROTOCOL) {
+      try {
+        FileSystems.newFileSystem(uri, emptyMap<String, Any>())
+      }
+      catch (_: FileSystemAlreadyExistsException) {
+      }
+    }
+    Paths.get(uri)
   }
 
   @Test
@@ -82,25 +90,13 @@ class SpanExtractionFromUnitPerfTest {
 
     val reportFile = Files.createTempFile("temp", ".json")
 
-    val buildInfo = CIServerBuildInfo(
-      "8727723",
-      "someBuildType",
-      "configurationName",
-      "233.5353.98",
-      "branch_name",
-      String.format("%s/viewLog.html?buildId=%s&buildTypeId=%s", "base_uri", "8727723", "someBuildType"),
-      false,
-      ZonedDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-    )
-
     val metricsDto = PerformanceMetricsDto.create(
       mainMetricName,
       "",
       "",
       testInfo.displayName,
       BuildNumber.fromString("233.SNAPSHOT")!!,
-      extractedMetrics,
-      buildInfo
+      extractedMetrics
     )
 
     // just invoke serialization to validate that it completes without exceptions
@@ -135,25 +131,13 @@ class SpanExtractionFromUnitPerfTest {
 
     val reportFile = Files.createTempFile("temp", ".json")
 
-    val buildInfo = CIServerBuildInfo(
-      "8727723",
-      "someBuildType",
-      "configurationName",
-      "233.5353.98",
-      "branch_name",
-      String.format("%s/viewLog.html?buildId=%s&buildTypeId=%s", "base_uri", "8727723", "someBuildType"),
-      false,
-      ZonedDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-    )
-
     val metricsDto = PerformanceMetricsDto.create(
       mainMetricName,
       "",
       "",
       testInfo.displayName,
       BuildNumber.fromString("233.SNAPSHOT")!!,
-      extractedMetrics,
-      buildInfo
+      extractedMetrics
     )
 
     // just invoke serialization to validate that it completes without exceptions

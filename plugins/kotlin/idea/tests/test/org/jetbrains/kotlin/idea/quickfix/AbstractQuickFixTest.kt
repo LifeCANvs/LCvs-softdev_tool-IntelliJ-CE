@@ -5,7 +5,6 @@ package org.jetbrains.kotlin.idea.quickfix
 import com.intellij.codeInsight.daemon.quickFix.ActionHint
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.codeInsight.intention.IntentionActionDelegate
-import com.intellij.codeInsight.intention.PriorityAction
 import com.intellij.codeInsight.intention.impl.ShowIntentionActionsHandler
 import com.intellij.codeInsight.intention.impl.config.IntentionManagerSettings
 import com.intellij.codeInspection.SuppressableProblemGroup
@@ -25,6 +24,7 @@ import com.intellij.platform.testFramework.core.FileComparisonFailedError
 import com.intellij.psi.PsiFile
 import com.intellij.psi.util.PsiUtilBase
 import com.intellij.testFramework.*
+import com.intellij.testFramework.fixtures.impl.CodeInsightTestFixtureImpl
 import com.intellij.util.ui.UIUtil
 import junit.framework.TestCase
 import org.jetbrains.kotlin.idea.base.test.IgnoreTests
@@ -41,6 +41,7 @@ import org.junit.Assert
 import org.junit.ComparisonFailure
 import java.io.File
 import java.nio.file.Paths
+import java.util.*
 
 abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), QuickFixTest {
     companion object {
@@ -50,7 +51,6 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
         const val FIXTURE_CLASS_DIRECTIVE = "FIXTURE_CLASS"
         const val SHOULD_FAIL_WITH_DIRECTIVE = "SHOULD_FAIL_WITH"
         const val FORCE_PACKAGE_FOLDER_DIRECTIVE = "FORCE_PACKAGE_FOLDER"
-        const val PRIORITY_DIRECTIVE = "PRIORITY"
         const val K1_TOOL_DIRECTIVE = "K1_TOOL:"
         const val K2_TOOL_DIRECTIVE = "K2_TOOL:"
 
@@ -84,6 +84,7 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
             LoadingOrder.FIRST,
             newDisposable
         )
+        (myFixture as CodeInsightTestFixtureImpl).canChangeDocumentDuringHighlighting(true)
     }
 
     override fun tearDown() {
@@ -116,7 +117,9 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
                         myFixture.enableInspections(*inspections)
 
                         doKotlinQuickFixTest(beforeFileName)
-                        runInEdtAndWait { checkForUnexpectedErrors() }
+                        runInEdtAndWait {
+                            checkForErrorsAfter(beforeFile, myFixture.file as KtFile, beforeFileText)
+                        }
                     } finally {
                         myFixture.disableInspections(*inspections)
                     }
@@ -179,7 +182,7 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
     }
 
     override fun getProjectDescriptor(): LightProjectDescriptor =
-        if ("createfromusage" in testDataDirectory.path.toLowerCase()) {
+        if ("createfromusage" in testDataDirectory.path.lowercase(Locale.getDefault())) {
             // TODO: WTF
             KotlinWithJdkAndRuntimeLightProjectDescriptor.getInstance()
         } else {
@@ -250,8 +253,11 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
 
             val hint = myFixture.file.actionHint(contents.replace("\${file}", fileName, ignoreCase = true))
             actionHint = hint
-            val intention = runInEdtAndGet { findActionWithText(hint.expectedText) }
-            if (hint.shouldPresent()) {
+
+            val actionShouldBeAvailable = hint.shouldPresent()
+            val intention = runInEdtAndGet { findActionWithText(hint.expectedText, acceptMatchByFamilyName = !actionShouldBeAvailable) }
+
+            if (actionShouldBeAvailable) {
                 if (intention == null) {
                     fail(
                         "Action with text '" + hint.expectedText + "' not found\n${myFixture.availableIntentions.size} available actions:\n" +
@@ -312,15 +318,8 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
 
     private fun applyAction(contents: String, hint: ActionHint, intention: IntentionAction, fileName: String) {
         val unwrappedIntention = unwrapIntention(intention)
-        val priorityName = InTextDirectivesUtils.findStringWithPrefixes(contents, "// $PRIORITY_DIRECTIVE: ")
-        if (priorityName != null) {
-            val expectedPriority = enumValueOf<PriorityAction.Priority>(priorityName)
-            val actualPriority = (unwrappedIntention as? PriorityAction)?.priority
-            assertTrue(
-                "Expected action priority: $expectedPriority\nActual priority: $actualPriority",
-                expectedPriority == actualPriority
-            )
-        }
+
+        DirectiveBasedActionUtils.checkPriority(contents, unwrappedIntention)
 
         val writeActionResolveHandler: () -> Unit = {
             val intentionClassName = unwrappedIntention.javaClass.name
@@ -346,7 +345,7 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
             UIUtil.dispatchAllInvocationEvents()
 
             if (!shouldBeAvailableAfterExecution()) {
-                var action = findActionWithText(hint.expectedText)
+                var action = findActionWithText(hint.expectedText, acceptMatchByFamilyName = true)
                 action = if (action == null) null else IntentionActionDelegate.unwrap(action)
                 if (action != null && !Comparing.equal(element, PsiUtilBase.getElementAtCaret(editor))) {
                     fail("Action '${hint.expectedText}' (${action.javaClass}) is still available after its invocation in test " + fileName)
@@ -370,9 +369,9 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
     private fun checkForUnexpectedActions() {
         val text = myFixture.editor.document.text
         val actionHint = myFixture.file.actionHint(text)
-        if (!InTextDirectivesUtils.isDirectiveDefined(text, DirectiveBasedActionUtils.ACTION_DIRECTIVE)) {
-            return
-        }
+        val actionDirective = pluginMode.actionsListDirectives.firstNotNullOfOrNull {
+            if (!InTextDirectivesUtils.isDirectiveDefined(text, it)) it else null
+        } ?: return
 
         myFixture.doHighlighting()
         val cachedIntentions = ShowIntentionActionsHandler.calcCachedIntentions(project, editor, file)
@@ -387,7 +386,7 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
                 "$className should be inheritor of IntentionAction or ModCommandAction"
             }
 
-            val validActions = HashSet(InTextDirectivesUtils.findLinesWithPrefixesRemoved(text, DirectiveBasedActionUtils.ACTION_DIRECTIVE))
+            val validActions = HashSet(InTextDirectivesUtils.findLinesWithPrefixesRemoved(text, actionDirective))
 
             actions.removeAll { action -> !aClass.isAssignableFrom(action.javaClass) || validActions.contains(action.text) }
 
@@ -404,9 +403,9 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
         }
     }
 
-    private fun findActionWithText(text: String): IntentionAction? {
+    private fun findActionWithText(text: String, acceptMatchByFamilyName: Boolean): IntentionAction? {
         val pattern = IntentionActionNamePattern(text)
-        val intention = pattern.findActionByPattern(myFixture.availableIntentions, false)
+        val intention = pattern.findActionByPattern(myFixture.availableIntentions, acceptMatchByFamilyName)
         if (intention != null) return intention
 
         // Support warning suppression
@@ -436,10 +435,14 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
     }
 
     protected open fun checkAvailableActionsAreExpected(actions: List<IntentionAction>) {
-        DirectiveBasedActionUtils.checkAvailableActionsAreExpected(dataFile(), actions)
+        DirectiveBasedActionUtils.checkAvailableActionsAreExpected(
+            myFixture.file,dataFile(), actions, actionsListDirectives = pluginMode.actionsListDirectives
+        )
     }
 
-    protected open fun checkForUnexpectedErrors() = DirectiveBasedActionUtils.checkForUnexpectedErrors(myFixture.file as KtFile)
+    protected open fun checkForErrorsAfter(mainFile: File, ktFile: KtFile, fileText: String) {
+        DirectiveBasedActionUtils.checkForUnexpectedErrors(ktFile)
+    }
 
     override val additionalToolDirectives: Array<String>
         get() = arrayOf(if (isFirPlugin) K2_TOOL_DIRECTIVE else K1_TOOL_DIRECTIVE)

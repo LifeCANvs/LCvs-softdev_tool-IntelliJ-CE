@@ -5,6 +5,7 @@ import com.intellij.driver.client.Remote
 import com.intellij.driver.client.service
 import com.intellij.driver.client.utility
 import com.intellij.driver.model.RdTarget
+import kotlin.time.Duration.Companion.seconds
 
 @Remote("com.intellij.openapi.roots.ProjectRootManager", rdTarget = RdTarget.BACKEND)
 interface ProjectRootManager {
@@ -26,6 +27,7 @@ fun Driver.findFile(relativePath: String, project: Project? = null): VirtualFile
       service<FrontendProjectRootManager>(project ?: singleProject()).getContentRoots()
         .firstNotNullOfOrNull { it.findFileByRelativePath(relativePath) }
     } else {
+      val cr = service<ProjectRootManager>(project ?: singleProject()).getContentRoots()
       // On Frontend the file will not be found unless it was opened previously
       service<ProjectRootManager>(project ?: singleProject()).getContentRoots()
         .firstNotNullOfOrNull { it.findFileByRelativePath(relativePath) }
@@ -49,6 +51,8 @@ interface SetupProjectSdkUtil {
   fun setupOrDetectSdk(project: Project, name: String, type: String, home: String)
 
   fun setupOrDetectSdk(name: String, type: String, home: String): Sdk
+
+  fun isApplicationLoaded(): Boolean
 }
 
 fun Driver.setupOrDetectSdk(project: Project, name: String, type: String, home: String) {
@@ -56,5 +60,6 @@ fun Driver.setupOrDetectSdk(project: Project, name: String, type: String, home: 
 }
 
 fun Driver.setupOrDetectSdk(name: String, type: String, home: String) {
+  waitFor("Application is loaded", timeout = 15.seconds) { utility<SetupProjectSdkUtil>().isApplicationLoaded() }
   utility<SetupProjectSdkUtil>().setupOrDetectSdk(name, type, home)
 }

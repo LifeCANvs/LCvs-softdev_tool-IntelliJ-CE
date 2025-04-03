@@ -1,79 +1,56 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk.add.v2
 
-import com.intellij.execution.ExecutionException
-import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.edtWriteAction
 import com.intellij.openapi.module.ModuleUtil
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.projectRoots.ProjectJdkTable
 import com.intellij.openapi.projectRoots.Sdk
-import com.intellij.openapi.projectRoots.impl.SdkConfigurationUtil
-import com.intellij.openapi.vfs.StandardFileSystems
+import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.TaskCancellation
 import com.intellij.platform.ide.progress.withModalProgress
-import com.jetbrains.extensions.failure
+import com.intellij.python.community.impl.venv.createVenv
 import com.jetbrains.python.PyBundle.message
+import com.jetbrains.python.errorProcessing.PyError
+import com.jetbrains.python.failure
 import com.jetbrains.python.sdk.PythonSdkType
-import com.jetbrains.python.sdk.VirtualEnvReader
-import com.jetbrains.python.sdk.add.target.conda.createCondaSdkFromExistingEnv
+import com.jetbrains.python.sdk.conda.createCondaSdkFromExistingEnv
+import com.jetbrains.python.sdk.conda.isConda
+import com.jetbrains.python.sdk.createSdk
 import com.jetbrains.python.sdk.excludeInnerVirtualEnv
 import com.jetbrains.python.sdk.flavors.conda.PyCondaCommand
-import com.jetbrains.python.sdk.suggestAssociatedSdkName
+import com.jetbrains.python.sdk.persist
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
 
 // todo should it be overriden for targets?
-suspend fun PythonMutableTargetAddInterpreterModel.setupVirtualenv(venvPath: Path, projectPath: Path): Result<Sdk> {
+suspend fun PythonMutableTargetAddInterpreterModel.setupVirtualenv(venvPath: Path, projectPath: Path): com.jetbrains.python.Result<Sdk, PyError> {
   val baseSdk = state.baseInterpreter.get()!!
 
-  val venvPathOnTarget = venvPath.convertToPathOnTarget(targetEnvironmentConfiguration)
 
-  val baseSdkPath = when (baseSdk) {
-    is InstallableSelectableInterpreter -> installBaseSdk(baseSdk.sdk, this.existingSdks)?.homePath // todo handle errors
-    is ExistingSelectableInterpreter -> baseSdk.sdk.homePath
-    is DetectedSelectableInterpreter, is ManuallyAddedSelectableInterpreter -> baseSdk.homePath
-  }
+  val baseSdkPath = Path.of(when (baseSdk) {
+                              is InstallableSelectableInterpreter -> installBaseSdk(baseSdk.sdk, this.existingSdks)?.homePath // todo handle errors
+                              is ExistingSelectableInterpreter -> baseSdk.sdk.homePath
+                              is DetectedSelectableInterpreter, is ManuallyAddedSelectableInterpreter -> baseSdk.homePath
+                            }!!)
 
 
-  withContext(Dispatchers.EDT) {
-    createVirtualenv(baseSdkPath!!,
-                     venvPathOnTarget,
-                     projectPath,
-                     inheritSitePackages = state.inheritSitePackages.get())
-  }
+  val venvPython = createVenv(baseSdkPath, venvPath, inheritSitePackages = state.inheritSitePackages.get()).getOr { return it }
 
   if (targetEnvironmentConfiguration != null) error("Remote targets aren't supported")
-  val dir = try {
-    Path.of(venvPathOnTarget)
-  }
-  catch (e: InvalidPathException) {
-    return Result.failure(e)
-  }
-  val venvPython = VirtualEnvReader.Instance.findPythonInPythonRoot(dir)?.toString()
-  if (venvPython == null) {
-    return failure(message("commandLine.directoryCantBeAccessed", venvPathOnTarget))
-  }
-
-  val homeFile = try {
-    StandardFileSystems.local().refreshAndFindFileByPath(venvPython)
-  }
-  catch (e: ExecutionException) {
-    return Result.failure(e)
-  }
+  val homeFile =
+    // refresh needs write action
+    edtWriteAction {
+      VfsUtil.findFile(venvPython, true)
+    }
   if (homeFile == null) {
-    return failure(message("commandLine.directoryCantBeAccessed", venvPathOnTarget))
+    return com.jetbrains.python.errorProcessing.failure(message("commandLine.directoryCantBeAccessed", venvPython))
   }
 
-  val suggestedName = /*suggestedSdkName ?:*/ suggestAssociatedSdkName(homeFile.path, projectPath.toString())
-  val newSdk = SdkConfigurationUtil.setupSdk(existingSdks.toTypedArray(), homeFile,
-                                             PythonSdkType.getInstance(),
-                                             false, null, suggestedName)!!
-
-  addSdk(newSdk)
+  val newSdk = createSdk(homeFile, projectPath, existingSdks.toTypedArray())
 
   // todo check exclude
   ProjectManager.getInstance().openProjects
@@ -83,7 +60,7 @@ suspend fun PythonMutableTargetAddInterpreterModel.setupVirtualenv(venvPath: Pat
       }
     }
     ?.excludeInnerVirtualEnv(newSdk)
-  return Result.success(newSdk)
+  return com.jetbrains.python.Result.success(newSdk)
 
 }
 
@@ -102,7 +79,7 @@ suspend fun PythonAddInterpreterModel.selectCondaEnvironment(base: Boolean): Res
     .getOrElse { return Result.failure(it) }
     .envIdentity
   val existingSdk = ProjectJdkTable.getInstance().findJdk(identity.userReadableName)
-  if (existingSdk != null && isCondaSdk(existingSdk)) return Result.success(existingSdk)
+  if (existingSdk != null && existingSdk.isConda()) return Result.success(existingSdk)
 
   val sdk = withModalProgress(ModalTaskOwner.guess(),
                               message("sdk.create.custom.conda.create.progress"),
@@ -114,7 +91,7 @@ suspend fun PythonAddInterpreterModel.selectCondaEnvironment(base: Boolean): Res
   }
 
   (sdk.sdkType as PythonSdkType).setupSdkPaths(sdk)
-  addSdk(sdk)
+  sdk.persist()
   return Result.success(sdk)
 }
 

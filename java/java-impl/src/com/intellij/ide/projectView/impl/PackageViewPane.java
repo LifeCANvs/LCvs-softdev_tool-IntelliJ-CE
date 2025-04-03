@@ -30,9 +30,7 @@ import com.intellij.util.ObjectUtils;
 import com.intellij.util.PlatformUtils;
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
 import com.intellij.util.containers.ContainerUtil;
-import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultTreeModel;
@@ -50,8 +48,9 @@ public class PackageViewPane extends AbstractProjectViewPaneWithAsyncSupport {
     super(project);
   }
 
+  @ApiStatus.Internal
   @Override
-  protected void configureAsyncSupport(@NotNull AsyncProjectViewSupport support) {
+  protected void configureAsyncSupport(@NotNull ProjectViewPaneSupport support) {
     support.setMultiSelectionEnabled(false);
   }
 
@@ -71,7 +70,7 @@ public class PackageViewPane extends AbstractProjectViewPaneWithAsyncSupport {
   }
 
   @Override
-  public @NotNull List<PsiElement> getElementsFromNode(@Nullable Object node) {
+  public @Unmodifiable @NotNull List<PsiElement> getElementsFromNode(@Nullable Object node) {
     Object o = getValueFromNode(node);
     if (o instanceof PackageElement) {
       PsiPackage aPackage = ((PackageElement)o).getPackage();
@@ -152,7 +151,7 @@ public class PackageViewPane extends AbstractProjectViewPaneWithAsyncSupport {
   protected @NotNull ProjectAbstractTreeStructureBase createStructure() {
     return new ProjectTreeStructure(myProject, ID){
       @Override
-      protected AbstractTreeNode createRoot(final @NotNull Project project, @NotNull ViewSettings settings) {
+      protected AbstractTreeNode<?> createRoot(final @NotNull Project project, @NotNull ViewSettings settings) {
         return new PackageViewProjectNode(project, settings);
       }
 
@@ -166,6 +165,7 @@ public class PackageViewPane extends AbstractProjectViewPaneWithAsyncSupport {
   @Override
   protected @NotNull ProjectViewTree createTree(@NotNull DefaultTreeModel treeModel) {
     return new ProjectViewTree(treeModel) {
+      @Override
       public String toString() {
         return getTitle() + " " + super.toString();
       }

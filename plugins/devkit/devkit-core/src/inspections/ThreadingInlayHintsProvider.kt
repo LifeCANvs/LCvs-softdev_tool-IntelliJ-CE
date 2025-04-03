@@ -18,7 +18,7 @@ import org.jetbrains.uast.toUElement
 internal class ThreadingInlayHintsProvider : InlayHintsProvider {
 
   override fun createCollector(file: PsiFile, editor: Editor): InlayHintsCollector? {
-    if (!DevKitInspectionUtil.isAllowed(file)) return null
+    if (!DevKitInspectionUtil.isAllowedIncludingTestSources(file)) return null
     if (!IntelliJProjectUtil.isIntelliJPlatformProject(file.project) && !Registry.`is`("devkit.inlay.threading")) return null
 
     if (JavaPsiFacade.getInstance(file.project).findClass(RequiresEdt::class.java.canonicalName, file.resolveScope) == null) return null
@@ -37,7 +37,7 @@ internal class ThreadingInlayHintsProvider : InlayHintsProvider {
         val offset = uCallExpression.methodIdentifier?.sourcePsi?.textRange?.startOffset ?: return@forEach
         sink.addPresentation(InlineInlayPosition(offset, true),
                              tooltip = "@${threadingStatus.getDisplayName()}",
-                             hasBackground = true) {
+                             hintFormat = HintFormat.default) {
           text("@${threadingStatus.shortName}")
         }
       }

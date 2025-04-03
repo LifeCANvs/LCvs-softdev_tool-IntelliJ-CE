@@ -2,7 +2,6 @@
 package com.intellij.gradle.toolingExtension.impl.model.dependencyModel.auxiliary;
 
 import org.gradle.api.artifacts.component.ComponentIdentifier;
-import org.gradle.api.component.Artifact;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -19,21 +18,30 @@ public class AuxiliaryConfigurationArtifacts {
 
   private static final Pattern PUNCTUATION_IN_SUFFIX_PATTERN = Pattern.compile("[\\p{Punct}\\s]+$");
 
-  private final @NotNull Map<ComponentIdentifier, Map<Class<? extends Artifact>, Set<File>>> libraryArtifacts;
+  private final @NotNull Map<ComponentIdentifier, Set<File>> sources;
+  private final @NotNull Map<ComponentIdentifier, Set<File>> javadocs;
 
-  public AuxiliaryConfigurationArtifacts(@NotNull Map<ComponentIdentifier, Map<Class<? extends Artifact>, Set<File>>> libraryArtifacts) {
-    this.libraryArtifacts = libraryArtifacts;
+  public AuxiliaryConfigurationArtifacts(@NotNull Map<ComponentIdentifier, Set<File>> sources,
+                                         @NotNull Map<ComponentIdentifier, Set<File>> javadocs
+  ) {
+    this.sources = sources;
+    this.javadocs = javadocs;
   }
 
-  public @Nullable File getArtifact(@NotNull ComponentIdentifier identifier,
-                                    @NotNull File artifactFile,
-                                    @NotNull Class<? extends Artifact> artifactType
+  public @Nullable File getJavadoc(@NotNull ComponentIdentifier identifier,
+                                   @NotNull File artifactFile
   ) {
-    Map<Class<? extends Artifact>, Set<File>> artifacts = libraryArtifacts.get(identifier);
-    if (artifacts == null) {
+    Set<File> files = javadocs.get(identifier);
+    if (files == null) {
       return null;
     }
-    Set<File> files = artifacts.get(artifactType);
+    return chooseAuxiliaryArtifactFile(artifactFile, files);
+  }
+
+  public @Nullable File getSources(@NotNull ComponentIdentifier identifier,
+                                   @NotNull File artifactFile
+  ) {
+    Set<File> files = sources.get(identifier);
     if (files == null) {
       return null;
     }

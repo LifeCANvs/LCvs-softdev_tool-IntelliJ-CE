@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.ui.branch.popup
 
 import com.intellij.dvcs.DvcsUtil
@@ -22,16 +22,18 @@ import git4idea.GitBranch
 import git4idea.GitReference
 import git4idea.GitTag
 import git4idea.GitVcs
-import git4idea.actions.branch.GitBranchActionsUtil
+import git4idea.actions.branch.GitBranchActionsDataKeys
 import git4idea.actions.branch.GitBranchActionsUtil.userWantsSyncControl
 import git4idea.repo.GitRefUtil
 import git4idea.repo.GitRepository
+import git4idea.ui.branch.GIT_SINGLE_REF_ACTION_GROUP
 import git4idea.ui.branch.GitBranchPopupActions.EXPERIMENTAL_BRANCH_POPUP_ACTION_GROUP
 import git4idea.ui.branch.popup.GitBranchesTreePopupBase.Companion.TOP_LEVEL_ACTION_PLACE
 import git4idea.ui.branch.tree.*
+import org.intellij.lang.annotations.Language
 import javax.swing.JComponent
 
-class GitBranchesTreePopupStep(
+internal class GitBranchesTreePopupStep(
   project: Project,
   selectedRepository: GitRepository?,
   repositories: List<GitRepository>,
@@ -66,18 +68,17 @@ class GitBranchesTreePopupStep(
     private set
 
   override fun createTreeModel(filterActive: Boolean): GitBranchesTreeModel {
-    return when {
-      !filterActive && repositories.size > 1
-      && !userWantsSyncControl(project) && selectedRepository != null -> {
+    val model = when {
+      !filterActive && repositories.size > 1 && !userWantsSyncControl(project) && selectedRepository != null -> {
         GitBranchesTreeSelectedRepoModel(project, selectedRepository, repositories, topLevelItems)
-          .apply(GitBranchesTreeSelectedRepoModel::init)
       }
       filterActive && repositories.size > 1 -> {
-        GitBranchesTreeMultiRepoFilteringModel(project, repositories, topLevelItems).apply(GitBranchesTreeMultiRepoFilteringModel::init)
+        GitBranchesTreeMultiRepoFilteringModel(project, repositories, topLevelItems)
       }
       !filterActive && repositories.size > 1 -> GitBranchesTreeMultiRepoModel(project, repositories, topLevelItems)
-      else -> GitBranchesTreeSingleRepoModel(project, repositories.first(), topLevelItems).apply(GitBranchesTreeSingleRepoModel::init)
+      else -> GitBranchesTreeSingleRepoModel(project, repositories.first(), topLevelItems)
     }
+    return model.apply(GitBranchesTreeModel::init)
   }
 
   override fun setTreeModel(treeModel: GitBranchesTreeModel) {
@@ -99,7 +100,7 @@ class GitBranchesTreePopupStep(
     val reference = selectedValue as? GitReference ?: refUnderRepository?.ref
 
     if (reference != null) {
-      val actionGroup = ActionManager.getInstance().getAction(BRANCH_ACTION_GROUP) as? ActionGroup ?: DefaultActionGroup()
+      val actionGroup = ActionManager.getInstance().getAction(GIT_SINGLE_REF_ACTION_GROUP) as? ActionGroup ?: DefaultActionGroup()
       return createActionStep(actionGroup, project, selectedRepository,
                               refUnderRepository?.repository?.let(::listOf) ?: affectedRepositories, reference)
     }
@@ -141,7 +142,9 @@ class GitBranchesTreePopupStep(
   }
 
   companion object {
+    @Language("devkit-action-id")
     private const val TOP_LEVEL_ACTION_GROUP = "Git.Branches.List"
+    @Language("devkit-action-id")
     private const val BRANCH_ACTION_GROUP = "Git.Branch"
 
     internal val SINGLE_REPOSITORY_ACTION_PLACE = ActionPlaces.getPopupPlace("GitBranchesPopup.SingleRepo.Branch.Actions")
@@ -192,15 +195,14 @@ class GitBranchesTreePopupStep(
       CustomizedDataContext.withSnapshot(
         DataManager.getInstance().getDataContext(component)) { sink ->
         sink[CommonDataKeys.PROJECT] = project
-        sink[GitBranchActionsUtil.REPOSITORIES_KEY] = repositories
-        sink[GitBranchActionsUtil.SELECTED_REPO_KEY] = selectedRepository
+        sink[GitBranchActionsDataKeys.AFFECTED_REPOSITORIES] = repositories
+        sink[GitBranchActionsDataKeys.SELECTED_REPOSITORY] = selectedRepository
         if (reference is GitBranch) {
-          sink[GitBranchActionsUtil.BRANCHES_KEY] = listOf(reference)
+          sink[GitBranchActionsDataKeys.BRANCHES] = listOf(reference)
         }
         else if (reference is GitTag) {
-          sink[GitBranchActionsUtil.TAGS_KEY] = listOf(reference)
+          sink[GitBranchActionsDataKeys.TAGS] = listOf(reference)
         }
-        sink[GitBranchActionsUtil.BRANCHES_KEY] = (reference as? GitBranch)?.let(::listOf)
       }
   }
 }

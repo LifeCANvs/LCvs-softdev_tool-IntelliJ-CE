@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.breakpoints;
 
 import com.intellij.codeInsight.daemon.GutterMark;
@@ -39,9 +39,7 @@ import com.intellij.xdebugger.breakpoints.SuspendPolicy;
 import com.intellij.xdebugger.breakpoints.XBreakpoint;
 import com.intellij.xdebugger.breakpoints.XBreakpointProperties;
 import com.intellij.xdebugger.breakpoints.XBreakpointType;
-import com.intellij.xdebugger.impl.DebuggerSupport;
 import com.intellij.xdebugger.impl.XDebugSessionImpl;
-import com.intellij.xdebugger.impl.XDebuggerSupport;
 import com.intellij.xdebugger.impl.XDebuggerUtilImpl;
 import com.intellij.xdebugger.impl.actions.EditBreakpointAction;
 import com.intellij.xdebugger.impl.breakpoints.ui.BreakpointsDialogFactory;
@@ -59,7 +57,7 @@ import static com.intellij.xdebugger.XDebuggerUtil.INLINE_BREAKPOINTS_KEY;
 
 @ApiStatus.Internal
 public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointProperties, S extends BreakpointState> extends UserDataHolderBase implements XBreakpoint<P>, Comparable<Self> {
-  @NonNls private static final String BR_NBSP = "<br>" + CommonXmlStrings.NBSP;
+  private static final @NonNls String BR_NBSP = "<br>" + CommonXmlStrings.NBSP;
   private final XBreakpointType<Self, P> myType;
   private final @Nullable P myProperties;
   protected final S myState;
@@ -141,8 +139,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
   }
 
   @Override
-  @NotNull
-  public SuspendPolicy getSuspendPolicy() {
+  public @NotNull SuspendPolicy getSuspendPolicy() {
     return myState.getSuspendPolicy();
   }
 
@@ -211,7 +208,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
   }
 
   @Override
-  public void setLogExpression(@Nullable final String expression) {
+  public void setLogExpression(final @Nullable String expression) {
     if (!Objects.equals(getLogExpression(), expression)) {
       myLogExpression = XExpressionImpl.fromText(expression);
       fireBreakpointChanged();
@@ -222,9 +219,8 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     return myLogExpression;
   }
 
-  @Nullable
   @Override
-  public XExpression getLogExpressionObject() {
+  public @Nullable XExpression getLogExpressionObject() {
     return myLogExpressionEnabled ? myLogExpression : null;
   }
 
@@ -242,7 +238,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
   }
 
   @Override
-  public void setCondition(@Nullable final String condition) {
+  public void setCondition(final @Nullable String condition) {
     if (!Objects.equals(condition, getCondition())) {
       myCondition = XExpressionImpl.fromText(condition);
       fireBreakpointChanged();
@@ -253,9 +249,8 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     return myCondition;
   }
 
-  @Nullable
   @Override
-  public XExpression getConditionExpression() {
+  public @Nullable XExpression getConditionExpression() {
     return myConditionEnabled ? myCondition : null;
   }
 
@@ -277,14 +272,12 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
   }
 
   @Override
-  @Nullable
-  public P getProperties() {
+  public @Nullable P getProperties() {
     return myProperties;
   }
 
   @Override
-  @NotNull
-  public XBreakpointType<Self,P> getType() {
+  public @NotNull XBreakpointType<Self,P> getType() {
     return myType;
   }
 
@@ -306,8 +299,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     myState.setDependencyState(state);
   }
 
-  @Nullable
-  public String getGroup() {
+  public @Nullable String getGroup() {
     return myState.getGroup();
   }
 
@@ -315,8 +307,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     myState.setGroup(StringUtil.nullize(group));
   }
 
-  @NlsSafe
-  public String getUserDescription() {
+  public @NlsSafe String getUserDescription() {
     return myState.getDescription();
   }
 
@@ -341,8 +332,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     return "XBreakpointBase(type=" + myType + ")";
   }
 
-  @Nullable
-  protected GutterDraggableObject createBreakpointDraggableObject() {
+  protected @Nullable GutterDraggableObject createBreakpointDraggableObject() {
     return null;
   }
 
@@ -378,9 +368,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
    * Formatted as HTML document.
    * Primarily used for tooltip in the editor.
    */
-  @NotNull
-  @Nls
-  public String getDescription() {
+  public @NotNull @Nls String getDescription() {
     StringBuilder builder = new StringBuilder();
     builder.append(CommonXmlStrings.HTML_START).append(CommonXmlStrings.BODY_START);
     LineSeparator separator = new LineSeparator(builder);
@@ -476,8 +464,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     }
   }
 
-  @Nullable
-  protected final Icon calculateSpecialIcon() {
+  protected final @Nullable Icon calculateSpecialIcon() {
     XDebugSessionImpl session = getBreakpointManager().getDebuggerManager().getCurrentSession();
     if (!isEnabled()) {
       if (session != null && session.areBreakpointsMuted()) {
@@ -529,8 +516,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     return myIcon;
   }
 
-  @Nullable
-  public String getErrorMessage() {
+  public @Nullable String getErrorMessage() {
     final XDebugSessionImpl currentSession = getBreakpointManager().getDebuggerManager().getCurrentSession();
     if (currentSession != null) {
       CustomizedBreakpointPresentation presentation = currentSession.getBreakpointPresentation(this);
@@ -550,8 +536,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     myCustomizedPresentation = presentation;
   }
 
-  @NotNull
-  public GutterIconRenderer createGutterIconRenderer() {
+  public @NotNull GutterIconRenderer createGutterIconRenderer() {
     return new BreakpointGutterIconRenderer();
   }
 
@@ -564,24 +549,21 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     return myType.getBreakpointComparator().compare((Self)this, self);
   }
 
-  protected static abstract class CommonBreakpointGutterIconRenderer extends GutterIconRenderer {
-    @NotNull
+  protected abstract static class CommonBreakpointGutterIconRenderer extends GutterIconRenderer {
     @Override
-    public Alignment getAlignment() {
+    public @NotNull Alignment getAlignment() {
       return ExperimentalUI.isNewUI() && EditorUtil.isBreakPointsOnLineNumbers() ? Alignment.LINE_NUMBERS : Alignment.RIGHT;
     }
   }
 
   protected class BreakpointGutterIconRenderer extends CommonBreakpointGutterIconRenderer implements DumbAware {
     @Override
-    @NotNull
-    public Icon getIcon() {
+    public @NotNull Icon getIcon() {
       return XBreakpointBase.this.getIcon();
     }
 
-    @NotNull
     @Override
-    public String getAccessibleName() {
+    public @NotNull String getAccessibleName() {
       // [tav] todo: add "hit" state
       return XDebuggerBundle.message("accessible.name.icon.0.1.2", getType().getTitle(),
                                      getCondition() != null ? " " + XDebuggerBundle.message("accessible.name.icon.conditional") : "",
@@ -589,8 +571,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     }
 
     @Override
-    @Nullable
-    public AnAction getClickAction() {
+    public @Nullable AnAction getClickAction() {
       if (Registry.is("debugger.click.disable.breakpoints")) {
         return new ToggleBreakpointGutterIconAction(XBreakpointBase.this);
       } else {
@@ -599,8 +580,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     }
 
     @Override
-    @Nullable
-    public AnAction getMiddleButtonClickAction() {
+    public @Nullable AnAction getMiddleButtonClickAction() {
       if (!Registry.is("debugger.click.disable.breakpoints")) {
         return new ToggleBreakpointGutterIconAction(XBreakpointBase.this);
       } else {
@@ -608,21 +588,18 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
       }
     }
 
-    @Nullable
     @Override
-    public AnAction getRightButtonClickAction() {
-      return new EditBreakpointAction.ContextAction(this, XBreakpointBase.this, DebuggerSupport.getDebuggerSupport(XDebuggerSupport.class));
+    public @Nullable AnAction getRightButtonClickAction() {
+      return new EditBreakpointAction.ContextAction(this, XBreakpointBase.this);
     }
 
-    @Nullable
     @Override
-    public ActionGroup getPopupMenuActions() {
+    public @Nullable ActionGroup getPopupMenuActions() {
       return new DefaultActionGroup(getAdditionalPopupMenuActions(getBreakpointManager().getDebuggerManager().getCurrentSession()));
     }
 
     @Override
-    @Nullable
-    public String getTooltipText() {
+    public @Nullable String getTooltipText() {
       return getDescription();
     }
 
@@ -672,9 +649,8 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
       }
     }
 
-    @NotNull
     @Override
-    public String getAccessibleName() {
+    public @NotNull String getAccessibleName() {
       return super.getAccessibleName();
     }
 
@@ -703,8 +679,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     }
 
     @Override
-    @Nullable
-    public AnAction getClickAction() {
+    public @Nullable AnAction getClickAction() {
       if (Registry.is("debugger.click.disable.breakpoints")) {
         return createToggleAction();
       } else {
@@ -713,8 +688,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     }
 
     @Override
-    @Nullable
-    public AnAction getMiddleButtonClickAction() {
+    public @Nullable AnAction getMiddleButtonClickAction() {
       if (!Registry.is("debugger.click.disable.breakpoints")) {
         return createToggleAction();
       } else {
@@ -722,9 +696,8 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
       }
     }
 
-    @Nullable
     @Override
-    public AnAction getRightButtonClickAction() {
+    public @Nullable AnAction getRightButtonClickAction() {
       // This gutter's actions are not collected to any menu, so we use SimpleAction.
       return DumbAwareAction.create(e -> {
         var project = e.getProject();
@@ -736,9 +709,8 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
       });
     }
 
-    @Nullable
     @Override
-    public ActionGroup getPopupMenuActions() {
+    public @Nullable ActionGroup getPopupMenuActions() {
       // TODO[inline-bp]: show some menu with the list of all breakpoints with some actions for them (remove, edit, ...)
       // TODO[inline-bp]: alt+enter actions are completely broken for multiple breakpoints:
       //                   all actions are mixed and it's hard to separate them
@@ -749,8 +721,7 @@ public class XBreakpointBase<Self extends XBreakpoint<P>, P extends XBreakpointP
     }
 
     @Override
-    @Nullable
-    public String getTooltipText() {
+    public @Nullable String getTooltipText() {
       return XDebuggerBundle.message("xbreakpoint.tooltip.multiple");
     }
 

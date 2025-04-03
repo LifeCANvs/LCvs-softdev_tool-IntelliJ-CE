@@ -1,15 +1,12 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.actions.searcheverywhere
 
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.Experiments
 import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import com.intellij.testFramework.fixtures.BasePlatformTestCase.*
+import com.intellij.testFramework.fixtures.BasePlatformTestCase.assertNotNull
+import com.intellij.testFramework.fixtures.BasePlatformTestCase.assertTrue
 import com.intellij.util.Alarm
 import com.intellij.util.Processor
-import org.codehaus.groovy.runtime.DefaultGroovyMethods
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
@@ -18,18 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.ListCellRenderer
 
 private const val MORE_ITEM = "...MORE"
-private const val MIXED_RESULTS_FEATURE = "search.everywhere.mixed.results"
 
 @RunWith(com.intellij.testFramework.Parameterized::class)
 class MixingMultiThreadSearchTest : BasePlatformTestCase() {
-  override fun setUp() {
-    super.setUp()
-    val experiments = Experiments.getInstance()
-    val mixedResultsWereEnabled = experiments.isFeatureEnabled(MIXED_RESULTS_FEATURE)
-    experiments.setFeatureEnabled(MIXED_RESULTS_FEATURE, true)
-    Disposer.register(testRootDisposable, Disposable { experiments.setFeatureEnabled(MIXED_RESULTS_FEATURE, mixedResultsWereEnabled) })
-  }
-
   @JvmField
   @Parameterized.Parameter(0)
   var testName: String? = null
@@ -44,7 +32,7 @@ class MixingMultiThreadSearchTest : BasePlatformTestCase() {
     val collector = SearchResultsCollector()
     val alarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, testRootDisposable)
     val searcher = MixedResultsSearcher(collector,
-                                        Executor { command -> DefaultGroovyMethods.invokeMethod(alarm, "addRequest", arrayOf(command, 0)) },
+                                        Executor { command -> alarm.addRequest(command, 0) },
                                         setOf(TrivialElementsEqualityProvider()))
     val indicator = searcher.search(scenario.contributorsAndLimits, "tst")
 

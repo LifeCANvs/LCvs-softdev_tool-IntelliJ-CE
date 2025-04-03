@@ -13,7 +13,10 @@ import com.intellij.execution.wsl.rootMappings
 import com.intellij.execution.wsl.runCommand
 import com.intellij.execution.wsl.sync.WslSync
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.util.Computable
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.registry.Registry
@@ -22,8 +25,11 @@ import java.io.IOException
 import java.net.InetAddress
 import java.nio.file.Path
 import java.util.*
+import kotlin.Throws
 
 private const val LOCALHOST = "localhost"
+
+private val LOG = logger<WslTargetEnvironment>()
 
 class WslTargetEnvironment(override val request: WslTargetEnvironmentRequest,
                            private val distribution: WSLDistribution) : TargetEnvironment(request), ExternallySynchronized {
@@ -123,7 +129,9 @@ class WslTargetEnvironment(override val request: WslTargetEnvironmentRequest,
     request.wslOptions.remoteWorkingDirectory = commandLine.workingDirectory
     generalCommandLine.withRedirectErrorStream(commandLine.isRedirectErrorStream)
     distribution.patchCommandLine(generalCommandLine, null, request.wslOptions)
-    return generalCommandLine.createProcess().apply {
+
+    val process = ProgressManager.getInstance().runProcess(Computable<Process> { generalCommandLine.createProcess() }, EmptyProgressIndicator())
+    return process.apply {
       onExit().whenCompleteAsync { _, _ ->
         proxies.forEach { Disposer.dispose(it.value) }
         proxies.clear()
@@ -178,9 +186,5 @@ class WslTargetEnvironment(override val request: WslTargetEnvironmentRequest,
         LOG.warn("Path $path was not found on local filesystem")
       }
     }
-  }
-
-  companion object {
-    val LOG = logger<WslTargetEnvironment>()
   }
 }

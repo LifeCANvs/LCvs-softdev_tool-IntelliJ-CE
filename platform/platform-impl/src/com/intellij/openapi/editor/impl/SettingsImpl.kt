@@ -511,6 +511,10 @@ class SettingsImpl internal constructor(private val editor: EditorImpl?, kind: E
     state.myIsWheelFontChangeEnabled = `val`
   }
 
+  override fun resetWheelFontChangeEnabled() {
+    state.clearOverriding(state::myIsWheelFontChangeEnabled)
+  }
+
   override fun isMouseClickSelectionHonorsCamelWords(): Boolean {
     return state.myIsMouseClickSelectionHonorsCamelWords
   }
@@ -649,6 +653,14 @@ class SettingsImpl internal constructor(private val editor: EditorImpl?, kind: E
 
   override fun getStickyLinesLimit(): Int {
     return state.myStickyLinesLimit
+  }
+
+  override fun getCharacterGridWidthMultiplier(): Float? {
+    return state.characterGridWidth
+  }
+
+  override fun setCharacterGridWidthMultiplier(value: Float?) {
+    state.characterGridWidth = value
   }
 
   @ApiStatus.Internal

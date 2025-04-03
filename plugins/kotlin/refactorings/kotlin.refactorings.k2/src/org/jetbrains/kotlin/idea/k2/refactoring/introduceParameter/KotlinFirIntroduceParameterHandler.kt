@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.refactoring.introduceParameter
 
 import com.intellij.CommonBundle
@@ -11,6 +11,8 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.searches.ReferencesSearch
+import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.util.parentOfType
 import com.intellij.refactoring.RefactoringActionHandler
 import com.intellij.refactoring.RefactoringBundle
 import com.intellij.refactoring.changeSignature.ChangeSignatureProcessor
@@ -83,7 +85,7 @@ open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduc
         targetParent.getValueParameters()
             .filter { !it.hasValOrVar() }
             .forEach {
-                val paramUsages = ReferencesSearch.search(it).map { reference -> reference.element as KtElement }
+                val paramUsages = ReferencesSearch.search(it).asIterable().map { reference -> reference.element as KtElement }
                 if (paramUsages.isNotEmpty()) {
                     usages.put(it, paramUsages)
                 }
@@ -159,7 +161,7 @@ open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduc
             suggestedNames.addAll(KotlinNameSuggester.suggestNamesByType(expressionType, targetParent, nameValidator, "p"))
             suggestedNames
         }
-        addParameter(project, editor, expression, targetParent, expressionTypeEvaluator, nameSuggester)
+        addParameter(project, editor, expression, expression, targetParent, expressionTypeEvaluator, nameSuggester)
     }
 
     /**
@@ -167,7 +169,16 @@ open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduc
      * (to be reused in "create parameter from usage" where both type and name are fixed, and computed a bit differently from the regular "introduce parameter")
      */
     @OptIn(KaExperimentalApi::class)
-    fun addParameter(project: Project, editor: Editor, expression: KtExpression, targetParent: KtNamedDeclaration, expressionTypeEvaluator: KaSession.()->KaType?, nameSuggester:  KaSession.(KaType)->List<String>) {
+    fun addParameter(
+        project: Project,
+        editor: Editor,
+        expression: KtExpression,
+        argumentValue: KtExpression?,
+        targetParent: KtNamedDeclaration,
+        expressionTypeEvaluator: KaSession.() -> KaType?,
+        nameSuggester: KaSession.(KaType) -> List<String>,
+        silently: Boolean = false,
+    ) {
         val physicalExpression = expression.substringContextOrThis
         if (physicalExpression is KtProperty && physicalExpression.isLocal && physicalExpression.nameIdentifier == null) {
             showErrorHintByKey(project, editor, "cannot.refactor.no.expression", INTRODUCE_PARAMETER)
@@ -202,7 +213,7 @@ open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduc
                 ?: Collections.emptyList()
 
             val occurrencesToReplace = if (expression is KtProperty) {
-                ReferencesSearch.search(expression).mapNotNullTo(SmartList(expression.toRange())) { it.element.toRange() }
+                ReferencesSearch.search(expression).asIterable().mapNotNullTo(SmartList(expression.toRange())) { it.element.toRange() }
             } else {
                 K2SemanticMatcher.findMatches(patternElement = expression, scopeElement = targetParent)
                     .filterNot {
@@ -227,7 +238,8 @@ open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduc
                 expressionType,
                 parametersUsages,
                 occurrencesToReplace,
-                psiFactory
+                psiFactory,
+                argumentValue
             ) to expressionType
         }
 
@@ -255,8 +267,9 @@ open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduc
                         && !haveLambdaArgumentsToReplace
                         && expression.extractableSubstringInfo == null
                         && !expression.mustBeParenthesizedInInitializerPosition()
+                        && PsiTreeUtil.isAncestor(introduceParameterDescriptor.callableDescriptor, physicalExpression, true)
 
-                if (isTestMode) {
+                if (isTestMode || silently) {
                     introduceParameterDescriptor.performRefactoring(editor = editor)
                     return
                 }
@@ -325,7 +338,8 @@ open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduc
         replacementType: KaType,
         parametersUsages: MultiMap<KtElement, KtElement>,
         occurrencesToReplace: List<KotlinPsiRange>,
-        psiFactory: KtPsiFactory
+        psiFactory: KtPsiFactory,
+        argumentValue: KtExpression?
     ): IntroduceParameterDescriptor<KtNamedDeclaration> = helper.configure(
         IntroduceParameterDescriptor(
             originalRange = originalExpression.toRange(),
@@ -337,7 +351,7 @@ open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduc
                     functionalTypeRenderer = KaFunctionalTypeRenderer.AS_FUNCTIONAL_TYPE
                 }, position = Variance.IN_VARIANCE)
             },
-            argumentValue = originalExpression,
+            argumentValue = argumentValue,
             withDefaultValue = false,
             parametersUsages = parametersUsages,
             occurrencesToReplace = occurrencesToReplace,
@@ -486,7 +500,12 @@ fun IntroduceParameterDescriptor<KtNamedDeclaration>.performRefactoring(editor: 
         defaultValue = if (withDefaultValue) defaultValue else null,
         context = targetCallable
     )
-    changeInfo.addParameter(parameterInfo)
+
+    val containingParameter = originalRange.elements.firstOrNull()?.parentOfType<KtParameter>()
+
+    val targetParameterIndex = containingParameter?.let { (callable as? KtFunction)?.valueParameterList?.parameters?.indexOf(containingParameter) } ?: -1
+
+    changeInfo.addParameter(parameterInfo, targetParameterIndex)
 
     object : KotlinChangeSignatureProcessor(targetCallable.project, changeInfo) {
         override fun performRefactoring(usages: Array<out UsageInfo?>) {

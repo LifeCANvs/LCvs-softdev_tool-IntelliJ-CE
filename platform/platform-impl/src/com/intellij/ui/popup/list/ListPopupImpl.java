@@ -35,6 +35,7 @@ import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.accessibility.ScreenReader;
 import kotlin.Unit;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,6 +74,8 @@ public class ListPopupImpl extends WizardPopup implements ListPopup, NextStepHan
   private boolean myAutoHandleBeforeShow;
   private boolean myShowSubmenuOnHover;
   private boolean myExecuteExpandedItemOnClick;
+  private boolean myRepackWhenEmptyStateChanges;
+  private @Nullable Dimension myNonEmptySize;
 
   /**
    * @deprecated use {@link #ListPopupImpl(Project, ListPopupStep)}
@@ -459,7 +462,12 @@ public class ListPopupImpl extends WizardPopup implements ListPopup, NextStepHan
     boolean selectable = listStep.isSelectable(selectedValue);
     boolean preferExecution = listStep.isFinal(selectedValue) && selectable && handleFinalChoices;
     if (!myExecuteExpandedItemOnClick && !preferExecution && myList.getSelectedIndex() == getIndexForShowingChild()) {
-      if (myChild != null && !myChild.isVisible()) setIndexForShowingChild(-1);
+      // child was closed by StackingPopupDispatcherImpl by this very event
+      // we should not re-open it again
+      // BUG IJPL-180199: this will also happen if child was closed by an earlier 'Escape' key press event
+      if (myChild != null && !myChild.isVisible()) {
+        setIndexForShowingChild(-1);
+      }
       return false;
     }
     if (!selectable) return false;
@@ -930,16 +938,38 @@ public class ListPopupImpl extends WizardPopup implements ListPopup, NextStepHan
     return -1;
   }
 
+  @ApiStatus.Internal
+  public void setRepackWhenEmptyStateChanges(boolean repackWhenEmptyStateChanges) {
+    this.myRepackWhenEmptyStateChanges = repackWhenEmptyStateChanges;
+  }
+
   @Override
   protected void onSpeedSearchPatternChanged() {
+    boolean wasEmpty = myListModel.getSize() == 0;
     ListPopupStep<?> step = getListStep();
     if (step instanceof FilterableListPopupStep<?> o) {
       o.updateFilter(mySpeedSearch.getFilter());
     }
+    var before = myListModel.getSize();
     myListModel.refilter();
+    var after = myListModel.getSize();
+    var fusActivity = ActionGroupPopupActivity.getCurrentActivity(this);
+    if (fusActivity != null) {
+      fusActivity.filtered(StringUtil.length(mySpeedSearch.getFilter()), before, after);
+    }
+    boolean nowEmpty = myListModel.getSize() == 0;
     if (myListModel.getSize() > 0) {
       if (!(shouldUseStatistics() && autoSelectUsingStatistics())) {
         selectBestMatch();
+      }
+    }
+    if (myRepackWhenEmptyStateChanges && wasEmpty != nowEmpty) {
+      if (nowEmpty) {
+        myNonEmptySize = getSize();
+        pack(false, true);
+      }
+      else if (myNonEmptySize != null) {
+        setSize(myNonEmptySize);
       }
     }
   }

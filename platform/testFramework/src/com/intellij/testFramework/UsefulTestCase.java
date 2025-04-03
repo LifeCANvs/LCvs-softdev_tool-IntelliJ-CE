@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.testFramework;
 
 import com.intellij.codeInsight.CodeInsightSettings;
@@ -17,6 +17,7 @@ import com.intellij.openapi.util.JDOMUtil;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.registry.Registry;
+import com.intellij.openapi.util.registry.RegistryValue;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.util.text.Strings;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -29,6 +30,7 @@ import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.impl.source.PostprocessReformattingAspect;
 import com.intellij.testFramework.common.TestApplicationKt;
+import com.intellij.testFramework.common.TestEnvironmentKt;
 import com.intellij.testFramework.common.ThreadUtil;
 import com.intellij.testFramework.fixtures.IdeaTestExecutionPolicy;
 import com.intellij.ui.IconManager;
@@ -69,6 +71,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiPredicate;
 import java.util.function.Supplier;
 
+import static com.intellij.testFramework.TestLoggerKt.recordErrorsLoggedInTheCurrentThreadAndReportThemAsFailures;
 import static com.intellij.testFramework.common.Cleanup.cleanupSwingDataStructures;
 import static com.intellij.testFramework.common.TestEnvironmentKt.initializeTestEnvironment;
 import static org.junit.Assume.assumeTrue;
@@ -503,7 +506,13 @@ Most likely there was an uncaught exception in asynchronous execution that resul
   protected void runBare(@NotNull ThrowableRunnable<Throwable> testRunnable) throws Throwable {
     ThrowableRunnable<Throwable> wrappedRunnable = wrapTestRunnable(testRunnable);
     if (runInDispatchThread()) {
-      UITestUtil.replaceIdeEventQueueSafely();
+      try {
+        UITestUtil.replaceIdeEventQueueSafely();
+      }
+      catch (IllegalAccessError e) {
+        TestEnvironmentKt.checkAddOpens();
+        throw e;
+      }
       EdtTestUtil.runInEdtAndWait(() -> defaultRunBare(wrappedRunnable));
     }
     else if (runFromCoroutine()) {
@@ -522,7 +531,7 @@ Most likely there was an uncaught exception in asynchronous execution that resul
       boolean success = false;
       TestLoggerFactory.onTestStarted();
       try {
-        testRunnable.run();
+        recordErrorsLoggedInTheCurrentThreadAndReportThemAsFailures(testRunnable);
         success = true;
       }
       catch (AssumptionViolatedException e) {
@@ -755,8 +764,7 @@ Most likely there was an uncaught exception in asynchronous execution that resul
     assertSameElements(messageForCollection(message, collection), collection, expected);
   }
 
-  @NotNull
-  private static <T> String messageForCollection(@NotNull String message, @NotNull Collection<? extends T> collection) {
+  private static @NotNull <T> String messageForCollection(@NotNull String message, @NotNull Collection<? extends T> collection) {
     return (message.isBlank() ? "" : message + "\n") + toString(collection);
   }
 
@@ -1232,8 +1240,14 @@ Most likely there was an uncaught exception in asynchronous execution that resul
   }
 
   protected void setRegistryPropertyForTest(@NotNull String property, @SuppressWarnings("SameParameterValue") @NotNull String value) {
-    Registry.get(property).setValue(value);
-    Disposer.register(getTestRootDisposable(), () -> Registry.get(property).resetToDefault());
+    RegistryValue registryValue = Registry.get(property);
+    if (registryValue.isMultiValue()) {
+      registryValue.setSelectedOption(value);
+    }
+    else {
+      registryValue.setValue(value);
+    }
+    Disposer.register(getTestRootDisposable(), () -> registryValue.resetToDefault());
   }
 
   protected void allowAccessToDirsIfExists(@NotNull String @NotNull ... dirNames) {

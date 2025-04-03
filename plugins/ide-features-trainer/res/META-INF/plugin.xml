@@ -11,9 +11,10 @@
     </p>
     <p/>
     <p>Found a bug or have a feature to suggest? Welcome to the tracker: <a href="https://youtrack.jetbrains.com/newIssue?project=IFT&description=**Description%3A**%20_Write%20description%20here_%0A%0A**Plugin%20version%3A**%20_Write%20plugin%20version%20here_">https://youtrack.jetbrains.com/issues/IFT</a></p>
-    ]]></description>
+  ]]></description>
 
   <dependencies>
+    <module name="intellij.platform.tips"/>
     <plugin id="com.intellij.modules.lang"/>
     <module name="intellij.platform.lvcs.impl"/>
   </dependencies>
@@ -73,9 +74,8 @@
     <applicationService serviceImplementation="training.learn.lesson.LessonStateBase"/>
     <toolWindow id="Learn"
                 canCloseContents="true"
-                icon="training.FeaturesTrainerIcons.FeatureTrainerToolWindow"
-                factoryClass="training.ui.LearnToolWindowFactory"
-    />
+                icon="AllIcons.Toolwindows.Learn"
+                factoryClass="training.ui.LearnToolWindowFactory"/>
 
     <applicationConfigurable groupId="tools" bundle="messages.LearnBundle" key="learn.options.panel.name" id="FeaturesTrainerSettingsPanel"
                              instance="training.ui.FeaturesTrainerSettingsPanel"/>
@@ -91,8 +91,10 @@
       <action internal="true" id="AutorunCurrentLesson" class="training.actions.AutorunCurrentLesson"/>
       <action internal="true" id="SetCurrentLessonAsPassed" class="training.actions.SetCurrentLessonAsPassed"/>
       <action internal="true" id="ResetOnboardingFeedbackState" class="training.actions.ResetOnboardingFeedbackStateAction"/>
+      <action internal="true" id="ShowDemoAltClickPromoter" class="training.featuresSuggester.suggesters.promo.ShowDemoAltClickPromoterAction"/>
       <add-to-group group-id="Internal" anchor="last"/>
     </group>
+
 
     <action id="PreviousLessonAction" class="training.actions.PreviousLessonAction"
             icon="AllIcons.Actions.Back"/>
@@ -101,16 +103,16 @@
     <action id="ResetLearningProgressAction" class="training.actions.ResetLearningProgressAction"
             icon="AllIcons.Actions.Restart"/>
     <action id="RestartLessonAction" class="training.actions.RestartLessonAction"
-            icon="training.FeaturesTrainerIcons.ResetLesson"/>
+            icon="AllIcons.General.Reset"/>
 
-    <action id="ShowLearnPanel" class="training.actions.OpenLearnPanel" icon="training.FeaturesTrainerIcons.FeatureTrainerToolWindow">
+    <action id="ShowLearnPanel" class="training.actions.OpenLearnPanel" icon="AllIcons.Toolwindows.Learn">
       <add-to-group group-id="LearnGroup"/>
     </action>
   </actions>
 
   <extensions defaultExtensionNs="com.intellij">
     <registryKey key="ift.short.onboarding.lesson"
-                 description="Use short onborading lesson followed after UI overview"
+                 description="Use short onboarding lesson followed after UI overview"
                  defaultValue="TRUE"
                  restartRequired="true"/>
     <registryKey key="ift.help.links"
@@ -146,10 +148,6 @@
                  defaultValue="FALSE"
                  restartRequired="false"/>
   </extensions>
-
-
-
-  <!--FEATURES SUGGESTER PART-->
 
   <extensionPoints>
     <extensionPoint name="ifs.suggester" interface="training.featuresSuggester.suggesters.FeatureSuggester" dynamic="true"/>
@@ -188,8 +186,7 @@
   </extensions>
 
   <extensions defaultExtensionNs="com.intellij">
-    <applicationService
-      serviceImplementation="training.featuresSuggester.settings.FeatureSuggesterSettings"/>
+    <applicationService serviceImplementation="training.featuresSuggester.settings.FeatureSuggesterSettings"/>
     <applicationConfigurable parentId="tools"
                              instance="training.featuresSuggester.settings.FeatureSuggesterConfigurable"
                              id="org.intellij.featuresSuggester.FeatureSuggesterConfigurable"

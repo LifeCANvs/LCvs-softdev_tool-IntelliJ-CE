@@ -1,4 +1,4 @@
-// Copyright 2000-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.idea.maven.tasks;
 
 import com.intellij.icons.AllIcons;
@@ -108,7 +108,7 @@ public final class MavenKeymapExtension implements ExternalSystemKeymapExtension
     return result;
   }
 
-  static void updateActions(Project project, List<? extends MavenProject> mavenProjects) {
+  static void updateActions(Project project, List<MavenProject> mavenProjects) {
     clearActions(project, mavenProjects);
     createActions(project, mavenProjects);
   }
@@ -124,7 +124,7 @@ public final class MavenKeymapExtension implements ExternalSystemKeymapExtension
     return mavenGoalAction;
   }
 
-  private static void createActions(Project project, List<? extends MavenProject> mavenProjects) {
+  private static void createActions(Project project, List<MavenProject> mavenProjects) {
     ActionManager actionManager = ActionManager.getInstance();
     MavenShortcutsManager shortcutsManager = MavenShortcutsManager.getInstance(project);
 
@@ -163,7 +163,7 @@ public final class MavenKeymapExtension implements ExternalSystemKeymapExtension
     }
   }
 
-  static void clearActions(Project project, List<? extends MavenProject> mavenProjects) {
+  static void clearActions(Project project, List<MavenProject> mavenProjects) {
     ActionManager manager = ActionManager.getInstance();
     for (MavenProject eachProject : mavenProjects) {
       for (String eachAction : getActionIdList(project, eachProject)) {
@@ -187,7 +187,7 @@ public final class MavenKeymapExtension implements ExternalSystemKeymapExtension
       if (info == null) continue;
 
       for (MavenPluginInfo.Mojo m : info.getMojos()) {
-        ((Set<? super String>)result).add(m.getQualifiedGoal());
+        result.add(m.getQualifiedGoal());
       }
     }
 
@@ -195,8 +195,7 @@ public final class MavenKeymapExtension implements ExternalSystemKeymapExtension
   }
 
   @TestOnly
-  @Nullable
-  public static String getActionPrefix(@NotNull Project project, @Nullable MavenProject mavenProject) {
+  public static @Nullable String getActionPrefix(@NotNull Project project, @Nullable MavenProject mavenProject) {
     String pomPath = mavenProject == null ? null : mavenProject.getPath();
     MavenShortcutsManager mavenShortcutsManager = MavenShortcutsManager.getInstanceIfCreated(project);
     return mavenShortcutsManager == null ? null : mavenShortcutsManager.getActionId(pomPath, null);

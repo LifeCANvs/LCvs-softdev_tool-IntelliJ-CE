@@ -22,8 +22,6 @@ import com.intellij.openapi.actionSystem.ex.CustomComponentAction
 import com.intellij.openapi.actionSystem.impl.ActionButton
 import com.intellij.openapi.actionSystem.impl.ActionButtonWithText
 import com.intellij.openapi.actionSystem.impl.ActionToolbarImpl
-import com.intellij.openapi.actionSystem.impl.IdeaActionButtonLook.getIconPosition
-import com.intellij.openapi.actionSystem.impl.IdeaActionButtonLook.paintIconImpl
 import com.intellij.openapi.actionSystem.impl.Utils
 import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification
 import com.intellij.openapi.actionSystem.toolbarLayout.ToolbarLayoutStrategy
@@ -52,15 +50,9 @@ import com.intellij.ui.icons.TextIcon
 import com.intellij.ui.icons.toStrokeIcon
 import com.intellij.ui.popup.ActionPopupStep
 import com.intellij.ui.scale.JBUIScale
-import com.intellij.util.ui.EmptyIcon
-import com.intellij.util.ui.JBDimension
-import com.intellij.util.ui.JBInsets
-import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.*
 import org.jetbrains.annotations.ApiStatus
-import java.awt.Color
-import java.awt.Component
-import java.awt.Graphics
-import java.awt.Insets
+import java.awt.*
 import java.awt.event.InputEvent
 import java.util.function.Predicate
 import javax.swing.Icon
@@ -70,6 +62,7 @@ import javax.swing.SwingConstants
 internal const val CONFIGURATION_NAME_TRIM_SUFFIX_LENGTH: Int = 8
 internal const val CONFIGURATION_NAME_NON_TRIM_MAX_LENGTH: Int = 33 + CONFIGURATION_NAME_TRIM_SUFFIX_LENGTH
 
+@ApiStatus.Internal
 @Service(Service.Level.PROJECT)
 class RunWidgetResumeManager(private val project: Project) {
   companion object {
@@ -78,7 +71,10 @@ class RunWidgetResumeManager(private val project: Project) {
 
   fun getDebugDescriptor(configuration: RunnerAndConfigurationSettings): RunContentDescriptor? {
     val executionManager = ExecutionManagerImpl.getInstance(project)
-    return executionManager.getRunningDescriptors { configuration === it }.firstOrNull {
+    return executionManager.getRunningDescriptors {
+      configuration === it ||
+      configuration.configuration === ExecutionManagerImpl.getDelegatedRunProfile(it.configuration)
+    }.firstOrNull {
       executionManager.getExecutors(it).firstOrNull { it.id == ToolWindowId.DEBUG } != null
     }
   }
@@ -104,7 +100,6 @@ private fun createRunActionToolbar(): ActionToolbar {
   toolbar.setMinimumButtonSize {
     JBUI.size(JBUI.CurrentTheme.RunWidget.actionButtonWidth(), JBUI.CurrentTheme.RunWidget.toolbarHeight())
   }
-  toolbar.setForceMinimumSize(true)
   toolbar.setActionButtonBorder(JBUI.CurrentTheme.RunWidget::toolbarBorderDirectionalGap, JBUI.CurrentTheme.RunWidget::toolbarBorderHeight)
   toolbar.setCustomButtonLook(RunWidgetButtonLook())
   return toolbar
@@ -167,6 +162,7 @@ private class RedesignedRunToolbarWrapper : WindowHeaderPlaceholder() {
   }
 }
 
+@ApiStatus.Internal
 class RunToolbarTopLevelExecutorActionGroup : ActionGroup() {
 
   override fun getActionUpdateThread(): ActionUpdateThread {
@@ -494,6 +490,13 @@ open class RedesignedRunConfigurationSelector : TogglePopupAction(), CustomCompo
         font = JBUI.CurrentTheme.RunWidget.configurationSelectorFont()
       }
 
+      override fun getButtonRect(): Rectangle? = super.buttonRect.apply {
+        width -= getDownArrowIcon().iconWidth
+      }
+
+      override fun getMinimumSize(): Dimension = preferredSize.apply {
+        width = UIUtil.computeTextComponentMinimumSize(width, text, font?.let { getFontMetrics(it) })
+      }
     }.also {
       it.foreground = JBUI.CurrentTheme.RunWidget.FOREGROUND
       it.setHorizontalTextAlignment(SwingConstants.LEFT)

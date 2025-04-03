@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.fir.completion;
 
@@ -32,29 +32,39 @@ public abstract class K2MultiPlatformCompletionTestGenerated extends AbstractK2M
             KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
         }
 
-        @TestMetadata("actualFromSeveralFiles")
-        public void testActualFromSeveralFiles() throws Exception {
-            runTest("../../completion/testData/multiPlatform/actualDeclaration/actualFromSeveralFiles/");
-        }
-
         @TestMetadata("actualFun")
         public void testActualFun() throws Exception {
             runTest("../../completion/testData/multiPlatform/actualDeclaration/actualFun/");
         }
 
-        @TestMetadata("actualModuleTargetIsNotVisibleInAnotherModule")
-        public void testActualModuleTargetIsNotVisibleInAnotherModule() throws Exception {
-            runTest("../../completion/testData/multiPlatform/actualDeclaration/actualModuleTargetIsNotVisibleInAnotherModule/");
+        @TestMetadata("actualKeywordFromSeveralFiles")
+        public void testActualKeywordFromSeveralFiles() throws Exception {
+            runTest("../../completion/testData/multiPlatform/actualDeclaration/actualKeywordFromSeveralFiles/");
+        }
+
+        @TestMetadata("actualKeywordFun")
+        public void testActualKeywordFun() throws Exception {
+            runTest("../../completion/testData/multiPlatform/actualDeclaration/actualKeywordFun/");
+        }
+
+        @TestMetadata("actualKeywordModuleTargetIsNotVisibleInAnotherModule")
+        public void testActualKeywordModuleTargetIsNotVisibleInAnotherModule() throws Exception {
+            runTest("../../completion/testData/multiPlatform/actualDeclaration/actualKeywordModuleTargetIsNotVisibleInAnotherModule/");
+        }
+
+        @TestMetadata("actualKeywordVal")
+        public void testActualKeywordVal() throws Exception {
+            runTest("../../completion/testData/multiPlatform/actualDeclaration/actualKeywordVal/");
+        }
+
+        @TestMetadata("actualKeywordWithSamePackage")
+        public void testActualKeywordWithSamePackage() throws Exception {
+            runTest("../../completion/testData/multiPlatform/actualDeclaration/actualKeywordWithSamePackage/");
         }
 
         @TestMetadata("actualVal")
         public void testActualVal() throws Exception {
             runTest("../../completion/testData/multiPlatform/actualDeclaration/actualVal/");
-        }
-
-        @TestMetadata("actualWithSamePackage")
-        public void testActualWithSamePackage() throws Exception {
-            runTest("../../completion/testData/multiPlatform/actualDeclaration/actualWithSamePackage/");
         }
     }
 

@@ -10,12 +10,7 @@ import com.intellij.codeInsight.inline.completion.session.InlineCompletionSessio
 import com.intellij.codeInsight.lookup.impl.LookupImpl
 import com.intellij.ide.IdeEventQueue
 import com.intellij.openapi.actionSystem.IdeActions
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.WriteIntentReadAction
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.application.writeAction
-import com.intellij.openapi.application.writeIntentReadAction
+import com.intellij.openapi.application.*
 import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.progress.coroutineToIndicator
@@ -24,7 +19,6 @@ import com.intellij.testFramework.common.DEFAULT_TEST_TIMEOUT
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.testFramework.fixtures.CodeInsightTestFixture
 import com.intellij.testFramework.fixtures.EditorMouseFixture
-import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.concurrency.annotations.RequiresReadLock
 import kotlinx.coroutines.Dispatchers
@@ -49,8 +43,10 @@ class InlineCompletionLifecycleTestDSL(val fixture: CodeInsightTestFixture) {
   // Requests
   @ICRequest
   suspend fun createLookup(type: CompletionType = CompletionType.BASIC) {
-    coroutineToIndicator {
-      fixture.complete(type)
+    withContext(Dispatchers.EDT) {
+      coroutineToIndicator {
+        fixture.complete(type)
+      }
     }
   }
 
@@ -85,14 +81,18 @@ class InlineCompletionLifecycleTestDSL(val fixture: CodeInsightTestFixture) {
     withContext(Dispatchers.EDT) {
       val lookup = fixture.lookup as? LookupImpl
       assertThat(lookup).isNotNull()
-      lookup!!.hideLookup(false)
+      writeIntentReadAction {
+        lookup!!.hideLookup(false)
+      }
     }
   }
 
   @ICRequest
   suspend fun typeChar(char: Char = '\n') {
-    coroutineToIndicator {
-      fixture.type(char)
+    withContext(Dispatchers.EDT) {
+      coroutineToIndicator {
+        fixture.type(char)
+      }
     }
   }
 
@@ -232,7 +232,7 @@ class InlineCompletionLifecycleTestDSL(val fixture: CodeInsightTestFixture) {
   @ICUtil
   suspend fun <T> withWriteAction(block: () -> T): T {
     return withContext(Dispatchers.EDT) {
-      writeAction(block)
+      edtWriteAction(block)
     }
   }
 
@@ -292,7 +292,6 @@ class InlineCompletionLifecycleTestDSL(val fixture: CodeInsightTestFixture) {
 
   //TODO: also check for fixture.file.text
   @RequiresReadLock
-  @RequiresBlockingContext
   private fun compareContents(expectedLine: String) {
     assertThat(fixture.editor.document.text.removeCaret()).describedAs {
       "Expected and actual contents are different."
@@ -300,7 +299,6 @@ class InlineCompletionLifecycleTestDSL(val fixture: CodeInsightTestFixture) {
   }
 
   @RequiresReadLock
-  @RequiresBlockingContext
   private fun compareCaretPosition(expectedLine: String) {
     val actualLineWithCaret = StringBuilder(fixture.editor.document.text).insert(fixture.caretOffset, "<caret>").toString()
     assertThat(actualLineWithCaret).describedAs {

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.completion.test;
 
@@ -148,6 +148,16 @@ public class KeywordCompletionTestGenerated extends AbstractKeywordCompletionTes
     @TestMetadata("CompanionObjectBeforeObject.kt")
     public void testCompanionObjectBeforeObject() throws Exception {
         runTest("../testData/keywords/CompanionObjectBeforeObject.kt");
+    }
+
+    @TestMetadata("ContextParameter.kt")
+    public void testContextParameter() throws Exception {
+        runTest("../testData/keywords/ContextParameter.kt");
+    }
+
+    @TestMetadata("ContextReceiver.kt")
+    public void testContextReceiver() throws Exception {
+        runTest("../testData/keywords/ContextReceiver.kt");
     }
 
     @TestMetadata("ContinuePrefixMatching.kt")

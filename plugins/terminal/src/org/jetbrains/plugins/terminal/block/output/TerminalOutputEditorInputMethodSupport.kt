@@ -4,11 +4,13 @@ package org.jetbrains.plugins.terminal.block.output
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.LogicalPosition
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.impl.EditorImpl
+import com.intellij.openapi.editor.impl.EditorInputMethodSupport
 import com.intellij.openapi.editor.impl.InputMethodInlayRenderer
 import com.intellij.openapi.util.Disposer
-import org.jetbrains.plugins.terminal.block.session.BlockTerminalSession
+import org.jetbrains.annotations.ApiStatus
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.Point
@@ -24,10 +26,11 @@ import java.text.AttributedString
 import java.text.CharacterIterator
 import javax.swing.SwingUtilities
 
-internal class TerminalOutputEditorInputMethodSupport(
+@ApiStatus.Internal
+class TerminalOutputEditorInputMethodSupport(
   private val editor: EditorEx,
-  private val session: BlockTerminalSession,
-  private val caretModel: TerminalCaretModel
+  private val sendInputString: (String) -> Unit,
+  private val getCaretPosition: () -> LogicalPosition?,
 ) {
 
   private val inputMethodRequests = MyInputMethodRequests()
@@ -36,6 +39,15 @@ internal class TerminalOutputEditorInputMethodSupport(
 
   fun install(parentDisposable: Disposable) {
     check(editor.isViewer)
+
+    val mouseListener = object : MouseAdapter() {
+      override fun mousePressed(e: MouseEvent?) {
+        if (inlay != null && !editor.isDisposed) {
+          editor.contentComponent.getInputContext()?.endComposition()
+        }
+      }
+    }
+    editor.contentComponent.addMouseListener(mouseListener)
 
     val inputMethodListener = object : InputMethodListener {
       override fun inputMethodTextChanged(event: InputMethodEvent) {
@@ -49,23 +61,12 @@ internal class TerminalOutputEditorInputMethodSupport(
         event.consume()
       }
     }
-    editor.contentComponent.addInputMethodListener(inputMethodListener)
 
-    val mouseListener = object : MouseAdapter() {
-      override fun mousePressed(e: MouseEvent?) {
-        if (inlay != null && !editor.isDisposed) {
-          editor.contentComponent.getInputContext()?.endComposition()
-        }
-      }
-    }
-    editor.contentComponent.addMouseListener(mouseListener)
-
-    (editor as EditorImpl).setInputMethodRequests(inputMethodRequests)
+    (editor as EditorImpl).setInputMethodSupport(EditorInputMethodSupport(inputMethodRequests, inputMethodListener))
 
     Disposer.register(parentDisposable) {
-      editor.contentComponent.removeInputMethodListener(inputMethodListener)
       editor.contentComponent.removeMouseListener(mouseListener)
-      editor.setInputMethodRequests(null)
+      editor.setInputMethodSupport(null)
     }
   }
 
@@ -79,9 +80,9 @@ internal class TerminalOutputEditorInputMethodSupport(
     if (text != null) {
       text.first() // set iterator to the text beginning
       val committedString = collectString(text, event.committedCharacterCount)
-      val cursorPosition = caretModel.getCaretPosition() // capture cursor position before sending committed string
+      val cursorPosition = getCaretPosition() // capture cursor position before sending committed string
       if (committedString.isNotEmpty()) {
-        session.terminalStarterFuture.getNow(null)?.sendString(committedString, true)
+        sendInputString(committedString)
       }
       cursorPosition ?: return
       val composedString = collectString(text)
@@ -112,7 +113,7 @@ internal class TerminalOutputEditorInputMethodSupport(
 
     override fun getTextLocation(offset: TextHitInfo?): Rectangle {
       if (editor.isDisposed()) return Rectangle()
-      val cursorPosition = caretModel.getCaretPosition() ?: return Rectangle()
+      val cursorPosition = getCaretPosition() ?: return Rectangle()
       val caret: Point = editor.logicalPositionToXY(cursorPosition)
       val r = Rectangle(caret, Dimension(1, editor.getLineHeight()))
       val p = getLocationOnScreen(editor.getContentComponent())
@@ -123,7 +124,7 @@ internal class TerminalOutputEditorInputMethodSupport(
     override fun getLocationOffset(x: Int, y: Int): TextHitInfo? = null
 
     override fun getInsertPositionOffset(): Int {
-      val cursorLogicalPosition = caretModel.getCaretPosition() ?: return 0
+      val cursorLogicalPosition = getCaretPosition() ?: return 0
       return editor.logicalPositionToOffset(cursorLogicalPosition)
     }
 

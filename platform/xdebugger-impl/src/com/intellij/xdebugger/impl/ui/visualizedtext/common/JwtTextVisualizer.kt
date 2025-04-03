@@ -27,7 +27,7 @@ internal class JwtTextVisualizer : TextValueVisualizer {
       override val contentTypeForStats
         get() = TextVisualizerContentType.JWT
       override fun formatText() =
-        prettify(jwt!!) // !! is a workaround for KT-69132, remove it after migration to Kotlin >= 2.0
+        prettify(jwt)
       override val fileType
         get() =
           // Right now we don't want to have an explicit static dependency here.
@@ -67,7 +67,7 @@ internal class JwtTextVisualizer : TextValueVisualizer {
   @OptIn(ExperimentalEncodingApi::class)
   private fun tryDecodeBase64(s: String): String? {
     val decoded = try {
-      Base64.decode(s)
+      Base64.withPadding(Base64.PaddingOption.ABSENT_OPTIONAL).decode(s)
     } catch (_: IllegalArgumentException) {
       return null
     }

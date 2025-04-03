@@ -16,8 +16,7 @@ import java.util.function.Supplier;
  * Provides access to the {@link Application}.
  */
 public class ApplicationManager {
-  @ApiStatus.Internal
-  protected static Application ourApplication;
+  @ApiStatus.Internal protected static volatile Application ourApplication;
 
   public static Application getApplication() {
     return ourApplication;
@@ -48,12 +47,11 @@ public class ApplicationManager {
   ) {
     Application old = ourApplication;
     setApplication(instance);
-    Supplier<? extends FileTypeRegistry> oldFileTypeRegistry = FileTypeRegistry.setInstanceSupplier(fileTypeRegistryGetter);
+    FileTypeRegistry.setInstanceSupplier(fileTypeRegistryGetter, parent);
     Disposer.register(parent, () -> {
       if (old != null) {
         // to prevent NPEs in threads still running
         setApplication(old);
-        FileTypeRegistry.setInstanceSupplier(oldFileTypeRegistry);
       }
     });
   }

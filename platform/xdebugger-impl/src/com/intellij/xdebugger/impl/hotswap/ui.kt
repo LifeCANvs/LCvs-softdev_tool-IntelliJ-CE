@@ -2,6 +2,7 @@
 package com.intellij.xdebugger.impl.hotswap
 
 import com.intellij.ide.HelpTooltip
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import org.jetbrains.annotations.ApiStatus
 import javax.swing.Icon
 
@@ -18,16 +19,12 @@ interface HotSwapUiExtension {
   val hotSwapIcon: Icon
   fun createTooltip(): HelpTooltip? = null
   val shouldAddHideButton: Boolean get() = true
-  val successStatusLocation: SuccessStatusLocation get() = SuccessStatusLocation.IDE_POPUP
-
-  enum class SuccessStatusLocation {
-    IDE_POPUP, NOTIFICATION
-  }
+  fun popupMenuActions(): DefaultActionGroup? = null
 
   companion object {
     private val EP_NAME = com.intellij.openapi.extensions.ExtensionPointName<HotSwapUiExtension>("com.intellij.xdebugger.hotSwapUiExtension")
 
-    internal fun <T> computeSafeIfAvailable(action: (HotSwapUiExtension) -> T): T? = EP_NAME.computeSafeIfAny {
+    fun <T> computeSafeIfAvailable(action: (HotSwapUiExtension) -> T): T? = EP_NAME.computeSafeIfAny {
       if (it.isApplicable()) action(it) else null
     }
   }

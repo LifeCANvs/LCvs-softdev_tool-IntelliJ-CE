@@ -53,9 +53,9 @@ class ExtendableHTMLViewFactory internal constructor(
   companion object {
     @JvmField
     internal val DEFAULT_EXTENSIONS: List<Extension> = listOf(
-      Extensions.ICONS, Extensions.BASE64_IMAGES, Extensions.HIDPI_IMAGES,
+      Extensions.ICONS, Extensions.HIDPI_IMAGES,
       Extensions.INLINE_VIEW_EX, Extensions.WBR_SUPPORT, Extensions.PARAGRAPH_VIEW_EX,
-      Extensions.LINE_VIEW_EX, Extensions.BLOCK_VIEW_EX
+      Extensions.LINE_VIEW_EX, Extensions.BLOCK_VIEW_EX, Extensions.FORM_VIEW_EX,
     )
 
     @JvmField
@@ -111,6 +111,7 @@ class ExtendableHTMLViewFactory internal constructor(
      *
      * Syntax is `<img src='data:image/png;base64,ENCODED_IMAGE_HERE'>`
      */
+    @Deprecated(message = "Use HIDPI_IMAGES or FIT_TO_WIDTH_IMAGES, which support base64 as well.")
     @JvmField
     val BASE64_IMAGES: Extension = Base64ImagesExtension()
 
@@ -133,6 +134,12 @@ class ExtendableHTMLViewFactory internal constructor(
      */
     @JvmField
     val BLOCK_VIEW_EX: Extension = BlockViewExExtension()
+
+    /**
+     * Supports improved handling of form controls, like <input> or <form>.
+     */
+    @JvmField
+    val FORM_VIEW_EX: Extension = FormViewExExtension()
 
     /**
      * Supports line-height property (%, px and no-unit) in paragraphs.
@@ -442,13 +449,20 @@ private class BlockViewExExtension : Extension {
   }
 }
 
+private class FormViewExExtension : Extension {
+  override fun invoke(element: Element, view: View): View? {
+    if (view.javaClass != FormView::class.java) return null
+    return FormViewEx(element)
+  }
+}
+
 private class ParagraphViewExExtension : Extension {
   override fun invoke(element: Element, view: View): View? {
     if (view.javaClass != ParagraphView::class.java) return null
     val attrs = view.attributes
     if (
-      attrs.getAttribute(CSS.Attribute.LINE_HEIGHT) != null
-      || element.attributes.getAttribute(HTML.Attribute.TITLE) != null
+      (attrs.getAttribute(CSS.Attribute.LINE_HEIGHT) != null
+      || element.attributes.getAttribute(HTML.Attribute.TITLE) != null)
     ) {
       return ParagraphViewEx(element)
     }

@@ -25,7 +25,6 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.awt.*;
 import java.io.File;
-import java.util.Objects;
 
 public class GotoFileCellRenderer extends PsiElementListCellRenderer<PsiFileSystemItem> {
   private final int myMaxWidth;
@@ -111,7 +110,9 @@ public class GotoFileCellRenderer extends PsiElementListCellRenderer<PsiFileSyst
     Color color = list.getForeground();
     if (nameAttributes == null) nameAttributes = new SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, color);
 
-    ItemPresentation presentation = Objects.requireNonNull(item.getPresentation());
+    ItemPresentation presentation = item.getPresentation();
+    if (presentation == null) return false;
+
     renderer.append(presentation.getPresentableText() + " ", nameAttributes);
     renderer.setIcon(presentation.getIcon(true));
 

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:JvmName("JarBuilder")
 @file:Suppress("ReplaceJavaStaticMethodWithKotlinAnalog")
 
@@ -28,6 +28,8 @@ internal interface NativeFileHandler {
 
   fun isNative(name: String): Boolean
 
+  fun isCompatibleWithTargetPlatform(name: String): Boolean
+
   suspend fun sign(name: String, dataSupplier: () -> ByteBuffer): Path?
 }
 
@@ -41,12 +43,14 @@ internal suspend fun buildJar(
   compress: Boolean = false,
   notify: Boolean = true,
   nativeFileHandler: NativeFileHandler? = null,
+  addDirEntries: Boolean = false,
 ) {
   val packageIndexBuilder = if (compress) null else PackageIndexBuilder()
   writeNewFile(targetFile) { outChannel ->
     ZipFileWriter(
       channel = outChannel,
       deflater = if (compress) Deflater(Deflater.DEFAULT_COMPRESSION, true) else null,
+      zipIndexWriter = ZipIndexWriter(indexWriter = packageIndexBuilder?.indexWriter)
     ).use { zipCreator ->
       val uniqueNames = HashMap<String, Path>()
 
@@ -64,6 +68,7 @@ internal suspend fun buildJar(
           nativeFileHandler = nativeFileHandler,
           compress = compress,
           filesToMerge = filesToMerge,
+          addClassDir = addDirEntries,
         )
 
         if (notify) {
@@ -73,10 +78,10 @@ internal suspend fun buildJar(
       }
 
       if (filesToMerge.isNotEmpty()) {
-        zipCreator.uncompressedData(nameString = listOfEntitiesFileName, data = filesToMerge.joinToString("\n") { it.trim() }, indexWriter = packageIndexBuilder?.indexWriter)
+        zipCreator.uncompressedData(nameString = listOfEntitiesFileName, data = filesToMerge.joinToString("\n") { it.trim() })
       }
 
-      packageIndexBuilder?.writePackageIndex(zipCreator)
+      packageIndexBuilder?.writePackageIndex(zipCreator, if (addDirEntries) AddDirEntriesMode.ALL else AddDirEntriesMode.NONE)
     }
   }
 }
@@ -91,16 +96,19 @@ private suspend fun writeSource(
   nativeFileHandler: NativeFileHandler?,
   compress: Boolean,
   filesToMerge: MutableList<CharSequence>,
+  addClassDir: Boolean = false,
 ) {
+  val indexWriter = packageIndexBuilder?.indexWriter
   when (source) {
     is DirSource -> {
-      val archiver = ZipArchiver(zipCreator = zipCreator, fileAdded = { name, file ->
+      val includeManifest = sources.size == 1
+      val archiver = ZipArchiver(fileAdded = { name, file ->
         if (name == listOfEntitiesFileName) {
           filesToMerge.add(Files.readString(file))
           false
         }
-        else if (uniqueNames.putIfAbsent(name, source.dir) == null && (!source.removeModuleInfo || name != "module-info.class")) {
-          packageIndexBuilder?.addFile(name)
+        else if (uniqueNames.putIfAbsent(name, source.dir) == null && (includeManifest || name != "META-INF/MANIFEST.MF")) {
+          packageIndexBuilder?.addFile(name, addClassDir = addClassDir)
           true
         }
         else {
@@ -109,10 +117,10 @@ private suspend fun writeSource(
       })
       val normalizedDir = source.dir.toAbsolutePath().normalize()
       archiver.setRootDir(normalizedDir, source.prefix)
+      indexWriter
       archiveDir(
         startDir = normalizedDir,
-        archiver = archiver,
-        indexWriter = packageIndexBuilder?.indexWriter,
+        addFile = { archiver.addFile(it, zipCreator) },
         excludes = source.excludes.takeIf(List<PathMatcher>::isNotEmpty)
       )
     }
@@ -122,13 +130,12 @@ private suspend fun writeSource(
         throw IllegalStateException("in-memory source must always be first (targetFile=$targetFile, source=${source.relativePath}, sources=${sources.joinToString()})")
       }
 
-      packageIndexBuilder?.addFile(source.relativePath)
+      packageIndexBuilder?.addFile(source.relativePath, addClassDir = addClassDir)
       zipCreator.uncompressedData(
         nameString = source.relativePath,
         maxSize = source.data.size,
-        indexWriter = packageIndexBuilder?.indexWriter,
         dataWriter = {
-          it.put(source.data)
+          it.writeBytes(source.data)
         },
       )
     }
@@ -138,8 +145,8 @@ private suspend fun writeSource(
         throw IllegalStateException("fileSource source must always be first (targetFile=$targetFile, source=${source.relativePath}, sources=${sources.joinToString()})")
       }
 
-      packageIndexBuilder?.addFile(source.relativePath)
-      zipCreator.file(file = source.file, nameString = source.relativePath, indexWriter = packageIndexBuilder?.indexWriter)
+      packageIndexBuilder?.addFile(source.relativePath, addClassDir = addClassDir)
+      zipCreator.file(file = source.file, nameString = source.relativePath)
     }
 
     is ZipSource -> {
@@ -156,6 +163,7 @@ private suspend fun writeSource(
           compress = compress,
           targetFile = targetFile,
           filesToMerge = filesToMerge,
+          addClassDir = addClassDir,
         )
       }
       finally {
@@ -178,7 +186,8 @@ private suspend fun writeSource(
           sources = sources,
           nativeFileHandler = nativeFileHandler,
           compress = compress,
-          filesToMerge = filesToMerge
+          filesToMerge = filesToMerge,
+          addClassDir = addClassDir
         )
       }
     }
@@ -196,6 +205,7 @@ private suspend fun handleZipSource(
   compress: Boolean,
   targetFile: Path,
   filesToMerge: MutableList<CharSequence>,
+  addClassDir: Boolean,
 ) {
   val nativeFiles = if (nativeFileHandler == null) {
     null
@@ -221,7 +231,7 @@ private suspend fun handleZipSource(
         zipCreator.compressedData(name, data)
       }
       else {
-        zipCreator.uncompressedData(nameString = name, data = data, indexWriter = packageIndexBuilder?.indexWriter)
+        zipCreator.uncompressedData(nameString = name, data = data)
       }
     }
 
@@ -229,24 +239,28 @@ private suspend fun handleZipSource(
       return@suspendAwareReadZipFile
     }
 
-    val filter = source.filter
-    val isIncluded = if (filter == null) {
-      checkNameForZipSource(name = name, excludes = source.excludes, includeManifest = sources.size == 1)
-    }
-    else {
-      filter(name)
-    }
+    val includeManifest = sources.size == 1
+    val isIncluded = source.filter(name) && (includeManifest || name != "META-INF/MANIFEST.MF")
 
     if (!isIncluded || isDuplicated(uniqueNames = uniqueNames, name = name, sourceFile = sourceFile)) {
       return@suspendAwareReadZipFile
+    }
+
+    val sourceFileName = sourceFile.fileName.toString()
+    val isSkiko = sourceFileName.startsWith("skiko-awt-runtime-all-") && sourceFileName.endsWith(".jar")
+    val shouldStayInJar = if (isSkiko && nativeFileHandler != null) {
+      !nativeFileHandler.isNative(name) || nativeFileHandler.isCompatibleWithTargetPlatform(name)
+    }
+    else {
+      true
     }
 
     if (nativeFileHandler?.isNative(name) == true) {
       if (source.isPreSignedAndExtractedCandidate) {
         nativeFiles!!.value.add(name)
       }
-      else {
-        packageIndexBuilder?.addFile(name)
+      else if (shouldStayInJar) {
+        packageIndexBuilder?.addFile(name, addClassDir = addClassDir)
 
         // sign it
         val file = nativeFileHandler.sign(name, dataSupplier)
@@ -255,16 +269,14 @@ private suspend fun handleZipSource(
           writeZipData(data)
         }
         else {
-          zipCreator.file(name, file, indexWriter = packageIndexBuilder?.indexWriter)
+          zipCreator.file(name, file)
           Files.delete(file)
         }
       }
     }
-    else {
-      packageIndexBuilder?.addFile(name)
-
-      val data = dataSupplier()
-      writeZipData(data)
+    else if (shouldStayInJar) {
+      packageIndexBuilder?.addFile(name, addClassDir = addClassDir)
+      writeZipData(dataSupplier())
     }
   }
 }
@@ -320,12 +332,10 @@ private fun getIgnoredNames(): Set<String> {
   // compilation cache on TC
   set.add(".hash")
   set.add("classpath.index")
-  @Suppress("SpellCheckingInspection")
   set.add(".gitattributes")
   set.add("pom.xml")
   set.add("about.html")
   set.add("module-info.class")
-  set.add("META-INF/versions/9/module-info.class")
   // default is ok (modules not used)
   set.add("META-INF/versions/9/kotlin/reflect/jvm/internal/impl/serialization/deserialization/builtins/BuiltInsResourceLoader.class")
   set.add("META-INF/versions/9/org/apache/xmlbeans/impl/tool/MavenPluginResolver.class")
@@ -374,18 +384,18 @@ private fun getIgnoredNames(): Set<String> {
    * merging build politic breaks Graal VM Truffle-based plugins in an inconsistant way, so it's better
    * to provide a correctly merged version in plugin.
    */
-  set.add("META-INF/services/com.oracle.truffle.api.TruffleLanguage${'$'}Provider")
+  set.add("META-INF/services/com.oracle.truffle.api.provider.TruffleLanguageProvider")
   return java.util.Set.copyOf(set)
 }
 
 private val ignoredNames = getIgnoredNames()
+private val moduleInfoPattern = Regex("META-INF/versions/\\d+/module-info\\.class")
 
-private fun checkNameForZipSource(name: String, excludes: List<Regex>, includeManifest: Boolean): Boolean {
+fun defaultLibrarySourcesNamesFilter(name: String): Boolean {
   @Suppress("SpellCheckingInspection")
   return !ignoredNames.contains(name) &&
-         excludes.none { it.matches(name) } &&
+         !name.matches(moduleInfoPattern) &&
          !name.endsWith(".kotlin_metadata") &&
-         (includeManifest || name != "META-INF/MANIFEST.MF") &&
          !name.startsWith("license/") &&
          !name.startsWith("META-INF/license/") &&
          !name.startsWith("META-INF/LICENSE-") &&

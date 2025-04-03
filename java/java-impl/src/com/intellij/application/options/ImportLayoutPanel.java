@@ -18,7 +18,6 @@ import com.intellij.psi.codeStyle.PackageEntryTable;
 import com.intellij.ui.*;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.table.JBTable;
-import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.JBUI;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -31,6 +30,8 @@ import javax.swing.table.TableCellEditor;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableModel;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * @author Max Medvedev
@@ -38,6 +39,7 @@ import java.awt.*;
 public abstract class ImportLayoutPanel extends JPanel {
   private final JBCheckBox myCbLayoutStaticImportsSeparately =
     new JBCheckBox(JavaBundle.message("import.layout.static.imports.separately"));
+  private final @Nullable JBCheckBox myCbLayoutOnDemandImportsFromSamePackageFirst;
   private final JBTable myImportLayoutTable;
 
   private final PackageEntryTable myImportLayoutList = new PackageEntryTable();
@@ -54,9 +56,12 @@ public abstract class ImportLayoutPanel extends JPanel {
     return myCbLayoutStaticImportsSeparately;
   }
 
-  public ImportLayoutPanel() {
+  public @Nullable JBCheckBox getCbLayoutOnDemandImportsFromSamePackageFirst() {
+    return myCbLayoutOnDemandImportsFromSamePackageFirst;
+  }
+
+  public ImportLayoutPanel(boolean showLayoutOnDemandImportFromSamePackageFirstCheckbox, boolean supportModuleImport) {
     super(new BorderLayout());
-    setBorder(IdeBorderFactory.createTitledBorder(JavaBundle.message("title.import.layout"), false, JBInsets.emptyInsets()));
 
     myCbLayoutStaticImportsSeparately.addItemListener(e -> {
       if (areStaticImportsEnabled()) {
@@ -87,10 +92,8 @@ public abstract class ImportLayoutPanel extends JPanel {
       refresh();
     });
 
-    add(myCbLayoutStaticImportsSeparately, BorderLayout.NORTH);
-
     ActionGroup addGroup = new DefaultActionGroup(new AddPackageAction(), new AddBlankLineAction());
-    addGroup.getTemplatePresentation().setIcon(LayeredIcon.ADD_WITH_DROPDOWN);
+    addGroup.getTemplatePresentation().setIcon(AllIcons.General.Add);
     addGroup.getTemplatePresentation().setText(JavaBundle.messagePointer("button.add"));
     addGroup.getTemplatePresentation().setPopupGroup(true);
     addGroup.registerCustomShortcutSet(CommonShortcuts.getNewForDialogs(), null);
@@ -103,16 +106,29 @@ public abstract class ImportLayoutPanel extends JPanel {
       .setRemoveActionUpdater(e -> {
         int selectedImport = myImportLayoutTable.getSelectedRow();
         PackageEntry entry = selectedImport < 0 ? null : myImportLayoutList.getEntryAt(selectedImport);
-        return entry != null && entry != PackageEntry.ALL_OTHER_STATIC_IMPORTS_ENTRY && entry != PackageEntry.ALL_OTHER_IMPORTS_ENTRY;
+        return entry != null &&
+               entry != PackageEntry.ALL_OTHER_STATIC_IMPORTS_ENTRY &&
+               entry != PackageEntry.ALL_OTHER_IMPORTS_ENTRY &&
+               entry != PackageEntry.ALL_MODULE_IMPORTS;
       })
       .setButtonComparator(JavaBundle.message("button.add"),
                            IdeBundle.message("action.remove"),
                            JavaBundle.message("import.layout.panel.up.button"),
                            JavaBundle.message("import.layout.panel.down.button"))
-      .setPreferredSize(new Dimension(-1, JBUI.scale(180))).createPanel();
+      .setPreferredSize(new Dimension(-1, JBUI.scale(180)))
+      .createPanel();
 
+    myCbLayoutOnDemandImportsFromSamePackageFirst =
+      showLayoutOnDemandImportFromSamePackageFirstCheckbox
+      ? new JBCheckBox(JavaBundle.message("import.layout.on.demand.import.from.same.package.first"))
+      : null;
 
-    add(importLayoutPanel, BorderLayout.CENTER);
+    List<@Nullable JBCheckBox> additionalCheckBoxes = new ArrayList<>();
+    additionalCheckBoxes.add(myCbLayoutOnDemandImportsFromSamePackageFirst);
+    final ImportLayoutPanelUI UI = new ImportLayoutPanelUI(myCbLayoutStaticImportsSeparately,
+                                                           additionalCheckBoxes,
+                                                           importLayoutPanel);
+    add(UI.getPanel(), BorderLayout.CENTER);
   }
 
   private class AddPackageAction extends DumbAwareAction {
@@ -167,7 +183,9 @@ public abstract class ImportLayoutPanel extends JPanel {
       return;
     }
     PackageEntry entry = myImportLayoutList.getEntryAt(selected);
-    if (entry == PackageEntry.ALL_OTHER_STATIC_IMPORTS_ENTRY || entry == PackageEntry.ALL_OTHER_IMPORTS_ENTRY) {
+    if (entry == PackageEntry.ALL_OTHER_STATIC_IMPORTS_ENTRY ||
+        entry == PackageEntry.ALL_OTHER_IMPORTS_ENTRY ||
+        entry == PackageEntry.ALL_MODULE_IMPORTS) {
       return;
     }
     TableUtil.stopEditing(myImportLayoutTable);
@@ -216,6 +234,10 @@ public abstract class ImportLayoutPanel extends JPanel {
 
   public boolean areStaticImportsEnabled() {
     return myCbLayoutStaticImportsSeparately.isSelected();
+  }
+
+  public boolean isLayoutOnDemandImportsFromSamePackageFirst() {
+    return myCbLayoutOnDemandImportsFromSamePackageFirst != null && myCbLayoutOnDemandImportsFromSamePackageFirst.isSelected();
   }
 
   public static JBTable createTableForPackageEntries(final PackageEntryTable packageTable, final ImportLayoutPanel panel) {
@@ -353,6 +375,9 @@ public abstract class ImportLayoutPanel extends JPanel {
           if (entry == PackageEntry.ALL_OTHER_IMPORTS_ENTRY || entry == PackageEntry.ALL_OTHER_STATIC_IMPORTS_ENTRY) {
             append(JavaBundle.message("import.layout.panel.all.other.imports"), SimpleTextAttributes.REGULAR_ATTRIBUTES);
           }
+          else if (entry == PackageEntry.ALL_MODULE_IMPORTS) {
+            append(JavaBundle.message("import.layout.panel.module.imports"), SimpleTextAttributes.REGULAR_ATTRIBUTES);
+          }
           else {
             append(entry.getPackageName() + ".*", SimpleTextAttributes.REGULAR_ATTRIBUTES);
           }
@@ -376,7 +401,7 @@ public abstract class ImportLayoutPanel extends JPanel {
   private static void fixColumnWidthToHeader(JBTable result, int columnIdx) {
     final TableColumn column = result.getColumnModel().getColumn(columnIdx);
     final int width =
-      15 + result.getTableHeader().getFontMetrics(result.getTableHeader().getFont()).stringWidth(result.getColumnName(columnIdx));
+      16 + result.getTableHeader().getFontMetrics(result.getTableHeader().getFont()).stringWidth(result.getColumnName(columnIdx));
     column.setMinWidth(width);
     column.setMaxWidth(width);
   }

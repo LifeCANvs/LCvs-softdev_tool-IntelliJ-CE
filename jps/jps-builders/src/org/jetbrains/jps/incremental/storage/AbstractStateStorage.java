@@ -6,25 +6,30 @@ import com.intellij.util.io.*;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
+import java.util.function.Function;
 
 public abstract class AbstractStateStorage<Key, T> implements StorageOwner {
+  private static final boolean DO_COMPRESS = Boolean.parseBoolean(System.getProperty("jps.storage.do.compression", "true"));
+
   protected final Object dataLock = new Object();
-  private @NotNull final PersistentMapBuilder<Key, T> mapBuilder;
+  private final @NotNull PersistentMapBuilder<Key, T> mapBuilder;
   private @NotNull PersistentMapImpl<Key, T> map;
   private final boolean isCompressed;
 
   public AbstractStateStorage(File storePath, KeyDescriptor<Key> keyDescriptor, DataExternalizer<T> stateExternalizer) throws IOException {
-    this(PersistentMapBuilder.newBuilder(storePath.toPath(), keyDescriptor, stateExternalizer),
-         Boolean.parseBoolean(System.getProperty("jps.storage.do.compression", "true")));
+    this(PersistentMapBuilder.newBuilder(storePath.toPath(), keyDescriptor, stateExternalizer), DO_COMPRESS);
+  }
+
+  @ApiStatus.Internal
+  protected AbstractStateStorage(@NotNull PersistentMapBuilder<Key, T> mapBuilder) throws IOException {
+    this(mapBuilder, DO_COMPRESS);
   }
 
   @ApiStatus.Internal
@@ -100,19 +105,39 @@ public abstract class AbstractStateStorage<Key, T> implements StorageOwner {
     }
   }
 
-  public Collection<Key> getKeys() throws IOException {
+  /**
+   * @deprecated Use {@link #getKeysIterator()}
+   */
+  @TestOnly
+  @ApiStatus.Internal
+  @Deprecated(forRemoval = true)
+  public final Collection<Key> getKeys() throws IOException {
+    return getAllKeys();
+  }
+
+  public @NotNull Iterator<Key> getKeysIterator() throws IOException {
+    //noinspection TestOnlyProblems
+    return getAllKeys().iterator();
+  }
+
+  @TestOnly
+  @ApiStatus.Internal
+  public final @NotNull List<Key> getAllKeys() throws IOException {
     synchronized (dataLock) {
       List<Key> result = new ArrayList<>();
       map.processExistingKeys(new CommonProcessors.CollectProcessor<>(result));
-      return result;
+      return result.isEmpty() ? List.of() : result;
     }
   }
 
-  public Iterator<Key> getKeysIterator() throws IOException {
+  protected final @NotNull Iterator<Key> getKeyIterator(@NotNull Function<Key, Key> mapper) throws IOException {
     synchronized (dataLock) {
       List<Key> result = new ArrayList<>();
-      map.processExistingKeys(new CommonProcessors.CollectProcessor<>(result));
-      return result.iterator();
+      map.processExistingKeys(key -> {
+        result.add(mapper.apply(key));
+        return true;
+      });
+      return result.isEmpty() ? Collections.emptyIterator() : result.iterator();
     }
   }
 
@@ -122,7 +147,7 @@ public abstract class AbstractStateStorage<Key, T> implements StorageOwner {
   }
 
   @Override
-  public void flush(boolean memoryCachesOnly) {
+  public final void flush(boolean memoryCachesOnly) {
     if (!memoryCachesOnly) {
       force();
     }

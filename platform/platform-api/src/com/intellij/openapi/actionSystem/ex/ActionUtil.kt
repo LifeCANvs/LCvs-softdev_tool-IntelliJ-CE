@@ -13,6 +13,10 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ApplicationNamesInfo
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.keymap.KeymapUtil
+import com.intellij.platform.ide.core.permissions.Permission
+import com.intellij.platform.ide.core.permissions.PermissionDeniedException
+import com.intellij.platform.ide.core.permissions.RequiresPermissions
+import com.intellij.platform.ide.core.permissions.checkPermissionsGranted
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
@@ -27,7 +31,6 @@ import com.intellij.openapi.util.NlsActions.ActionText
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.ClientProperty
-import com.intellij.ui.CommonActionsPanel
 import com.intellij.util.ObjectUtils
 import com.intellij.util.SlowOperationCanceledException
 import com.intellij.util.SlowOperations
@@ -43,7 +46,6 @@ import javax.swing.Action
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.KeyStroke
-import kotlin.Throws
 
 private val LOG = logger<ActionUtil>()
 private val InputEventDummyAction = EmptyAction.createEmptyAction(null, null, true)
@@ -121,6 +123,19 @@ object ActionUtil {
   @JvmField
   val COMPONENT_PROVIDER: Key<CustomComponentAction> = Key.create("COMPONENT_PROVIDER")
 
+  @ApiStatus.Internal
+  @JvmField
+  val ACTION_GROUP_POPUP_CAPTION: Key<ActionGroupPopupCaption> = Key.create("ACTION_GROUP_POPUP_CAPTION")
+
+  @ApiStatus.Internal
+  enum class ActionGroupPopupCaption {
+    /** No popup caption */
+    NONE,
+
+    /** Use the text of ActionGroup presentation as a popup caption */
+    FROM_ACTION_TEXT,
+  }
+
   // Internal keys
 
   @JvmStatic
@@ -129,6 +144,10 @@ object ActionUtil {
   @ApiStatus.Internal
   @JvmField
   val WOULD_BE_ENABLED_IF_NOT_DUMB_MODE: Key<Boolean> = Key.create("WOULD_BE_ENABLED_IF_NOT_DUMB_MODE")
+
+  @ApiStatus.Internal
+  @JvmField
+  val UNSATISFIED_PERMISSIONS: Key<List<Permission>> = Key.create("UNSATISFIED_PERMISSIONS")
 
   @JvmStatic
   private val WOULD_BE_VISIBLE_IF_NOT_DUMB_MODE: Key<Boolean> = Key.create("WOULD_BE_VISIBLE_IF_NOT_DUMB_MODE")
@@ -140,7 +159,7 @@ object ActionUtil {
     vararg events: AnActionEvent,
   ) {
     val actionNames = events.asSequence()
-      .map { it.presentation.text }.filter { it.isNotEmpty() }.toList()
+      .mapNotNull { it.presentation.text }.filter { it.isNotEmpty() }.toList()
     if (LOG.isDebugEnabled) {
       LOG.debug("Showing dumb mode warning for ${events.asList()}", Throwable())
     }
@@ -247,6 +266,10 @@ object ActionUtil {
       }
       presentation.putClientProperty(WOULD_BE_ENABLED_IF_NOT_DUMB_MODE, !allowed && presentation.isEnabled)
       presentation.putClientProperty(WOULD_BE_VISIBLE_IF_NOT_DUMB_MODE, !allowed && presentation.isVisible)
+
+      if (presentation.isEnabled && action is RequiresPermissions) {
+        checkPermissionsGranted(*action.getRequiredPermissions().toTypedArray())
+      }
     }
     catch (_: SlowOperationCanceledException) {
       return false
@@ -256,6 +279,15 @@ object ActionUtil {
         return true
       }
       throw ex
+    }
+    catch (pde: PermissionDeniedException) {
+      if (Registry.`is`("ide.permissions.api.enabled")) {
+        presentation.isEnabled = false
+        presentation.putClientProperty(UNSATISFIED_PERMISSIONS, pde.permissions)
+      }
+      else {
+        LOG.error("Was thrown despite `ide.permissions.api.enabled` being false :$pde")
+      }
     }
     finally {
       if (!allowed) {
@@ -351,23 +383,25 @@ object ActionUtil {
     e: AnActionEvent,
     popupShow: Consumer<in JBPopup>?,
   ) {
+    if (action is RequiresPermissions) {
+      checkPermissionsGranted(*action.getRequiredPermissions().toTypedArray())
+    }
     if (action is ActionGroup && !e.presentation.isPerformGroup) {
       val dataContext = e.dataContext
       val place = ActionPlaces.getActionGroupPopupPlace(e.place)
+      val caption = when (e.presentation.getClientProperty(ACTION_GROUP_POPUP_CAPTION)) {
+        ActionGroupPopupCaption.NONE -> null
+        ActionGroupPopupCaption.FROM_ACTION_TEXT, null -> e.presentation.text
+      }
       val popup: ListPopup = JBPopupFactory.getInstance().createActionGroupPopup(
-        e.presentation.text, action, dataContext,
+        caption, action, dataContext,
         JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
         false, null, -1, null, place)
-      val toolbarPopupLocation = CommonActionsPanel.getPreferredPopupPoint(
-        action, dataContext.getData(PlatformCoreDataKeys.CONTEXT_COMPONENT))
-      if (toolbarPopupLocation != null) {
-        popup.show(toolbarPopupLocation)
-      }
-      else if (popupShow != null) {
+      if (popupShow != null) {
         popupShow.accept(popup)
       }
       else {
-        popup.showInBestPositionFor(dataContext)
+        popup.show(JBPopupFactory.getInstance().guessBestPopupLocation(action, e))
       }
     }
     else {
@@ -625,7 +659,8 @@ object ActionUtil {
   }
 
   @JvmStatic
-  fun createActionFromSwingAction(action: Action): AnAction {
+  @JvmOverloads
+  fun createActionFromSwingAction(action: Action, dumbAware: Boolean = false): AnAction {
     val anAction: AnAction = object : AnAction(action.getValue(Action.NAME) as String) {
       override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
@@ -636,7 +671,10 @@ object ActionUtil {
       override fun actionPerformed(e: AnActionEvent) {
         action.actionPerformed(ActionEvent(this, ActionEvent.ACTION_PERFORMED, null))
       }
+
+      override fun isDumbAware(): Boolean = dumbAware
     }
+
     val value = action.getValue(Action.ACCELERATOR_KEY)
     if (value is KeyStroke) {
       anAction.shortcutSet = CustomShortcutSet(value)

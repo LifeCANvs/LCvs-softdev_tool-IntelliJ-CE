@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.siyeh.ig.migration;
 
 import com.intellij.codeInspection.LocalQuickFix;
@@ -12,22 +12,25 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiWhiteSpace;
 import com.intellij.psi.impl.source.javadoc.PsiDocMethodOrFieldRef;
 import com.intellij.psi.javadoc.*;
-import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.TokenSet;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.intellij.psi.javadoc.PsiDocToken.isDocToken;
+
 /**
  * @author Bas Leijdekkers
  */
-final class MarkdownDocumentationCommentsMigrationInspection extends BaseInspection implements DumbAware {
+@ApiStatus.Internal
+public final class MarkdownDocumentationCommentsMigrationInspection extends BaseInspection implements DumbAware {
   @Override
   protected @NotNull String buildErrorString(Object... infos) {
     return InspectionGadgetsBundle.message("markdown.documentation.comments.migration.display.name");
@@ -94,7 +97,7 @@ final class MarkdownDocumentationCommentsMigrationInspection extends BaseInspect
         if (isDocToken(child, JavaDocTokenType.DOC_COMMENT_LEADING_ASTERISKS)) {
           continue;
         }
-        else if (child instanceof PsiDocToken token && SKIP_TOKENS.contains(token.getTokenType())) {
+        else if (isDocToken(child, SKIP_TOKENS)) {
           continue;
         }
         else if (child instanceof PsiInlineDocTag inlineDocTag) {
@@ -317,10 +320,6 @@ final class MarkdownDocumentationCommentsMigrationInspection extends BaseInspect
         }
       }
       result.append(']');
-    }
-
-    private static boolean isDocToken(PsiElement element, IElementType tokenType) {
-      return element instanceof PsiDocToken token && tokenType == token.getTokenType();
     }
   }
 }

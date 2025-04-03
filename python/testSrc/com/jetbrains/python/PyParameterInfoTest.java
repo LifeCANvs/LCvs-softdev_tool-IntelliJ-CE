@@ -1035,8 +1035,8 @@ public class PyParameterInfoTest extends LightMarkedTestCase {
   public void testDefiningTypedDictTypeAlternativeSyntax() {
     final Map<String, PsiElement> test = loadTest(1);
 
-    feignCtrlP(test.get("<arg1>").getTextOffset()).check("name: str, fields: dict[str, Any], total: bool = True",
-                                                         new String[]{"name: str, "},
+    feignCtrlP(test.get("<arg1>").getTextOffset()).check("typename: str, fields: dict[str, type], *, /, total: bool = True",
+                                                         new String[]{"typename: str, "},
                                                          ArrayUtilRt.EMPTY_STRING_ARRAY);
   }
 
@@ -1343,6 +1343,12 @@ public class PyParameterInfoTest extends LightMarkedTestCase {
   public void testSimplePopupWithHintsOffAndDefaultArgument() {
     Map<String, PsiElement> marks = loadTest(1);
     feignCtrlPWithHintsForHighlightedOnly(marks.get("<arg1>").getTextOffset()).check("a, b, c: str = \"default\"", new String[]{"c: str = \"default\""});
+  }
+
+  // PY-76149
+  public void testDataclassTransformConstructorSignatureWithFieldsAnnotatedWithGenericDescriptor() {
+    final Map<String, PsiElement> marks = loadTest(1);
+    feignCtrlP(marks.get("<arg1>").getTextOffset()).check("id: int, name: str, year: int, new: bool", new String[]{"id: int, "});
   }
 
   @NotNull

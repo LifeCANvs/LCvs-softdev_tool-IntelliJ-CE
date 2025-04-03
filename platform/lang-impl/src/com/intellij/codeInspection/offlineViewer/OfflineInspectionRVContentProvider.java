@@ -10,12 +10,14 @@ import com.intellij.codeInspection.reference.RefEntity;
 import com.intellij.codeInspection.ui.*;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.util.containers.FactoryMap;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 import java.util.function.Function;
 
+@ApiStatus.Internal
 public final class OfflineInspectionRVContentProvider extends InspectionRVContentProvider {
   private final Map<String, Map<String, Set<OfflineProblemDescriptor>>> myContent;
   private final Map<String, Map<OfflineProblemDescriptor, OfflineDescriptorResolveResult>> myResolvedDescriptor =
@@ -29,7 +31,7 @@ public final class OfflineInspectionRVContentProvider extends InspectionRVConten
   public boolean checkReportedProblems(@NotNull GlobalInspectionContextImpl context,
                                        final @NotNull InspectionToolWrapper toolWrapper) {
     final Map<String, Set<OfflineProblemDescriptor>> content = getFilteredContent(context, toolWrapper);
-    return content != null && !content.values().isEmpty();
+    return content != null && !content.isEmpty();
   }
 
   @Override
@@ -62,7 +64,7 @@ public final class OfflineInspectionRVContentProvider extends InspectionRVConten
                                     @NotNull Function<? super RefEntity, CommonProblemDescriptor[]> problems) {
     final Map<String, Set<OfflineProblemDescriptor>> filteredContent = getFilteredContent(context, wrapper);
     InspectionResultsView view = context.getView();
-    if (filteredContent != null && !filteredContent.values().isEmpty()) {
+    if (filteredContent != null && !filteredContent.isEmpty()) {
       buildTree(context, filteredContent, wrapper, descriptor -> {
                   final RefEntity element = descriptor.getRefElement(context.getRefManager());
                   return new RefEntityContainer<OfflineProblemDescriptor>(element, new OfflineProblemDescriptor[] {descriptor}) {

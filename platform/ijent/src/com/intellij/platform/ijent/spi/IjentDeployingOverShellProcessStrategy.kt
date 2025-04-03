@@ -2,59 +2,69 @@
 package com.intellij.platform.ijent.spi
 
 import com.intellij.execution.CommandLineUtil.posixQuote
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.diagnostic.*
+import com.intellij.openapi.diagnostic.debug
+import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.diagnostic.trace
+import com.intellij.openapi.extensions.ExtensionPointName
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.platform.eel.EelPlatform
+import com.intellij.platform.ijent.IjentUnavailableException
 import com.intellij.platform.ijent.getIjentGrpcArgv
-import com.intellij.util.io.computeDetached
 import com.intellij.util.io.copyToAsync
 import kotlinx.coroutines.*
 import org.jetbrains.annotations.VisibleForTesting
-import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Path
 import kotlin.io.path.fileSize
 import kotlin.io.path.inputStream
-import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.measureTime
+
+private val EP_NAME = ExtensionPointName<IjentDeploymentListener>("com.intellij.ijent.deploymentListener")
+interface IjentDeploymentListener {
+  fun shellInitialized(initializationTime: Duration)
+}
 
 abstract class IjentDeployingOverShellProcessStrategy(scope: CoroutineScope) : IjentDeployingStrategy.Posix {
+  protected abstract val ijentLabel: String
+
   /**
    * If there's some bind mount, returns the path for the remote machine/container that corresponds to [path].
    * Otherwise, returns null.
    */
   protected abstract suspend fun mapPath(path: Path): String?
 
-  protected abstract suspend fun createShellProcess(): ShellProcessWrapper
+  protected abstract suspend fun createShellProcess(): Process
 
   private val myContext: Deferred<DeployingContextAndShell> = run {
     var createdShellProcess: ShellProcessWrapper? = null
     val context = scope.async(start = CoroutineStart.LAZY) {
-      val shellProcess = createShellProcess()
+      val shellProcess = ShellProcessWrapper(IjentSessionMediator.create(scope, createShellProcess(), ijentLabel, ::isExpectedProcessExit))
       createdShellProcess = shellProcess
       createDeployingContext(shellProcess.apply {
-        // The timeout is taken at random.
-        withTimeout(10.seconds) {
-          write("set -ex")
-          ensureActive()
-          filterOutBanners()
+        val initializationTime = measureTime {
+          withTimeout(runCatching { Registry.intValue("ijent.shell.initialization.timeout") }.getOrDefault(30_000).milliseconds) {
+            val debugOption = if (LOG.isDebugEnabled) "x" else ""
+            write("set -e$debugOption")
+            ensureActive()
+            filterOutBanners()
+          }
         }
+
+        EP_NAME.forEachExtensionSafe { extension -> extension.shellInitialized(initializationTime) }
       })
-    }
-    context.invokeOnCompletion { error ->
-      if (error != null && error !is CancellationException) {
-        createdShellProcess?.destroyForcibly()
-      }
     }
     context
   }
 
-  final override suspend fun getTargetPlatform(): EelPlatform.Posix {
+  override suspend fun getTargetPlatform(): EelPlatform.Posix {
     return myContext.await().execCommand {
       getTargetPlatform()
     }
   }
 
-  final override suspend fun createProcess(binaryPath: String): Process {
+  final override suspend fun createProcess(binaryPath: String): IjentSessionMediator {
     return myContext.await().execCommand {
       execIjent(binaryPath)
     }
@@ -74,9 +84,10 @@ abstract class IjentDeployingOverShellProcessStrategy(scope: CoroutineScope) : I
 
   override suspend fun getConnectionStrategy(): IjentConnectionStrategy = IjentConnectionStrategy.Default
 
-  class ShellProcessWrapper(private var wrapped: Process?) {
+  internal class ShellProcessWrapper(private var mediator: IjentSessionMediator?) {
+    @OptIn(DelicateCoroutinesApi::class)
     suspend fun write(data: String) {
-      val wrapped = wrapped!!
+      val process = mediator!!.process
 
       @Suppress("NAME_SHADOWING")
       val data = if (data.endsWith("\n")) data else "$data\n"
@@ -85,9 +96,9 @@ abstract class IjentDeployingOverShellProcessStrategy(scope: CoroutineScope) : I
         "Executing a script inside the shell: $debugData"
       }
       withContext(Dispatchers.IO) {
-        wrapped.outputStream.write(data.toByteArray())
+        process.outputStream.write(data.toByteArray())
         ensureActive()
-        wrapped.outputStream.flush()
+        process.outputStream.flush()
         ensureActive()
       }
     }
@@ -96,7 +107,7 @@ abstract class IjentDeployingOverShellProcessStrategy(scope: CoroutineScope) : I
     suspend fun readLineWithoutBuffering(): String =
       withContext(Dispatchers.IO) {
         val buffer = StringBuilder()
-        val stream = wrapped!!.inputStream
+        val stream = mediator!!.process.inputStream
         while (true) {
           ensureActive()
           val c = stream.read()
@@ -105,30 +116,37 @@ abstract class IjentDeployingOverShellProcessStrategy(scope: CoroutineScope) : I
           }
           buffer.append(c.toChar())
         }
-        LOG.trace { "Read line from stdout: $buffer" }
+        if (buffer.isNotEmpty()) {
+          LOG.trace { "Read line from stdout: $buffer" }
+        }
         buffer.toString()
       }
 
     suspend fun copyDataFrom(stream: InputStream) {
-      val wrapped = wrapped!!
+      val process = mediator!!.process
       withContext(Dispatchers.IO) {
-        stream.copyToAsync(wrapped.outputStream)
+        stream.copyToAsync(process.outputStream)
         ensureActive()
-        wrapped.outputStream.flush()
+        process.outputStream.flush()
       }
     }
 
-    fun destroyForcibly() {
-      wrapped!!.destroyForcibly()
+    @OptIn(InternalCoroutinesApi::class)
+    suspend fun destroyForciblyAndGetError(): Throwable {
+      mediator!!.process.destroyForcibly()
+      try {
+        val job = mediator!!.ijentProcessScope.coroutineContext.job
+        job.join()
+        throw job.getCancellationException()
+      }
+      catch (err: Throwable) {
+        return IjentUnavailableException.unwrapFromCancellationExceptions(err)
+      }
     }
 
-    @OptIn(DelicateCoroutinesApi::class)
-    suspend fun readWholeErrorStream(): ByteArray =
-      computeDetached { wrapped!!.errorStream.readAllBytes() }
-
-    fun extractProcess(): Process {
-      val result = wrapped!!
-      wrapped = null
+    fun extractProcess(): IjentSessionMediator {
+      val result = mediator!!
+      mediator = null
       return result
     }
   }
@@ -138,24 +156,26 @@ private suspend fun <T : Any> DeployingContextAndShell.execCommand(block: suspen
   return try {
     block()
   }
-  catch (err: Throwable) {
-    runCatching { process.destroyForcibly() }.exceptionOrNull()?.let(err::addSuppressed)
+  catch (initialErrorFromStack: Throwable) {
+    val errorFromScope = process.destroyForciblyAndGetError()
+    val errorFromStack = IjentUnavailableException.unwrapFromCancellationExceptions(initialErrorFromStack)
 
-    val attachment = Attachment("stderr", String(process.readWholeErrorStream()))
-    attachment.isIncluded = attachment.isIncluded or ApplicationManager.getApplication().isInternal
+    // It happens sometimes that some valuable error is wrapped into CancellationException.
+    // However, if there's no valuable error,
+    // then it's a fair CancellationException that should be thrown futher, to cancel the context.
+    val (mainError, suppressedError) =
+      when (errorFromStack) {
+        is IjentUnavailableException, is CancellationException -> errorFromStack to errorFromScope
+        else -> errorFromScope to errorFromStack
+      }
 
-    val errorWithAttachments = RuntimeExceptionWithAttachments(err.message ?: "", err, attachment)
+    if (mainError != suppressedError) {
+      mainError.addSuppressed(suppressedError)
+    }
 
-    // TODO Suppress RuntimeExceptionWithAttachments instead of wrapping when KT-66006 is resolved.
-    //err.addSuppressed(RuntimeExceptionWithAttachments(
-    //  "The error happened during handling $process",
-    //  Attachment("stderr", stderr.toString()).apply { isIncluded = isIncluded or ApplicationManager.getApplication().isInternal },
-    //))
-    //throw err
-
-    throw when (err) {
-      is TimeoutCancellationException, is IOException -> IjentStartupError.CommunicationError(errorWithAttachments)
-      else -> errorWithAttachments
+    throw when (mainError) {
+      is IjentUnavailableException, is CancellationException -> mainError
+      else -> IjentStartupError.CommunicationError(mainError)
     }
   }
 }
@@ -281,8 +301,8 @@ private suspend fun DeployingContextAndShell.getTargetPlatform(): EelPlatform.Po
 
   val targetPlatform = when {
     arch.isEmpty() -> throw IjentStartupError.IncompatibleTarget("Empty output of `uname`")
-    "x86_64" in arch -> EelPlatform.X8664Linux
-    "aarch64" in arch -> EelPlatform.Aarch64Linux
+    "x86_64" in arch -> EelPlatform.Linux(EelPlatform.X86_64)
+    "aarch64" in arch -> EelPlatform.Linux(EelPlatform.ARM_64)
     else -> throw IjentStartupError.IncompatibleTarget("No binary for architecture $arch")
   }
   return targetPlatform
@@ -346,7 +366,7 @@ private suspend fun DeployingContextAndShell.uploadIjentBinary(
   return process.readLineWithoutBuffering()
 }
 
-private suspend fun DeployingContextAndShell.execIjent(remotePathToBinary: String): Process {
+private suspend fun DeployingContextAndShell.execIjent(remotePathToBinary: String): IjentSessionMediator {
   val joinedCmd = getIjentGrpcArgv(remotePathToBinary, selfDeleteOnExit = true, usrBinEnv = context.env).joinToString(" ")
   val commandLineArgs = context.run {
     """

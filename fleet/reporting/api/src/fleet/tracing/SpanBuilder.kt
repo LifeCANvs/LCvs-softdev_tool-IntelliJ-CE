@@ -4,9 +4,11 @@ package fleet.tracing
 import fleet.tracing.runtime.Span
 import fleet.tracing.runtime.SpanInfo
 
-class SpanInfoBuilder(val name: String,
-                      val job: Any,
-                      private val isScope: Boolean) {
+class SpanInfoBuilder(
+  val name: String,
+  val job: Any,
+  private val isScope: Boolean,
+) {
   private val map = HashMap<String, String>()
   var cause: Span? = null
   var startTimestampNano: Long? = null
@@ -15,14 +17,12 @@ class SpanInfoBuilder(val name: String,
     map[key] = value
   }
 
-  internal fun build(): SpanInfo = SpanInfo(name = name,
-                                            job = job,
-                                            map = map,
-                                            isScope = isScope,
-                                            startTimestampNano = startTimestampNano,
-                                            cause = cause)
-}
-
-internal inline fun spanInfo(name: String, job: Any, isScope: Boolean, builder: SpanInfoBuilder.() -> Unit = {}): SpanInfo {
-  return SpanInfoBuilder(name, job, isScope).apply(builder).build()
+  fun build(): SpanInfo =
+    SpanInfo(
+      name = name,
+      job = job,
+      map = map,
+      isScope = isScope,
+      startTimestampNano = startTimestampNano,
+      cause = cause)
 }

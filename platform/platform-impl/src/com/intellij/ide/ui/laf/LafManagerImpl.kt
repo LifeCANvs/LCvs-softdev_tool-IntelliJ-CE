@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplacePutWithAssignment", "ReplaceGetOrSet")
 
 package com.intellij.ide.ui.laf
@@ -46,7 +46,6 @@ import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.wm.impl.IdeGlassPaneImpl
 import com.intellij.platform.diagnostic.telemetry.impl.span
-import com.intellij.platform.ide.bootstrap.createBaseLaF
 import com.intellij.ui.*
 import com.intellij.ui.dsl.listCellRenderer.listCellRenderer
 import com.intellij.ui.mac.MacFullScreenControlsManager
@@ -163,7 +162,7 @@ class LafManagerImpl(private val coroutineScope: CoroutineScope) : LafManager(),
 
   override fun getDefaultLightLaf(): UIThemeLookAndFeelInfo = getDefaultLaf(isDark = false)
 
-  override fun getDefaultDarkLaf() = getDefaultLaf(isDark = true)
+  override fun getDefaultDarkLaf(): UIThemeLookAndFeelInfo = getDefaultLaf(isDark = true)
 
   @Suppress("removal")
   override fun addLafManagerListener(listener: LafManagerListener) {
@@ -188,7 +187,8 @@ class LafManagerImpl(private val coroutineScope: CoroutineScope) : LafManager(),
     }
   }
 
-  internal suspend fun applyInitState() {
+  @Internal
+  suspend fun applyInitState() {
     span("laf initialization in EDT", RawSwingDispatcher) {
       initInEdt()
     }
@@ -353,7 +353,7 @@ class LafManagerImpl(private val coroutineScope: CoroutineScope) : LafManager(),
       }
       else {
         QuickChangeLookAndFeel.switchLafAndUpdateUI(/* lafManager = */ this,
-                                                    /* lf = */ newTheme,
+                                                    /* laf = */ newTheme,
                                                     /* async = */ true,
                                                     /* force = */ true,
                                                     /* lockEditorScheme = */ true)
@@ -734,8 +734,9 @@ class LafManagerImpl(private val coroutineScope: CoroutineScope) : LafManager(),
       val interFont = defaultInterFont
       LOG.debug { "patchLafFonts: using Inter font with size ${interFont.size2D}" }
       initFontDefaults(uiDefaults, interFont)
-      LOG.debug { "patchLafFonts: setting the default scale factor $defaultUserScaleFactor" }
-      setUserScaleFactor(defaultUserScaleFactor)
+      val userScaleFactor = defaultUserScaleFactor
+      LOG.debug { "patchLafFonts: setting the default scale factor $userScaleFactor" }
+      setUserScaleFactor(userScaleFactor)
     }
     else {
       restoreOriginalFontDefaults(uiDefaults)
@@ -921,7 +922,7 @@ class LafManagerImpl(private val coroutineScope: CoroutineScope) : LafManager(),
       val result = ArrayList<AnAction>()
       result.add(Separator.create(separatorText))
       lafs.mapTo(result) {
-        LafToggleAction(name = it.name, themeId = it.id, editorSchemeId = it.defaultSchemeName, isDark = isDark)
+        LafToggleAction(name = it.name, themeId = it.id, isDark = isDark)
       }
       return result
     }
@@ -1019,7 +1020,6 @@ class LafManagerImpl(private val coroutineScope: CoroutineScope) : LafManager(),
 
   private inner class LafToggleAction(name: @Nls String?,
                                       private val themeId: String,
-                                      private val editorSchemeId: String,
                                       private val isDark: Boolean) : DumbAwareToggleAction(name) {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
@@ -1076,7 +1076,7 @@ private class OurPopupFactory(private val delegate: PopupFactory) : PopupFactory
       val info = try {
         MouseInfo.getPointerInfo()
       }
-      catch (e: InternalError) {
+      catch (_: InternalError) {
         // http://www.jetbrains.net/jira/browse/IDEADEV-21390
         // may happen under Mac OSX 10.5
         return Point(x, y)
@@ -1222,7 +1222,7 @@ private fun patchRowHeight(defaults: UIDefaults, key: String, prevScale: Float) 
   defaults.put(key, if (custom >= 0) scale(custom) else if (rowHeight <= 0) 0 else scale((rowHeight / prevScale).toInt()))
 }
 
-fun intSystemPropertyValue(name: String, defaultValue: Int): Int = runCatching {
+private fun intSystemPropertyValue(name: String, defaultValue: Int): Int = runCatching {
   System.getProperty(name)?.toInt() ?: defaultValue
 }.getOrNull() ?: defaultValue
 
@@ -1341,9 +1341,8 @@ internal fun initFontDefaults(defaults: UIDefaults, uiFont: FontUIResource) {
   for (fontResource in patchableFontResources) {
     defaults.put(fontResource, uiFont)
   }
-  if (!SystemInfoRt.isMac) {
-    defaults.put("PasswordField.font", monoFont)
-  }
+
+  defaults.put("PasswordField.font", textFont)
   defaults.put("TextArea.font", monoFont)
   defaults.put("TextPane.font", textFont)
   defaults.put("EditorPane.font", textFont)
@@ -1382,7 +1381,6 @@ private fun installMacosXFonts(defaults: UIDefaults) {
   defaults.put("Menu.font", menuFont)
   defaults.put("MenuItem.font", menuFont)
   defaults.put("MenuItem.acceleratorFont", menuFont)
-  defaults.put("PasswordField.font", defaults.getFont("TextField.font"))
 }
 
 private sealed interface DefaultThemeStrategy {

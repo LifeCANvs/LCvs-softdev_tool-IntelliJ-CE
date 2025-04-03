@@ -4,8 +4,7 @@ package com.intellij.platform.ide.diagnostic.startUpPerformanceReporter
 import com.intellij.concurrency.IntelliJContextElement
 import com.intellij.concurrency.currentThreadContext
 import com.intellij.diagnostic.StartUpMeasurer
-import com.intellij.ide.impl.ProjectUtilCore
-import com.intellij.idea.IdeStarter
+import com.intellij.ide.impl.ProjectUtil
 import com.intellij.internal.statistic.eventLog.EventLogGroup
 import com.intellij.internal.statistic.eventLog.events.*
 import com.intellij.internal.statistic.eventLog.events.EventFields.createDurationField
@@ -25,12 +24,15 @@ import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileWithId
 import com.intellij.platform.ide.diagnostic.startUpPerformanceReporter.FUSProjectHotStartUpMeasurer.MarkupType
+import com.intellij.platform.ide.diagnostic.startUpPerformanceReporter.FUSProjectHotStartUpMeasurer.getStartUpContextElementIntoIdeStarter
 import com.intellij.util.containers.ComparatorUtil
 import com.intellij.util.containers.ContainerUtil
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet
 import it.unimi.dsi.fastutil.ints.IntSet
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.yield
 import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.TestOnly
 import java.nio.file.Path
@@ -75,7 +77,7 @@ object FUSProjectHotStartUpMeasurer {
     ;
 
     @Internal
-    fun getFieldName() = getField(this).name
+    fun getFieldName(): String = getField(this).name
   }
 
   private suspend fun isProperContext(): Boolean {
@@ -136,9 +138,8 @@ object FUSProjectHotStartUpMeasurer {
     channel.trySend(Event.SplashBecameVisibleEvent())
   }
 
-  fun getStartUpContextElementIntoIdeStarter(ideStarter: IdeStarter): CoroutineContext.Element? {
-    if (ideStarter.isHeadless ||
-        ideStarter.javaClass !in listOf(IdeStarter::class.java, IdeStarter.StandaloneLightEditStarter::class.java)) {
+  fun getStartUpContextElementIntoIdeStarter(close: Boolean): CoroutineContext.Element? {
+    if (close) {
       channel.close()
       return null
     }
@@ -148,6 +149,12 @@ object FUSProjectHotStartUpMeasurer {
 
   suspend fun getStartUpContextElementToPass(): CoroutineContext.Element? {
     return if (isProperContext()) MyMarker else null
+  }
+
+  // This code is necessary for reporting metrics from the frontend because frontend metrics are sent outside the project initialization process.
+  @Internal
+  fun getContextElementToPass(): CoroutineContext.Element {
+    return MyMarker
   }
 
   private fun reportViolation(violation: Violation) {
@@ -178,7 +185,7 @@ object FUSProjectHotStartUpMeasurer {
    */
   suspend fun reportProjectPath(projectFile: Path) {
     if (!isProperContext()) return
-    val hasSettings = withContext(Dispatchers.IO) { ProjectUtilCore.isValidProjectPath(projectFile) }
+    val hasSettings = ProjectUtil.isValidProjectPath(projectFile)
     channel.trySend(Event.ProjectPathReportEvent(hasSettings))
   }
 
@@ -226,13 +233,12 @@ object FUSProjectHotStartUpMeasurer {
     channel.trySend(Event.MarkupRestoredEvent(recipe.fileId, type))
   }
 
-  fun firstOpenedEditor(file: VirtualFile) {
+  fun firstOpenedEditor(file: VirtualFile, project: Project) {
     if (!currentThreadContext().isProperContext()) {
       return
     }
     channel.trySend(Event.FirstEditorEvent(SourceOfSelectedEditor.TextEditor, file, System.nanoTime()))
     if (ApplicationManagerEx.isInIntegrationTest()) {
-      val project = ProjectManager.getInstance().openProjects[0]
       val fileEditorManager = FileEditorManager.getInstance(project)
       checkEditorHasBasicHighlight(file, project, fileEditorManager)
     }

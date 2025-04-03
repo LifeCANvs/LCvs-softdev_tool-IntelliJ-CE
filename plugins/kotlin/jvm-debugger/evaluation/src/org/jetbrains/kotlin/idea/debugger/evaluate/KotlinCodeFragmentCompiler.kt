@@ -3,17 +3,18 @@ package org.jetbrains.kotlin.idea.debugger.evaluate
 
 import com.intellij.debugger.engine.evaluation.EvaluateException
 import com.intellij.debugger.engine.evaluation.EvaluateExceptionUtil
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.project.IndexNotReadyException
+import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiRecursiveElementVisitor
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.compile.CodeFragmentCapturedValue
 import org.jetbrains.kotlin.analysis.api.components.*
-import org.jetbrains.kotlin.codegen.ClassBuilderFactories
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
-import org.jetbrains.kotlin.config.JVMConfigurationKeys
-import org.jetbrains.kotlin.config.JvmClosureGenerationScheme
 import org.jetbrains.kotlin.idea.base.codeInsight.compiler.KotlinCompilerIdeAllowedErrorFilter
 import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
 import org.jetbrains.kotlin.idea.base.util.module
@@ -23,10 +24,15 @@ import org.jetbrains.kotlin.idea.debugger.evaluate.classLoading.ClassToLoad
 import org.jetbrains.kotlin.idea.debugger.evaluate.classLoading.GENERATED_CLASS_NAME
 import org.jetbrains.kotlin.idea.debugger.evaluate.classLoading.GENERATED_FUNCTION_NAME
 import org.jetbrains.kotlin.idea.debugger.evaluate.compilation.*
+import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.name.NameUtils
 import org.jetbrains.kotlin.psi.KtCodeFragment
+import org.jetbrains.kotlin.psi.KtOperationReferenceExpression
+import java.util.concurrent.ExecutionException
 
 interface KotlinCodeFragmentCompiler {
+    val compilerType: CompilerType
+
     fun compileCodeFragment(context: ExecutionContext, codeFragment: KtCodeFragment): CompiledCodeFragmentData
 
     companion object {
@@ -35,12 +41,16 @@ interface KotlinCodeFragmentCompiler {
 }
 
 class K2KotlinCodeFragmentCompiler : KotlinCodeFragmentCompiler {
+    override val compilerType: CompilerType = CompilerType.K2
+
+    @OptIn(KaExperimentalApi::class)
     override fun compileCodeFragment(
         context: ExecutionContext,
         codeFragment: KtCodeFragment
     ): CompiledCodeFragmentData {
         val stats = CodeFragmentCompilationStats()
-        fun onFinish(status: StatisticsEvaluationResult) =
+        stats.origin = context.evaluationContext.origin
+        fun onFinish(status: EvaluationCompilerResult) =
             KotlinDebuggerEvaluatorStatisticsCollector.logAnalysisAndCompilationResult(codeFragment.project, CompilerType.K2, status, stats)
         try {
             patchCodeFragment(context, codeFragment, stats)
@@ -48,12 +58,18 @@ class K2KotlinCodeFragmentCompiler : KotlinCodeFragmentCompiler {
             val result = stats.startAndMeasureAnalysisUnderReadAction {
                 compiledCodeFragmentDataK2Impl(context, codeFragment)
             }.getOrThrow()
-            onFinish(StatisticsEvaluationResult.SUCCESS)
+            onFinish(EvaluationCompilerResult.SUCCESS)
             return result
         } catch(e: ProcessCanceledException) {
             throw e
         } catch (e: Throwable) {
-            onFinish(StatisticsEvaluationResult.FAILURE)
+            val cause = (e as? ExecutionException)?.cause ?: e
+
+            stats.compilerFailExceptionClass = extractExceptionCauseClass(e)
+
+            val isJustInvalidUserCode = cause is IncorrectCodeFragmentException
+            onFinish(if (isJustInvalidUserCode) EvaluationCompilerResult.COMPILATION_FAILURE
+                     else EvaluationCompilerResult.COMPILER_INTERNAL_ERROR)
             throw e
         }
     }
@@ -69,13 +85,11 @@ class K2KotlinCodeFragmentCompiler : KotlinCodeFragmentCompiler {
             put(CommonConfigurationKeys.LANGUAGE_VERSION_SETTINGS, codeFragment.languageVersionSettings)
             put(KaCompilerFacility.CODE_FRAGMENT_CLASS_NAME, GENERATED_CLASS_NAME)
             put(KaCompilerFacility.CODE_FRAGMENT_METHOD_NAME, GENERATED_FUNCTION_NAME)
-            // Compile lambdas to anonymous classes, so that toString would show something sensible for them.
-            put(JVMConfigurationKeys.LAMBDAS, JvmClosureGenerationScheme.CLASS)
         }
 
         return analyze(codeFragment) {
             try {
-                val compilerTarget = KaCompilerTarget.Jvm(ClassBuilderFactories.BINARIES)
+                val compilerTarget = KaCompilerTarget.Jvm(isTestMode = false)
                 val allowedErrorFilter = KotlinCompilerIdeAllowedErrorFilter.getInstance()
 
                 when (val result = compile(codeFragment, compilerConfiguration, compilerTarget, allowedErrorFilter)) {
@@ -95,15 +109,17 @@ class K2KotlinCodeFragmentCompiler : KotlinCodeFragmentCompiler {
                     }
                     is KaCompilationResult.Failure -> {
                         val firstError = result.errors.first()
-                        throw EvaluateExceptionUtil.createEvaluateException(firstError.defaultMessage)
+                        throw IncorrectCodeFragmentException(firstError.defaultMessage)
                     }
                 }
             } catch (e: ProcessCanceledException) {
                 throw e
+            } catch (e: IndexNotReadyException) {
+                throw e
             } catch (e: EvaluateException) {
                 throw e
             } catch (e: Throwable) {
-                reportErrorWithAttachments(context, codeFragment, e)
+                reportErrorWithAttachments(context, codeFragment, e, headerMessage = "K2 compiler internal error")
                 throw EvaluateExceptionUtil.createEvaluateException(e)
             }
         }
@@ -163,3 +179,17 @@ fun isCodeFragmentClassPath(path: String): Boolean {
 @KaExperimentalApi
 val KaCompiledFile.isCodeFragmentClassFile: Boolean
     get() = isCodeFragmentClassPath(path)
+
+fun hasCastOperator(codeFragment: KtCodeFragment): Boolean {
+    var result = false
+    runReadAction {
+        codeFragment.accept(object : PsiRecursiveElementVisitor() {
+            override fun visitElement(element: PsiElement) {
+                if (result) return
+                result = element is KtOperationReferenceExpression && element.operationSignTokenType == KtTokens.AS_KEYWORD
+                super.visitElement(element)
+            }
+        })
+    }
+    return result
+}

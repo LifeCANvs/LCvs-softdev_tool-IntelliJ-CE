@@ -1,10 +1,12 @@
 // Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.newUiOnboarding
 
+import com.intellij.dvcs.DvcsUtil
 import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.ex.CustomComponentAction
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.UiComponentsSearchUtil
 import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.util.CheckedDisposable
 import com.intellij.openapi.wm.impl.ToolbarComboButton
@@ -28,7 +30,7 @@ open class GitWidgetStep : NewUiOnboardingStep {
   protected open val enableVcsHelpTopic: String? = "enabling-version-control.html"
 
   override suspend fun performStep(project: Project, disposable: CheckedDisposable): NewUiOnboardingStepData? {
-    val button = NewUiOnboardingUtil.findUiComponent(project) { button: ToolbarComboButton ->
+    val button = UiComponentsSearchUtil.findUiComponent(project) { button: ToolbarComboButton ->
       ClientProperty.get(button, CustomComponentAction.ACTION_KEY) is GitToolbarWidgetAction
     } ?: return null
 
@@ -38,7 +40,7 @@ open class GitWidgetStep : NewUiOnboardingStep {
     val dataContext = DataManager.getInstance().getDataContext(button)
     val state = withContext(Dispatchers.Default) {
       readAction {
-        GitToolbarWidgetAction.getWidgetState(project, dataContext)
+        GitToolbarWidgetAction.getWidgetState(project, DvcsUtil.getSelectedFile(dataContext))
       }
     }
 

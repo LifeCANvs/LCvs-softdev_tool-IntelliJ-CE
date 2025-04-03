@@ -50,7 +50,7 @@ internal class NonDefaultConstructorInspection : DevKitUastInspectionBase(UClass
     // hack, allow Project-level @Service
     var isServiceAnnotation = false
     var extensionPoint: ExtensionPoint? = null
-    if (isLightService(aClass)) {
+    if (isLightService(javaPsi)) {
       area = null
       isService = true
       isServiceAnnotation = true
@@ -202,7 +202,7 @@ private fun findExtensionPointByImplementationClass(searchString: String, qualif
 @NonNls
 private val ignoredTagNames = java.util.Set.of("semContributor", "modelFacade", "scriptGenerator",
                                                "editorActionHandler", "editorTypedHandler",
-                                               "dataImporter", "java.error.fix", "explainPlanProvider", "typeIcon")
+                                               "dataImporter", "explainPlanProvider", "typeIcon")
 
 // problem - tag
 //<lang.elementManipulator forClass="com.intellij.psi.css.impl.CssTokenImpl"

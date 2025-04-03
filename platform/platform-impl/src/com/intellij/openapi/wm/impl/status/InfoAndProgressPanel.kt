@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplacePutWithAssignment")
 @file:OptIn(FlowPreview::class)
 
@@ -15,16 +15,16 @@ import com.intellij.ide.ui.UISettingsListener
 import com.intellij.idea.ActionsBundle
 import com.intellij.internal.statistic.service.fus.collectors.UIEventLogger.ProgressPaused
 import com.intellij.internal.statistic.service.fus.collectors.UIEventLogger.ProgressResumed
-import com.intellij.notification.ActionCenter
+import com.intellij.notification.impl.ApplicationNotificationsModel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.fileEditor.impl.MergingUpdateChannel
+import com.intellij.openapi.progress.ProgressModel
 import com.intellij.openapi.progress.TaskInfo
 import com.intellij.openapi.progress.impl.ProgressSuspender
 import com.intellij.openapi.progress.impl.ProgressSuspender.SuspenderListener
-import com.intellij.openapi.progress.util.AbstractProgressIndicatorExBase
 import com.intellij.openapi.progress.util.TitledIndicator
 import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.panel.ProgressPanel
@@ -37,7 +37,6 @@ import com.intellij.openapi.util.NlsContexts
 import com.intellij.openapi.util.Pair
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.registry.Registry
-import com.intellij.openapi.wm.ex.ProgressIndicatorEx
 import com.intellij.platform.util.coroutines.flow.throttle
 import com.intellij.reference.SoftReference
 import com.intellij.ui.*
@@ -65,7 +64,6 @@ import java.awt.*
 import java.awt.event.ActionListener
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import java.lang.Runnable
 import java.lang.ref.WeakReference
 import javax.swing.*
 import javax.swing.event.HyperlinkListener
@@ -73,6 +71,7 @@ import kotlin.math.max
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
+@ApiStatus.Internal
 class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatusBarImpl,
                                                 private val coroutineScope: CoroutineScope) : UISettingsListener {
   companion object {
@@ -97,24 +96,24 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
   private val balloon = ProcessBalloon(3)
 
   private val mainPanel = InfoAndProgressPanelImpl(this)
+  @get:JvmName("getComponent")
   internal val component: JPanel
     get() = mainPanel
 
-  private val originals = ArrayList<ProgressIndicatorEx>()
+  private val originals = ArrayList<ProgressModel>()
   private val infos = ArrayList<TaskInfo>()
-  private var inlineToOriginal = UnmodifiableHashMap.empty<MyInlineProgressIndicator, ProgressIndicatorEx>()
-  private val originalToInlines = HashMap<ProgressIndicatorEx, MutableSet<MyInlineProgressIndicator>>()
+  private var inlineToOriginal = UnmodifiableHashMap.empty<MyProgressComponent, ProgressModel>()
+  private val originalToInlines = HashMap<ProgressModel, MutableSet<MyProgressComponent>>()
   private var shouldClosePopupAndOnProcessFinish = false
   private var currentRequestor: String? = null
   private var disposed = false
   private var lastShownBalloon: WeakReference<Balloon>? = null
-  private val dirtyIndicators = ReferenceOpenHashSet<InlineProgressIndicator>()
+  private val dirtyIndicators = ReferenceOpenHashSet<ProgressComponent>()
 
   private val runQueryRequests = MutableSharedFlow<Unit>(replay = 1, onBufferOverflow = BufferOverflow.DROP_LATEST)
   private val updateRequests = MutableSharedFlow<Unit>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-  @Suppress("RemoveExplicitTypeArguments")
-  private val removeProgressRequests = MergingUpdateChannel<MyInlineProgressIndicator>(delay = 50.milliseconds) { toUpdate ->
+  private val removeProgressRequests = MergingUpdateChannel<MyProgressComponent>(delay = 50.milliseconds) { toUpdate ->
     withContext(Dispatchers.EDT) {
       for (indicator in toUpdate) {
         removeProgress(indicator)
@@ -151,7 +150,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       updateRequests
         .throttle(50)
         .collect {
-          var indicators: List<InlineProgressIndicator>
+          var indicators: List<ProgressComponent>
           synchronized(dirtyIndicators) {
             indicators = ArrayList(dirtyIndicators)
             dirtyIndicators.clear()
@@ -207,14 +206,14 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
     }
   }
 
-  val backgroundProcesses: List<Pair<TaskInfo, ProgressIndicatorEx>>
+  val backgroundProcesses: List<Pair<TaskInfo, ProgressModel>>
     get() {
       synchronized(originals) {
         if (disposed || originals.isEmpty()) {
           return emptyList()
         }
 
-        val result = ArrayList<Pair<TaskInfo, ProgressIndicatorEx>>(originals.size)
+        val result = ArrayList<Pair<TaskInfo, ProgressModel>>(originals.size)
         for (i in originals.indices) {
           result.add(Pair(infos[i], originals[i]))
         }
@@ -232,7 +231,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
   }
 
   @RequiresEdt
-  fun addProgress(original: ProgressIndicatorEx, info: TaskInfo) {
+  fun addProgress(original: ProgressModel, info: TaskInfo) {
     // `openProcessPopup` may require the dispatch thread
     ThreadingAssertions.assertEventDispatchThread()
     synchronized(originals) {
@@ -266,7 +265,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
   private fun hasProgressIndicators(): Boolean = synchronized(originals) { !originals.isEmpty() }
 
   @RequiresEdt
-  private fun removeProgress(progress: MyInlineProgressIndicator) {
+  private fun removeProgress(progress: MyProgressComponent) {
     ThreadingAssertions.assertEventDispatchThread()
     synchronized(originals) {
       // already disposed
@@ -297,7 +296,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
     }
   }
 
-  private fun removeFromMaps(progress: MyInlineProgressIndicator): ProgressIndicatorEx? {
+  private fun removeFromMaps(progress: MyProgressComponent): ProgressModel? {
     val original = inlineToOriginal.get(progress)
     inlineToOriginal = inlineToOriginal.without(progress)
     synchronized(dirtyIndicators) { dirtyIndicators.remove(progress) }
@@ -326,7 +325,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       })
       var index = -1
       for (i in 0 until size) {
-        val suspender = ProgressSuspender.getSuspender(originals[indexes[i]])
+        val suspender = ProgressSuspender.getSuspender(originals[indexes[i]].getProgressIndicator())
         if (suspender == null || !suspender.isSuspended) {
           index = i
           break
@@ -366,11 +365,11 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       return text
     }
 
-    if (text.isNullOrEmpty() && requestor != currentRequestor && ActionCenter.EVENT_REQUESTOR != requestor) {
+    if (text.isNullOrEmpty() && requestor != currentRequestor && ApplicationNotificationsModel.EVENT_REQUESTOR != requestor) {
       return mainPanel.statusPanel.text
     }
-    val logMode = mainPanel.statusPanel.updateText(if (ActionCenter.EVENT_REQUESTOR == requestor) "" else text)
-    currentRequestor = if (logMode) ActionCenter.EVENT_REQUESTOR else requestor
+    val logMode = mainPanel.statusPanel.updateText(if (ApplicationNotificationsModel.EVENT_REQUESTOR == requestor) "" else text)
+    currentRequestor = if (logMode) ApplicationNotificationsModel.EVENT_REQUESTOR else requestor
     return text
   }
 
@@ -430,7 +429,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
     return BalloonHandler { SwingUtilities.invokeLater(Runnable { balloon.hide() }) }
   }
 
-  private fun createInlineDelegate(info: TaskInfo, original: ProgressIndicatorEx, compact: Boolean): MyInlineProgressIndicator {
+  private fun createInlineDelegate(info: TaskInfo, original: ProgressModel, compact: Boolean): MyProgressComponent {
     val inlines = originalToInlines.computeIfAbsent(original) { HashSet() }
     if (!inlines.isEmpty()) {
       for (eachInline in inlines) {
@@ -439,7 +438,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
         }
       }
     }
-    val inline = if (compact) MyInlineProgressIndicator(info, original) else ProgressPanelProgressIndicator(info, original)
+    val inline = if (compact) MyProgressComponent(info, original) else ProgressPanelProgressComponent(info, original)
     inlineToOriginal = inlineToOriginal.with(inline, original)
     inlines.add(inline)
     if (compact) {
@@ -470,7 +469,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
     val progressIcon = mainPanel.inlinePanel.progressIcon
     if (originals.isEmpty() ||
         PowerSaveMode.isEnabled() ||
-        originals.asSequence().mapNotNull { ProgressSuspender.getSuspender(it) }.all { it.isSuspended }) {
+        originals.asSequence().mapNotNull { ProgressSuspender.getSuspender(it.getProgressIndicator()) }.all { it.isSuspended }) {
       progressIcon.suspend()
     }
     else {
@@ -585,7 +584,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       }
     }
 
-    fun removeProgress(progress: MyInlineProgressIndicator, last: Boolean) {
+    fun removeProgress(progress: MyProgressComponent, last: Boolean) {
       if (last) {
         updateNavBarAutoscrollToSelectedLimit(AutoscrollLimit.UNLIMITED)
         inlinePanel.updateState(null)
@@ -601,11 +600,11 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       }
     }
 
-    fun updateProgress(compact: MyInlineProgressIndicator) {
+    fun updateProgress(compact: MyProgressComponent) {
       inlinePanel.updateProgress(compact)
     }
 
-    fun updateProgressState(delegate: MyInlineProgressIndicator?) {
+    fun updateProgressState(delegate: MyProgressComponent?) {
       inlinePanel.updateState(delegate)
     }
 
@@ -622,12 +621,28 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
     }
   }
 
-  private inner class ProgressPanelProgressIndicator(task: TaskInfo, original: ProgressIndicatorEx) :
-    MyInlineProgressIndicator(compact = false, task = task, original = original) {
+  private inner class ProgressPanelProgressComponent(task: TaskInfo, original: ProgressModel) :
+    MyProgressComponent(compact = false, task = task, progressModel = original) {
     private val progressPanel = ProgressPanel.getProgressPanel(progress)!!
     private val cancelButton: InplaceButton?
     private val suspendButton: InplaceButton?
     private val suspendUpdateRunnable: Runnable
+
+    override var processNameValue: @NlsContexts.ProgressTitle String?
+      get() = progressPanel.labelText
+      set(value) {progressPanel.setLabelText(value)}
+
+    override var textValue: String?
+      get() = progressPanel.getCommentText()
+      set(value) {
+        progressPanel.setCommentText(value)
+      }
+
+    override var text2Value: String?
+      get() = super.text2Value
+      set(value) {
+        progressPanel.setText2(value)
+      }
 
     init {
       ClientProperty.put(component, ProcessPopup.KEY, progressPanel)
@@ -635,7 +650,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       cancelButton.setPainting(task.isCancellable())
       suspendButton = progressPanel.getSuspendButton()!!
       suspendUpdateRunnable = createSuspendUpdateRunnable(suspendButton)
-      setProcessNameValue(task.getTitle())
+      processNameValue = task.getTitle()
 
       // TODO: update javadoc for ProgressIndicator
     }
@@ -663,32 +678,12 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       return builder.createPanel()
     }
 
-    override fun getTextValue(): String? {
-      return progressPanel.getCommentText()
-    }
-
-    override fun setTextValue(text: String) {
-      progressPanel.setCommentText(text)
-    }
-
     override fun setTextEnabled(value: Boolean) {
       progressPanel.setCommentEnabled(value)
     }
 
-    override fun setText2Value(text: String) {
-      progressPanel.setText2(text)
-    }
-
     override fun setText2Enabled(value: Boolean) {
       progressPanel.setText2Enabled(value)
-    }
-
-    override fun setProcessNameValue(text: String) {
-      progressPanel.setLabelText(text)
-    }
-
-    override fun getProcessNameValue(): String {
-      return progressPanel.labelText
     }
 
     override fun updateProgressNow() {
@@ -698,9 +693,15 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
     }
   }
 
-  internal open inner class MyInlineProgressIndicator(compact: Boolean, task: TaskInfo, original: ProgressIndicatorEx)
-    : InlineProgressIndicator(compact, task), TitledIndicator {
-    private var original: ProgressIndicatorEx?
+  internal open inner class MyProgressComponent(compact: Boolean, task: TaskInfo, progressModel: ProgressModel)
+    : ProgressComponent(compact, task, progressModel), TitledIndicator {
+    private var original: ProgressModel?
+
+    override fun getText(): @NlsContexts.ProgressText String? {
+      val text = (indicatorModel.getText() ?: "")
+      val suspender = suspender
+      return if (suspender != null && suspender.isSuspended) suspender.suspendedText else text
+    }
 
     @JvmField
     var presentationModeProgressPanel: PresentationModeProgressPanel? = null
@@ -711,36 +712,26 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
     @JvmField
     var presentationModeShowBalloon: Boolean = false
 
-    constructor(task: TaskInfo, original: ProgressIndicatorEx) : this(compact = true, task = task, original = original)
+    constructor(task: TaskInfo, original: ProgressModel) : this(compact = true, task = task, progressModel = original)
 
     init {
-      this.original = original
-      @Suppress("LeakingThis")
-      original.addStateDelegate(this)
-      addStateDelegate(object : AbstractProgressIndicatorExBase() {
-        override fun cancel() {
-          super.cancel()
-          queueProgressUpdate()
-        }
-      })
+      this.original = progressModel
     }
 
     override fun createCompactTextAndProgress(component: JPanel) {
-      text.setTextAlignment(Component.RIGHT_ALIGNMENT)
-      text.recomputeSize()
-      UIUtil.setCursor(text, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
+      textPanel.setTextAlignment(Component.RIGHT_ALIGNMENT)
+      textPanel.recomputeSize()
+      UIUtil.setCursor(textPanel, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
       UIUtil.setCursor(progress, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
       super.createCompactTextAndProgress(component)
       (progress.parent as JComponent).setBorder(JBUI.Borders.empty(0, 8, 0, 4))
     }
 
-    open fun canCheckPowerSaveMode(): Boolean = true
-
-    override fun getText(): String {
-      val text = (super.getText() ?: "")
-      val suspender = suspender
-      return if (suspender != null && suspender.isSuspended) suspender.suspendedText else text
+    override fun onFinish() {
+      removeProgressRequests.queue(this@MyProgressComponent)
     }
+
+    open fun canCheckPowerSaveMode(): Boolean = true
 
     override fun createEastButtons(): List<ProgressButton> {
       return listOf(createSuspendButton()) + super.createEastButtons()
@@ -823,23 +814,10 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
 
     protected val suspender: ProgressSuspender?
       get() {
-        return ProgressSuspender.getSuspender(original ?: return null)
+        return ProgressSuspender.getSuspender(original?.getProgressIndicator() ?: return null)
       }
 
-    override fun stop() {
-      super.stop()
-      queueProgressUpdate()
-    }
-
-    override fun isFinished(): Boolean {
-      val info = info
-      return info == null || isFinished(info)
-    }
-
-    override fun finish(task: TaskInfo) {
-      super.finish(task)
-      removeProgressRequests.queue(this)
-    }
+    override val isFinished: Boolean = indicatorModel.isFinished(info)
 
     override fun dispose() {
       super.dispose()
@@ -850,7 +828,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       original!!.cancel()
     }
 
-    public override fun queueProgressUpdate() {
+    override fun queueProgressUpdate() {
       synchronized(dirtyIndicators) { dirtyIndicators.add(this) }
       check(updateRequests.tryEmit(Unit))
     }
@@ -893,7 +871,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       for (i in 0 until count) {
         val size = parent.getComponent(i).preferredSize
         result.width += size.width
-        result.height = max(result.height.toDouble(), size.height.toDouble()).toInt()
+        result.height = max(result.height, size.height)
       }
       return result
     }
@@ -938,7 +916,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
     }
 
     val progressIcon: AsyncProcessIcon = AsyncProcessIcon(host.coroutineScope)
-    var indicator: InfoAndProgressPanel.MyInlineProgressIndicator? = null
+    var indicator: MyProgressComponent? = null
     private var processIconComponent: AsyncProcessIcon? = null
     private val multiProcessLink: ActionLink = object : ActionLink("", ActionListener { host.triggerPopupShowing() }) {
       override fun updateUI() {
@@ -972,16 +950,16 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
             if (component.isVisible) {
               val size = component.getPreferredSize()
               result.width += size.width
-              result.height = max(result.height.toDouble(), size.height.toDouble()).toInt()
+              result.height = max(result.height, size.height)
             }
           }
           if (multiProcessLink.isVisible) {
             val size = multiProcessLink.getPreferredSize()
             result.width += (if (result.width > 0) gap else 0) + size.width
-            result.height = max(result.height.toDouble(), size.height.toDouble()).toInt()
+            result.height = max(result.height, size.height)
           }
           if (processIconComponent != null) {
-            result.height = max(result.height.toDouble(), processIconComponent!!.getPreferredSize().height.toDouble()).toInt()
+            result.height = max(result.height, processIconComponent!!.getPreferredSize().height)
           }
           JBInsets.addTo(result, parent.insets)
           return result
@@ -1004,7 +982,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
             var indicatorSize: Dimension? = null
             if (preferredWidth > width) {
               val progressWidth2x = this@InlineProgressPanel.indicator!!.progress.getPreferredSize().width * 2
-              if (width > progressWidth2x && this@InlineProgressPanel.indicator!!.text.getPreferredSize().width > progressWidth2x) {
+              if (width > progressWidth2x && this@InlineProgressPanel.indicator!!.textPanel.getPreferredSize().width > progressWidth2x) {
                 preferredWidth = width
                 indicatorSize = Dimension(width, indicator.getPreferredSize().height)
                 if (multiProcessLink.isVisible) {
@@ -1024,27 +1002,27 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
                 if (multiProcessLink.isVisible) {
                   multiProcessLink.setBounds(0, 0, 0, 0)
                 }
-                Companion.setBounds(processIconComponent, 0, centerY, iconSize, false)
+                setBounds(processIconComponent, 0, centerY, iconSize, false)
               }
               else {
                 var miniWidth = true
                 if (multiProcessLink.isVisible) {
-                  rightX = Companion.setBounds(multiProcessLink, rightX, centerY, null, true) - gap
+                  rightX = setBounds(multiProcessLink, rightX, centerY, null, true) - gap
                 }
                 else if (width < 60) {
                   rightX = 0
                   miniWidth = false
                 }
-                Companion.setBounds(processIconComponent, rightX, centerY, iconSize, miniWidth)
+                setBounds(processIconComponent, rightX, centerY, iconSize, miniWidth)
               }
               processIconComponent!!.isVisible = true
             }
             else {
               hideProcessIcon()
               if (multiProcessLink.isVisible) {
-                rightX = Companion.setBounds(multiProcessLink, rightX, centerY, null, true) - gap
+                rightX = setBounds(multiProcessLink, rightX, centerY, null, true) - gap
               }
-              Companion.setBounds(indicator, rightX, centerY, indicatorSize, true)
+              setBounds(indicator, rightX, centerY, indicatorSize, true)
             }
           }
           else {
@@ -1053,12 +1031,12 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
             if (preferredWidth > width) {
               multiProcessLink.setBounds(0, 0, 0, 0)
               addProcessIcon()
-              Companion.setBounds(processIconComponent, x, centerY, null, false)
+              setBounds(processIconComponent, x, centerY, null, false)
               processIconComponent!!.isVisible = true
             }
             else {
               hideProcessIcon()
-              Companion.setBounds(multiProcessLink, rightX, centerY, linkSize, true)
+              setBounds(multiProcessLink, rightX, centerY, linkSize, true)
             }
           }
         }
@@ -1080,7 +1058,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       }
     }
 
-    fun updateProgress(compact: InfoAndProgressPanel.MyInlineProgressIndicator?) {
+    fun updateProgress(compact: MyProgressComponent?) {
       if (indicator == null) {
         updateState(compact)
       }
@@ -1089,7 +1067,7 @@ class InfoAndProgressPanel internal constructor(private val statusBar: IdeStatus
       }
     }
 
-    fun updateState(indicator: InfoAndProgressPanel.MyInlineProgressIndicator?) {
+    fun updateState(indicator: MyProgressComponent?) {
       if (rootPane == null) {
         return  // e.g., project frame is closed
       }

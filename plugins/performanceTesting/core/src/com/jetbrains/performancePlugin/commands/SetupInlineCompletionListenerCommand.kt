@@ -25,25 +25,34 @@ class SetupInlineCompletionListenerCommand(text: String, line: Int) : PlaybackCo
   companion object {
     const val PREFIX: @NonNls String = CMD_PREFIX + "setupInlineCompletionListener"
     const val SPAN_NAME: @NonNls String = "inlineCompletion"
+    const val ON_SHOW_SPAN_NAME: @NonNls String = SPAN_NAME + "OnShow"
+    const val ON_COMPLETION_SPAN_NAME: @NonNls String = SPAN_NAME + "OnCompletion"
+    const val ON_HIDE_SPAN_NAME: @NonNls String = SPAN_NAME + "OnHide"
     private val listeners: MutableMap<Editor, InlineCompletionEventListener> = mutableMapOf()
   }
 
   override suspend fun doExecute(context: PlaybackContext) {
-    val project = context.project
-    val editor = readAction { FileEditorManager.getInstance(project).getSelectedTextEditor() ?: error("editor is null") }
+    val editor = readAction { FileEditorManager.getInstance(context.project).getSelectedTextEditor() ?: error("editor is null") }
     val handler = InlineCompletion.getHandlerOrNull(editor) ?: throw IllegalStateException("InlineCompletion handler is null")
     val currentOTContext = Context.current()
-    if (listeners.containsKey(editor)) {
-      handler.removeEventListener(listeners[editor]!!)
-    }
+
+    listeners[editor]?.let(handler::removeEventListener)
+
     val l = object : InlineCompletionEventAdapter {
       private var spanShow: Span? = null
       private var spanHide: Span? = null
+      private var completionSpan: Span? = null
       override fun onRequest(event: InlineCompletionEventType.Request) {
         currentOTContext.makeCurrent().use {
-          spanShow = PerformanceTestSpan.TRACER.spanBuilder(SPAN_NAME + "Show").startSpan()
-          spanHide = PerformanceTestSpan.TRACER.spanBuilder(SPAN_NAME + "Hide").startSpan()
+          spanShow = PerformanceTestSpan.TRACER.spanBuilder(ON_SHOW_SPAN_NAME).startSpan()
+          spanHide = PerformanceTestSpan.TRACER.spanBuilder(ON_HIDE_SPAN_NAME).startSpan()
+          completionSpan = PerformanceTestSpan.TRACER.spanBuilder(ON_COMPLETION_SPAN_NAME).startSpan()
         }
+      }
+
+      override fun onCompletion(event: InlineCompletionEventType.Completion) {
+        completionSpan?.end()
+        completionSpan = null
       }
 
       override fun onHide(event: InlineCompletionEventType.Hide) {

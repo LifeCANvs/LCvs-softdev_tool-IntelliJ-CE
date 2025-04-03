@@ -24,7 +24,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
-import java.util.EnumSet;
 import java.util.List;
 
 public class GenerateGetterSetterTest extends LightJavaCodeInsightFixtureTestCase {
@@ -400,6 +399,41 @@ public class GenerateGetterSetterTest extends LightJavaCodeInsightFixtureTestCas
                             """);
   }
 
+  public void testPrimitivesWithTypeUseAnnotations() {
+    myFixture.configureByText("a.java", """
+       import java.lang.annotation.ElementType;
+       import java.lang.annotation.Target;
+      
+       class TestField {
+           private @Anno int field<caret>;
+       }
+      
+       @Target(ElementType.TYPE_USE)
+       @interface Anno {}
+       """);
+    generateGetter();
+    generateSetter();
+    myFixture.checkResult("""
+                            import java.lang.annotation.ElementType;
+                            import java.lang.annotation.Target;
+                            
+                            class TestField {
+                                public void setField(int field) {
+                                    this.field = field;
+                                }
+                            
+                                public int getField() {
+                                    return field;
+                                }
+                            
+                                private @Anno int field;
+                            }
+                            
+                            @Target(ElementType.TYPE_USE)
+                            @interface Anno {}
+                            """);
+  }
+
   public void testLombokGeneratedFieldsWithoutContainingFile() {
     ServiceContainerUtil.registerExtension(ApplicationManager.getApplication(), GenerateAccessorProviderRegistrar.EP_NAME,
                                            new NotNullFunction<PsiClass, Collection<EncapsulatableClassMember>>() {
@@ -464,8 +498,8 @@ public class GenerateGetterSetterTest extends LightJavaCodeInsightFixtureTestCas
       }
 
       @Override
-      protected @NotNull EnumSet<EncapsulatableClassMember.Option> getOptions() {
-        return allAnnotations ? EnumSet.of(EncapsulatableClassMember.Option.COPY_ALL_ANNOTATIONS) : super.getOptions();
+      protected @NotNull GetterSetterGenerationOptions getOptions() {
+        return allAnnotations ? new GetterSetterGenerationOptions(true) : super.getOptions();
       }
     }.invoke(getProject(), myFixture.getEditor(), myFixture.getFile());
     UIUtil.dispatchAllInvocationEvents();
@@ -564,8 +598,8 @@ public class GenerateGetterSetterTest extends LightJavaCodeInsightFixtureTestCas
       }
 
       @Override
-      protected @NotNull EnumSet<EncapsulatableClassMember.Option> getOptions() {
-        return allAnnotations ? EnumSet.of(EncapsulatableClassMember.Option.COPY_ALL_ANNOTATIONS) : super.getOptions();
+      protected @NotNull GetterSetterGenerationOptions getOptions() {
+        return allAnnotations ? new GetterSetterGenerationOptions(true) : super.getOptions();
       }
     }.invoke(getProject(), myFixture.getEditor(), myFixture.getFile());
     UIUtil.dispatchAllInvocationEvents();

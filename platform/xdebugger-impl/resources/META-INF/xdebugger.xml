@@ -12,6 +12,7 @@
     <extensionPoint name="xdebugger.breakpointGroupingRule" interface="com.intellij.xdebugger.breakpoints.ui.XBreakpointGroupingRule" dynamic="true"/>
     <extensionPoint name="xdebugger.debuggerSupport" interface="com.intellij.xdebugger.impl.DebuggerSupport" dynamic="true"/>
     <extensionPoint name="xdebugger.configurableProvider" interface="com.intellij.xdebugger.settings.DebuggerConfigurableProvider" dynamic="true"/>
+    <extensionPoint name="xdebugger.nodeLinkActionProvider" interface="com.intellij.xdebugger.impl.collection.visualizer.XDebuggerNodeLinkActionProvider" dynamic="true"/>
 
     <extensionPoint name="xdebugger.attachHostProvider" interface="com.intellij.xdebugger.attach.XAttachHostProvider" dynamic="true"/>
     <extensionPoint name="xdebugger.attachDebuggerProvider" interface="com.intellij.xdebugger.attach.XAttachDebuggerProvider" dynamic="true"/>
@@ -24,8 +25,22 @@
     <extensionPoint name="xdebugger.inlineBreakpointsDisabler" interface="com.intellij.xdebugger.breakpoints.InlineBreakpointsDisabler" dynamic="true"/>
 
     <extensionPoint name="xdebugger.textValueVisualizer" interface="com.intellij.xdebugger.ui.TextValueVisualizer" dynamic="true"/>
+    <extensionPoint name="xdebugger.controlExceptionBreakpointSupport" interface="com.intellij.xdebugger.codeinsight.ControlExceptionBreakpointSupport" dynamic="true"/>
 
     <extensionPoint name="xdebugger.hotSwapUiExtension" interface="com.intellij.xdebugger.impl.hotswap.HotSwapUiExtension" dynamic="true"/>
+
+    <extensionPoint name="xdebugger.customEvaluateHandler"
+                    interface="com.intellij.xdebugger.impl.actions.handlers.XDebuggerCustomEvaluateHandler" dynamic="true"/>
+
+    <extensionPoint name="xdebugger.customMuteBreakpointHandler"
+                    interface="com.intellij.xdebugger.impl.actions.handlers.XDebuggerCustomMuteBreakpointHandler" dynamic="true"/>
+
+    <extensionPoint name="xdebugger.xValueCustomDescriptorSerializerProvider"
+                    interface="com.intellij.xdebugger.frame.XValueCustomDescriptorSerializerProvider" dynamic="true"/>
+    <extensionPoint name="xdebugger.consoleViewDataConverter" interface="com.intellij.xdebugger.impl.rpc.XDebuggerConsoleViewConverter"
+                    dynamic="true"/>
+    <extensionPoint name="xdebugger.currentSessionProxyProvider" interface="com.intellij.xdebugger.impl.frame.CurrentXDebugSessionProxyProvider"
+                    dynamic="true"/>
   </extensionPoints>
 
   <extensions defaultExtensionNs="com.intellij">
@@ -38,12 +53,12 @@
     <applicationService serviceInterface="com.intellij.xdebugger.XDebuggerUtil"
                         serviceImplementation="com.intellij.xdebugger.impl.XDebuggerUtilImpl"/>
 
-
     <projectService overrides="true" serviceInterface="com.intellij.execution.InlineResumeCreator" serviceImplementation="com.intellij.xdebugger.impl.runToolbar.XDebuggerInlineResumeCreator"/>
     <projectService serviceInterface="com.intellij.xdebugger.XDebuggerManager"
                     serviceImplementation="com.intellij.xdebugger.impl.XDebuggerManagerImpl"
                     preload="notLightEdit"/>
-    <projectService serviceImplementation="com.intellij.xdebugger.impl.evaluate.quick.common.ValueLookupManager"/>
+    <ide.dynamicPluginVetoer implementation="com.intellij.xdebugger.impl.XDebuggerManagerImpl$XDebuggerPluginVetoer"/>
+
     <projectService serviceImplementation="com.intellij.xdebugger.impl.inline.DebuggerInlayListener"/>
     <projectService serviceImplementation="com.intellij.xdebugger.impl.XDebuggerLineChangeIconProvider"/>
 
@@ -51,12 +66,10 @@
 
     <pathMacroFilter implementation="com.intellij.xdebugger.impl.XDebuggerHistoryManager$XDebuggerHistoryPathMacroFilter"/>
 
-    <applicationConfigurable groupId="build" dynamic="true" groupWeight="120" key="debugger.configurable.display.name" bundle="messages.XDebuggerBundle"
+    <applicationConfigurable groupId="build" dynamic="true" key="debugger.configurable.display.name" bundle="messages.XDebuggerBundle"
                              id="project.propDebugger" provider="com.intellij.xdebugger.impl.settings.DebuggerConfigurableProvider"/>
 
     <customizableActionGroupProvider implementation="com.intellij.xdebugger.impl.ui.XDebugTabCustomizableActionGroupProvider"/>
-
-    <xdebugger.debuggerSupport implementation="com.intellij.xdebugger.impl.XDebuggerSupport" order="first" id="XDebuggerSupport"/>
 
     <xdebugger.breakpointGroupingRule implementation="com.intellij.xdebugger.impl.breakpoints.ui.grouping.XBreakpointGroupingByTypeRule"/>
     <xdebugger.breakpointGroupingRule implementation="com.intellij.xdebugger.impl.breakpoints.ui.grouping.XBreakpointFileGroupingRule"/>
@@ -110,6 +123,8 @@
 
     <projectService serviceImplementation="com.intellij.xdebugger.memory.component.InstancesTracker" />
 
+    <projectService serviceImplementation="com.intellij.xdebugger.impl.frame.XDebuggerExecutionStackDescriptionService" />
+
     <titleInfoProvider implementation="com.intellij.xdebugger.impl.ui.DebuggerTitleInfoProvider"/>
     <notificationGroup id="Debugger messages" displayType="TOOL_WINDOW" toolWindowId="Debug" isLogByDefault="false" bundle="messages.XDebuggerBundle" key="notification.group.debugger.messages"/>
     <notificationGroup id="HotSwap Messages" displayType="BALLOON" bundle="messages.XDebuggerBundle" key="notification.group.debugger.hotswap.messages" isLogByDefault="false"/>
@@ -139,8 +154,28 @@
     <xdebugger.textValueVisualizer implementation="com.intellij.xdebugger.impl.ui.visualizedtext.common.JsonTextVisualizer"/>
     <xdebugger.textValueVisualizer implementation="com.intellij.xdebugger.impl.ui.visualizedtext.common.JwtTextVisualizer"/>
     <xdebugger.textValueVisualizer implementation="com.intellij.xdebugger.impl.ui.visualizedtext.common.UrlEncodedTextVisualizer"/>
+    <xdebugger.currentSessionProxyProvider implementation="com.intellij.xdebugger.impl.frame.MonolithCurrentSessionProxyProvider"
+                                           order="first"/>
 
-    <editorFloatingToolbarProvider implementation="com.intellij.xdebugger.impl.hotswap.HotSwapFloatingToolbarProvider"/>
+    <runDashboardCustomizer implementation="com.intellij.xdebugger.impl.dashboard.XDebuggerRunDashboardCustomizer" order="first"/>
+    <platform.entityTypes implementation="com.intellij.xdebugger.impl.evaluate.XDebuggerValueLookupEntityTypesProvider"/>
+
+    <registryKey defaultValue="false"
+                 description="Enables frontend based actions in evaluation trees. Please, enable it only on the frontend side."
+                 key="debugger.frontend.tree.actions"/>
+
+    <registryKey defaultValue="false"
+                 description="Enables remove/disable all but this breakpoint actions"
+                 key="debugger.remove.disable.actions"/>
+
+    <registryKey defaultValue="false"
+                 description="Debugger toolwindow implementation for split mode"
+                 key="xdebugger.toolwindow.split"/>
+
+    <intentionAction>
+      <language>UAST</language>
+      <className>com.intellij.xdebugger.impl.codeinsight.ControlExceptionBreakpointIntentionAction</className>
+    </intentionAction>
   </extensions>
 
   <actions>
@@ -150,6 +185,11 @@
     <group id="XDebugger.AttachGroup">
       <action id="XDebugger.AttachToProcess" class="com.intellij.xdebugger.impl.actions.AttachToProcessAction"/>
       <add-to-group group-id="RunMenu" anchor="before" relative-to-action="editRunConfigurations"/>
+    </group>
+
+    <group id="ToolbarPopupActions.XDebugger.ToolWindow.TopToolbar3">
+      <group id="DebugToolbarQuickActions" class="com.intellij.xdebugger.impl.actions.DebuggerToolbarQuickActionsGroup" searchable="false"
+             popup="true"/>
     </group>
 
     <group>
@@ -202,14 +242,12 @@
 
     <group id="XDebugger.RunToCursorInlayExtraActions">
     </group>
-
-    <action id="XDebugger.Hotswap.Modified.Files" class="com.intellij.xdebugger.impl.hotswap.HotSwapModifiedFilesAction">
-      <add-to-group group-id="DebugReloadGroup" anchor="first"/>
-    </action>
   </actions>
 
   <projectListeners>
     <listener class="com.intellij.xdebugger.impl.breakpoints.BreakpointVariantPriorityTracker"
               topic="com.intellij.xdebugger.breakpoints.XBreakpointListener"/>
+    <listener class="com.intellij.xdebugger.impl.dashboard.XDebuggerRunDashboardUpdater"
+              topic="com.intellij.execution.ExecutionListener"/>
   </projectListeners>
 </idea-plugin>

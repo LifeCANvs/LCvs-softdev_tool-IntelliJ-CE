@@ -236,6 +236,13 @@ fun <T : CommandChain> T.inspectCodeEx(
   addCommand("${CMD_PREFIX}InspectCodeEx" + resultCommand)
 }
 
+fun <T : CommandChain> T.configureNamedScope(
+  scopeName: String,
+  pattern: String,
+): T = apply {
+  addCommand("${CMD_PREFIX}configureNamedScope -scopeName $scopeName -pattern $pattern")
+}
+
 fun <T : CommandChain> T.checkOnRedCode(): T = apply {
   addCommand("${CMD_PREFIX}codeAnalysis ${CodeAnalysisType.CHECK_ON_RED_CODE}")
 }
@@ -365,6 +372,10 @@ fun <T : CommandChain> T.openProjectView(): T = apply {
   addCommand("${CMD_PREFIX}openProjectView")
 }
 
+fun <T : CommandChain> T.hideProjectView(): T = apply {
+  addCommand("${CMD_PREFIX}openProjectView false")
+}
+
 fun <T : CommandChain> T.getLibraryPathByName(name: String, path: Path): T = apply {
   addCommand("${CMD_PREFIX}getLibraryPathByName $name,$path")
 }
@@ -380,12 +391,20 @@ fun <T : CommandChain> T.pressKey(key: Keys): T = apply {
   addCommand("${CMD_PREFIX}pressKey", key.name)
 }
 
-fun <T : CommandChain> T.pressKey(vararg key: Keys): T = apply {
-  key.forEach { addCommand("${CMD_PREFIX}pressKey", it.name) }
+fun <T : CommandChain> T.pressKey(vararg keys: Keys): T = apply {
+  keys.forEach { addCommand("${CMD_PREFIX}pressKey", it.name) }
 }
 
 fun <T : CommandChain> T.pressKey(key: Keys, times: Int): T = apply {
   repeat((1..times).count()) { addCommand("${CMD_PREFIX}pressKey", key.name) }
+}
+
+fun <T : CommandChain> T.pressKeyWithDelay(key: Keys, times: Int, timeUnit: TimeUnit, sleepDelay: () -> Long): T = apply {
+  repeat((1..times).count()) {
+    sleep(sleepDelay(), timeUnit)
+    addCommand("${CMD_PREFIX}pressKey", key.name)
+  }
+  sleep(sleepDelay(), timeUnit)
 }
 
 /**
@@ -395,7 +414,7 @@ fun <T : CommandChain> T.delayType(
   delayMs: Int,
   text: String,
   calculateAnalyzesTime: Boolean = false,
-  disableWriteProtection: Boolean = false,
+  disableWriteProtection: Boolean = false
 ): T = apply {
   addCommand("${CMD_PREFIX}delayType", "$delayMs|$text|$calculateAnalyzesTime|$disableWriteProtection")
 }
@@ -820,6 +839,11 @@ fun <T : CommandChain> T.moveFiles(moveFileData: MoveFilesData): T = apply {
   addCommand("${CMD_PREFIX}moveFiles $jsonData")
 }
 
+fun <T : CommandChain> T.moveDeclarations(moveDeclarationData: MoveDeclarationsData): T = apply {
+  val jsonData = objectMapper.writeValueAsString(moveDeclarationData)
+  addCommand("${CMD_PREFIX}moveDeclarations $jsonData")
+}
+
 fun <T : CommandChain> T.performGC(): T = apply {
   addCommand("${CMD_PREFIX}performGC")
 }
@@ -986,10 +1010,6 @@ fun <T : CommandChain> T.checkChatBotResponse(textToCheck: String): T = apply {
   addCommand("${CMD_PREFIX}checkResponseContains ${textToCheck}")
 }
 
-fun <T : CommandChain> T.authenticateInGrazie(token: String): T = apply {
-  addCommand("${CMD_PREFIX}authenticateInGrazie ${token}")
-}
-
 fun <T : CommandChain> T.waitFullLineModelLoaded(language: String): T = apply {
   addCommand("${CMD_PREFIX}waitFullLineModelLoaded ${language}")
 }
@@ -1058,10 +1078,6 @@ fun <T : CommandChain> T.logInlineCompletion(): T = apply {
 
 fun <T : CommandChain> T.waitInlineCompletionWarmup(): T = apply {
   addCommand("${CMD_PREFIX}waitInlineCompletion WARMUP")
-}
-
-fun <T : CommandChain> T.clearLLMInlineCompletionCache(): T = apply {
-  addCommand("${CMD_PREFIX}clearLLMInlineCompletionCache")
 }
 
 fun <T : CommandChain> T.waitForVcsLogUpdate(): T = apply {
@@ -1199,4 +1215,82 @@ fun <T : CommandChain> T.startNewSpan(spanName: String): T = apply {
 
 fun <T : CommandChain> T.stopSpan(spanName: String): T = apply {
   addCommand("${CMD_PREFIX}handleSpan $spanName")
+}
+
+/** @see com.jetbrains.performancePlugin.commands.MeasureVfsMassUpdateCommand */
+@Suppress("KDocUnresolvedReference")
+fun <T : CommandChain> T.massCreateFiles(extension: String, numberOfFiles: Int): T = apply {
+  addCommand("${CMD_PREFIX}measureVfsMassUpdate CREATE $extension $numberOfFiles")
+}
+
+/**
+ * @see com.jetbrains.performancePlugin.commands.MeasureVfsMassUpdateCommand
+ * Only works if massCreateFiles() was called before it
+ */
+@Suppress("KDocUnresolvedReference")
+fun <T : CommandChain> T.massModifyFiles(): T = apply {
+  addCommand("${CMD_PREFIX}measureVfsMassUpdate MODIFY")
+}
+
+/**
+ * @see com.jetbrains.performancePlugin.commands.MeasureVfsMassUpdateCommand
+ * Only works if massCreateFiles() was called before it
+ */
+@Suppress("KDocUnresolvedReference")
+fun <T : CommandChain> T.massDeleteFiles(): T = apply {
+  addCommand("${CMD_PREFIX}measureVfsMassUpdate DELETE")
+}
+
+enum class MassVfsRefreshSpan(val spanName: String) {
+  CREATE("vfsRefreshAfterMassCreate"),
+  MODIFY("vfsRefreshAfterMassModify"),
+  DELETE("vfsRefreshAfterMassDelete")
+}
+
+/** @see com.jetbrains.performancePlugin.commands.MeasureVfsMassUpdateCommand */
+@Suppress("KDocUnresolvedReference")
+fun <T : CommandChain> T.refreshVfsAfterMassChange(span: MassVfsRefreshSpan): T = apply {
+  addCommand("${CMD_PREFIX}measureVfsMassUpdate REFRESH ${span.spanName}")
+}
+
+fun <T : CommandChain> T.waitForVfsRefreshSelectedEditor(): T = apply {
+  addCommand("${CMD_PREFIX}waitForVfsRefreshSelectedEditor")
+}
+
+fun <T : CommandChain> T.closeLookup(): T = apply {
+  addCommand("${CMD_PREFIX}closeLookup")
+}
+
+/** @see com.intellij.java.performancePlugin.RenameDirectoryAsPackageCommand */
+@Suppress("KDocUnresolvedReference", "unused")
+enum class RenameDirectoryAsPackageTarget { DIRECTORY, MODULE, PROJECT }
+fun <T : CommandChain> T.renameDirectoryAsPackage(directory: String, newName: String, whereToRename: RenameDirectoryAsPackageTarget): T = apply {
+  addCommand("${CMD_PREFIX}renameDirectoryAsPackage $directory $newName $whereToRename")
+}
+
+/** @see com.intellij.java.performancePlugin.ChangeJavaSignatureCommand */
+@Suppress("KDocUnresolvedReference")
+enum class ChangeJavaSignatureAction { ADD_PARAMETER }
+fun <T : CommandChain> T.changeJavaSignature(action: ChangeJavaSignatureAction, name: String): T = apply {
+  addCommand("${CMD_PREFIX}changeJavaSignature $action $name")
+}
+
+/** @see com.intellij.java.performancePlugin.InlineJavaMethodCommand */
+@Suppress("KDocUnresolvedReference")
+fun <T : CommandChain> T.inlineJavaMethod(): T = apply {
+  addCommand("${CMD_PREFIX}inlineJavaMethod")
+}
+
+/** @see com.intellij.java.performancePlugin.MoveClassToPackageCommand */
+@Suppress("KDocUnresolvedReference")
+fun <T : CommandChain> T.moveClassToPackage(targetPackage: String): T = apply {
+  addCommand("${CMD_PREFIX}moveClassToPackage $targetPackage")
+}
+
+fun <T : CommandChain> T.openProblemViewPanel(): T = apply {
+  addCommand("${CMD_PREFIX}openProblemViewPanel")
+}
+
+fun <T : CommandChain> T.assertProblemViewCount(expectedProblemCount: Int): T = apply {
+  addCommand("${CMD_PREFIX}assertProblemsViewCount $expectedProblemCount")
 }

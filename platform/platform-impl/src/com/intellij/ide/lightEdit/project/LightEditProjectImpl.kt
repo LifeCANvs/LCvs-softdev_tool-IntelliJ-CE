@@ -11,11 +11,12 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.impl.ProjectImpl
-import com.intellij.openapi.project.impl.projectInitListeners
+import com.intellij.openapi.project.impl.ProjectServiceInitializer
 import com.intellij.openapi.roots.FileIndexFacade
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.roots.impl.DirectoryIndex
-import com.intellij.serviceContainer.ComponentManagerImpl
+import com.intellij.platform.project.ProjectEntitiesStorage
+import com.intellij.serviceContainer.getComponentManagerImpl
 import kotlinx.coroutines.launch
 import java.io.File
 import java.nio.file.Path
@@ -24,7 +25,7 @@ private val projectPath: Path
   get() = Path.of(PathManager.getConfigPath() + File.separator + "light-edit")
 
 internal class LightEditProjectImpl private constructor(projectPath: Path) :
-  ProjectImpl(parent = ApplicationManager.getApplication() as ComponentManagerImpl,
+  ProjectImpl(parent = ApplicationManager.getApplication().getComponentManagerImpl(),
               filePath = projectPath,
               projectName = PROJECT_NAME), LightEditCompatible {
   constructor() : this(projectPath)
@@ -32,15 +33,16 @@ internal class LightEditProjectImpl private constructor(projectPath: Path) :
   init {
     registerComponents()
     customizeRegisteredComponents()
-    componentStore.setPath(projectPath, false, null)
+    componentStore.setPath(projectPath, null)
     runUnderModalProgressIfIsEdt {
-      schedulePreloadServices(this@LightEditProjectImpl)
+      val project = this@LightEditProjectImpl
+      ProjectServiceInitializer.initEssential(project)
+      ProjectEntitiesStorage.getInstance().createEntity(project)
+      schedulePreloadServices(project)
       launch {
-        this@LightEditProjectImpl.createComponentsNonBlocking()
+        project.createComponentsNonBlocking()
       }
-      projectInitListeners {
-        it.execute(this@LightEditProjectImpl, workspaceIndexReady = {})
-      }
+      ProjectServiceInitializer.initNonEssential(project)
     }
   }
 

@@ -9,16 +9,17 @@ import fleet.kernel.*
 import fleet.kernel.rebase.RebaseLogger.logger
 import fleet.rpc.client.RpcClientDisconnectedException
 import fleet.rpc.client.durable
-import fleet.rpc.core.Serialization
-import fleet.tracing.span
-import fleet.tracing.spannedScope
+import fleet.reporting.shared.tracing.span
+import fleet.reporting.shared.tracing.spannedScope
 import fleet.util.*
 import fleet.util.async.conflateReduce
 import fleet.util.async.use
 import fleet.util.channels.channels
 import fleet.util.channels.use
+import fleet.fastutil.ints.IntMap
+import fleet.fastutil.ints.partition
+import fleet.multiplatform.shims.AtomicRef
 import fleet.util.logging.logger
-import fleet.util.serialization.ISerialization
 import kotlinx.collections.immutable.toPersistentHashMap
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -34,7 +35,6 @@ import kotlinx.serialization.builtins.serializer
 
 suspend fun withRebaseLoop(
   remoteKernel: RemoteKernel,
-  serialization: Serialization,
   instructionSet: InstructionSet,
   reconnectWhenBroken: Boolean,
   body: suspend CoroutineScope.() -> Unit,
@@ -44,7 +44,7 @@ suspend fun withRebaseLoop(
     launch {
       val rebaseLoop: suspend CoroutineScope.() -> Unit = {
         durable {
-          remoteKernelConnection(ready, remoteKernel, serialization, instructionSet)
+          remoteKernelConnection(ready, remoteKernel, instructionSet)
         }
       }
       if (reconnectWhenBroken) {
@@ -56,10 +56,10 @@ suspend fun withRebaseLoop(
     }.use { rebaseLoop ->
       rebaseLoop.invokeOnCompletion { c ->
         if (c !is CancellationException) {
-          RebaseLogger.logger.error(c) { "rebase loop finished abnormally" }
+          logger.error(c) { "rebase loop finished abnormally" }
         }
         else {
-          RebaseLogger.logger.info("rebase loop exit")
+          logger.info("rebase loop exit")
         }
       }
       ready.await()
@@ -72,7 +72,7 @@ internal typealias Timestamp = Long
 
 internal data class SpeculationData(
   val novelty: Novelty,
-  val idMappings: List<Map<EID, UID>>,
+  val idMappings: List<IntMap<UID>>,
 ) {
   companion object {
     fun empty(): SpeculationData {
@@ -100,7 +100,7 @@ internal data class RebaseLoopState(
   }
 }
 
-object RebaseLogger {
+internal object RebaseLogger {
   val logger = logger<RebaseLogger>()
 }
 
@@ -229,7 +229,7 @@ private fun ChangeScope.runEffects(list: List<Effect>) {
         e.effect(this)
       }
       catch (x: Throwable) {
-        logger.error(x, "failed running effect ${e.javaClass} in offer")
+        logger.error(x, "failed running effect ${e::class} in offer")
       }
     }
   }
@@ -288,7 +288,7 @@ data class ClientClock(
   }
 
   fun tick(): ClientClock = copy(vectorClock = vectorClock.tick(clientId))
-  fun tick(origin: UID) = copy(vectorClock = vectorClock.tick(origin))
+  fun tick(origin: UID): ClientClock = copy(vectorClock = vectorClock.tick(origin))
   fun compressed(): CompressedVectorClock = vectorClock.compress(clientId)
 
   fun index(): Long = vectorClock.clock[clientId] ?: 0L
@@ -327,7 +327,6 @@ private fun ChangeScope.newRemoteKernelConnection(clientId: UID): RemoteKernelCo
 private suspend fun remoteKernelConnection(
   connected: CompletableDeferred<Unit>,
   remoteKernel: RemoteKernel,
-  serialization: ISerialization,
   instructionSet: InstructionSet,
 ) {
   spannedScope("remoteKernelConnection") {
@@ -351,7 +350,7 @@ private suspend fun remoteKernelConnection(
         dbSnapshot.selectPartitions(emptySet()).change {
           context.impl.mutableDb.initPartition(SharedPart)
           val eidMemoizer = Memoizer<EID>()
-          context.applySnapshot(snapshot, serialization) { uid ->
+          context.applyWorkspaceSnapshot(snapshot) { uid ->
             dbSnapshot.lookupOne(uidAttribute(), uid) ?: eidMemoizer.memo(false, uid) { EidGen.freshEID(SharedPart) }
           }
         }.dbAfter
@@ -379,7 +378,6 @@ private suspend fun remoteKernelConnection(
                        initial = initialRebaseState,
                        remoteKernelBroadcastReceiver = workspaceBroadcastReceiver,
                        changesReceiver = changesReceiver,
-                       serialization = serialization,
                        frontendTxsSender = frontendTxsSender,
                        instructionSet = instructionSet)
           }
@@ -403,7 +401,6 @@ private suspend fun rebaseLoop(
   remoteKernelBroadcastReceiver: ReceiveChannel<RemoteKernel.Broadcast>,
   changesReceiver: ReceiveChannel<Change>,
   frontendTxsSender: SendChannel<Transaction>,
-  serialization: ISerialization,
   instructionSet: InstructionSet,
 ) {
   val rebaseLoopStateDebug = transactor.meta.getOrInit(RebaseLoopStateDebugKernelMetaKey) { AtomicRef(initial) }
@@ -423,7 +420,7 @@ private suspend fun rebaseLoop(
       whileSelect {
         rebaseLoopStateDebug.set(state)
         remoteKernelBroadcastReceiver.onReceiveCatching { broadcastOrClosed ->
-          frequentSpannedScope("broadcast") {
+          spannedScope("broadcast") {
             if (broadcastOrClosed.isClosed) {
               val closeCause = broadcastOrClosed.exceptionOrNull()
               val unconfirmed = unconfirmedInstructions(state)
@@ -444,7 +441,7 @@ private suspend fun rebaseLoop(
             else {
               logger.trace { "[$transactor](${stateStr(state)}) received broadcast ${broadcastOrClosed.getOrThrow()}" }
               val broadcast = broadcastOrClosed.getOrThrow()
-              state = state.consumeBroadcast(broadcast, serialization, decoder)
+              state = state.consumeBroadcast(broadcast, decoder)
 
               if (!state.rebaseLog.isRebasing()) {
                 offersSender.send(state)
@@ -455,7 +452,7 @@ private suspend fun rebaseLoop(
           }
         }
         changesReceiver.onReceiveCatching { changeOrClosed ->
-          frequentSpannedScope("change") {
+          spannedScope("change") {
             if (changeOrClosed.isClosed) {
               val closeCause = changeOrClosed.exceptionOrNull()
               if (closeCause == null) {
@@ -493,8 +490,8 @@ private suspend fun rebaseLoop(
         }
         if (state.rebaseLog.isRebasing()) {
           onTimeout(0) {
-            frequentSpannedScope("rebase step") {
-              val (rebaseLog, tx) = state.rebaseLog.continueRebase(serialization, encoder)
+            spannedScope("rebase step") {
+              val (rebaseLog, tx) = state.rebaseLog.continueRebase(encoder)
               state = state.copy(rebaseLog = rebaseLog)
               if (!state.rebaseLog.isRebasing()) {
                 offersSender.send(state)
@@ -524,12 +521,11 @@ private fun addCommittedTxEffect(tx: Transaction): Effect = run {
 
 private fun RebaseLoopState.consumeBroadcast(
   broadcast: RemoteKernel.Broadcast,
-  serialization: ISerialization,
   decoder: InstructionDecoder,
 ): RebaseLoopState {
   return when (broadcast) {
     is RemoteKernel.Broadcast.Tx -> {
-      val (rebaseLog, effectsAndNovelty) = rebaseLog.consumeTx(broadcast.transaction, serialization, decoder)
+      val (rebaseLog, effectsAndNovelty) = rebaseLog.consumeTx(broadcast.transaction, decoder)
       copy(rebaseLog = rebaseLog,
            baseClock = baseClock.tick(broadcast.transaction.origin),
            committedEffectsAndNovelty = this.committedEffectsAndNovelty + effectsAndNovelty + EffectsAndNovelty(

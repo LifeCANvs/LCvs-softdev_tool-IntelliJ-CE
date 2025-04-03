@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.jps.dependency.java;
 
 import com.intellij.openapi.util.Pair;
@@ -74,15 +74,14 @@ public final class Utils {
   }
 
   public Iterable<JvmClass> getClassesByName(@NotNull String name) {
-    return getNodes(new JvmNodeReferenceID(name), JvmClass.class);
+    return name.isBlank()? Collections.emptyList() : getNodes(new JvmNodeReferenceID(name), JvmClass.class);
   }
 
   public Iterable<JvmModule> getModulesByName(@NotNull String name) {
-    return getNodes(new JvmNodeReferenceID(name), JvmModule.class);
+    return name.isBlank()? Collections.emptyList() : getNodes(new JvmNodeReferenceID(name), JvmModule.class);
   }
 
-  @Nullable
-  public String getNodeName(ReferenceID id) {
+  public @Nullable String getNodeName(ReferenceID id) {
     if (id instanceof JvmNodeReferenceID) {
       return ((JvmNodeReferenceID)id).getNodeName();
     }
@@ -159,7 +158,7 @@ public final class Utils {
     else {
       allNodes = fromDeltaOnly? Collections.emptyList() : flat(map(filter(myGraph.getSources(id), mySourcesFilter::test), src -> myGraph.getNodes(src, selector)));
     }
-    return uniqueBy(filter(allNodes, n -> id.equals(n.getReferenceID())), T::isSame, T::diffHashCode);
+    return filter(allNodes, n -> id.equals(n.getReferenceID()));
   }
 
   public static <T> @NotNull Iterable<T> uniqueBy(Iterable<? extends T> it, final BiFunction<? super T, ? super T, Boolean> equalsImpl, final Function<? super T, Integer> hashCodeImpl) {
@@ -195,18 +194,15 @@ public final class Utils {
     return recurse(classId, this::allDirectSupertypes, false);
   }
 
-  @NotNull
-  public Iterable<ReferenceID> withAllSubclasses(ReferenceID from) {
+  public @NotNull Iterable<ReferenceID> withAllSubclasses(ReferenceID from) {
     return recurse(from, this::directSubclasses, true);
   }
 
-  @NotNull
-  public Iterable<ReferenceID> allSubclasses(ReferenceID from) {
+  public @NotNull Iterable<ReferenceID> allSubclasses(ReferenceID from) {
     return recurse(from, this::directSubclasses, false);
   }
 
-  @NotNull
-  public Iterable<ReferenceID> directSubclasses(ReferenceID from) {
+  public @NotNull Iterable<ReferenceID> directSubclasses(ReferenceID from) {
     if (myDeltaDirectSubclasses != null) {
       BooleanFunction<ReferenceID> subClassFilter = sub -> {
         if (myIsNodeDeleted.test(sub)) {
@@ -245,33 +241,37 @@ public final class Utils {
   }
 
   public Iterable<Pair<JvmClass, JvmField>> getOverriddenFields(JvmClass fromCls, JvmField field) {
-    Function<JvmClass, Iterable<Pair<JvmClass, JvmField>>> dataGetter = cl -> collect(
-      map(filter(cl.getFields(), f -> Objects.equals(f.getName(), field.getName()) && isVisibleInHierarchy(cl, f, fromCls)), ff -> Pair.create(cl, ff)),
+    Function<JvmClass, Iterable<Pair<JvmClass, JvmField>>> dataGetter = cls -> collect(
+      flat(map(withAllImplementedInterfaces(cls), c -> map(filter(c.getFields(), f -> Objects.equals(f.getName(), field.getName()) && isVisibleInHierarchy(cls, f, fromCls)), ff -> Pair.create(cls, ff)))),
       new SmartList<>()
     );
     return flat(
-      getNodesData(fromCls, cl -> flat(map(cl.getSuperTypes(), st -> getClassesByName(st))), dataGetter, result -> isEmpty(result), false)
+      getNodesData(fromCls, cl -> getClassesByName(cl.getSuperFqName()), dataGetter, result -> isEmpty(result), false)
     );
   }
 
   public Iterable<Pair<JvmClass, JvmMethod>> getOverriddenMethods(JvmClass fromCls, Predicate<JvmMethod> searchCond) {
-    Function<JvmClass, Iterable<Pair<JvmClass, JvmMethod>>> dataGetter = cl -> collect(
-      map(filter(cl.getMethods(), m -> searchCond.test(m) && isVisibleInHierarchy(cl, m, fromCls)), mm -> Pair.create(cl, mm)),
+    Function<JvmClass, Iterable<Pair<JvmClass, JvmMethod>>> dataGetter = cls -> collect(
+      flat(map(withAllImplementedInterfaces(cls), c -> map(filter(c.getMethods(), m -> searchCond.test(m) && isVisibleInHierarchy(cls, m, fromCls)), mm -> Pair.create(cls, mm)))),
       new SmartList<>()
     );
     return flat(
-      getNodesData(fromCls, cl -> flat(map(cl.getSuperTypes(), st -> getClassesByName(st))), dataGetter, result -> isEmpty(result), false)
+      getNodesData(fromCls, cl -> getClassesByName(cl.getSuperFqName()), dataGetter, result -> isEmpty(result), false)
     );
   }
 
   public Iterable<Pair<JvmClass, JvmMethod>> getOverridingMethods(JvmClass fromCls, JvmMethod method, Predicate<JvmMethod> searchCond) {
-    Function<JvmClass, Iterable<Pair<JvmClass, JvmMethod>>> dataGetter = cl -> isVisibleInHierarchy(fromCls, method, cl)? collect(
-      map(filter(cl.getMethods(), searchCond::test), mm -> Pair.create(cl, mm)),
+    Function<JvmClass, Iterable<Pair<JvmClass, JvmMethod>>> dataGetter = cls -> isVisibleInHierarchy(fromCls, method, cls)? collect(
+      flat(map(withAllImplementedInterfaces(cls), c -> map(filter(c.getMethods(), searchCond::test), mm -> Pair.create(cls, mm)))),
       new SmartList<>()
     ) : Collections.emptyList();
     return flat(
       getNodesData(fromCls, cl -> flat(map(directSubclasses(cl.getReferenceID()), st -> getNodes(st, JvmClass.class))), dataGetter, result -> isEmpty(result), false)
     );
+  }
+
+  private Iterable<JvmClass> withAllImplementedInterfaces(JvmClass cls) {
+    return recurse(cls, c -> flat(map(c.getInterfaces(), st -> getClassesByName(st))), true);
   }
 
   public static final class OverloadDescriptor {
@@ -387,8 +387,7 @@ public final class Utils {
     };
   }
 
-  @Nullable
-  public Boolean isSubtypeOf(final TypeRepr who, final TypeRepr whom) {
+  public @Nullable Boolean isSubtypeOf(final TypeRepr who, final TypeRepr whom) {
     if (who.equals(whom)) {
       return Boolean.TRUE;
     }

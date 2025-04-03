@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.ui.layout.impl;
 
 import com.intellij.execution.ui.layout.*;
@@ -167,7 +167,7 @@ public final class GridImpl extends Wrapper implements Grid, Disposable, UiDataP
   }
 
   public ActionCallback restoreLastUiState() {
-    final ActionCallback result = new ActionCallback(myPlaceInGrid2Cell.values().size());
+    final ActionCallback result = new ActionCallback(myPlaceInGrid2Cell.size());
     for (final GridCellImpl cell : myPlaceInGrid2Cell.values()) {
       cell.restoreLastUiState().notifyWhenDone(result);
     }
@@ -217,7 +217,7 @@ public final class GridImpl extends Wrapper implements Grid, Disposable, UiDataP
   }
 
   @ApiStatus.Internal
-  static final class Placeholder extends Wrapper implements NullableComponent {
+  public static final class Placeholder extends Wrapper implements NullableComponent {
     private ContentProvider myContentProvider;
     private JComponent myComponent;
 

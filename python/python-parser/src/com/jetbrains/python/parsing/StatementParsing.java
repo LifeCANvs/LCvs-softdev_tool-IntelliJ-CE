@@ -15,6 +15,7 @@ import com.jetbrains.python.psi.FutureFeature;
 import com.jetbrains.python.psi.LanguageLevel;
 import com.jetbrains.python.psi.PyElementType;
 import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.EnumSet;
@@ -147,6 +148,7 @@ public class StatementParsing extends Parsing implements ITokenTypeRemapper {
     parseTypeParameterList();
     checkMatches(PyTokenTypes.EQ, PyParsingBundle.message("PARSE.eq.expected"));
     myContext.getExpressionParser().parseExpression();
+    checkEndOfStatement();
     mark.done(PyElementTypes.TYPE_ALIAS_STATEMENT);
     return true;
   }
@@ -1079,11 +1081,15 @@ public class StatementParsing extends Parsing implements ITokenTypeRemapper {
   }
 
   @Override
-  public IElementType filter(final IElementType source, final int start, final int end, final CharSequence text) {
+  public @NotNull IElementType filter(@NotNull IElementType source, int start, int end, @NotNull CharSequence text) {
     return filter(source, start, end, text, true);
   }
 
-  protected IElementType filter(final IElementType source, final int start, final int end, final CharSequence text, boolean checkLanguageLevel) {
+  protected @NotNull IElementType filter(@NotNull IElementType source,
+                                         int start,
+                                         int end,
+                                         @NotNull CharSequence text,
+                                         boolean checkLanguageLevel) {
     if (source == PyTokenTypes.IDENTIFIER && isWordAtPosition(text, start, end, TOK_AS)) {
       return PyTokenTypes.AS_KEYWORD;
     }

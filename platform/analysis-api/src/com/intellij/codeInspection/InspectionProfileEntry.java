@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection;
 
 import com.intellij.codeHighlighting.HighlightDisplayLevel;
@@ -6,7 +6,6 @@ import com.intellij.codeInspection.ex.InspectionElementsMerger;
 import com.intellij.codeInspection.options.OptPane;
 import com.intellij.codeInspection.options.OptRegularComponent;
 import com.intellij.codeInspection.options.OptionContainer;
-import com.intellij.codeInspection.options.OptionController;
 import com.intellij.codeInspection.ui.OptionPaneRenderer;
 import com.intellij.configurationStore.XmlSerializer;
 import com.intellij.diagnostic.PluginException;
@@ -35,6 +34,7 @@ import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashingStrategy;
 import com.intellij.util.xmlb.SerializationFilter;
 import com.intellij.util.xmlb.annotations.Property;
+import com.intellij.util.xmlb.annotations.Transient;
 import org.jdom.Element;
 import org.jetbrains.annotations.*;
 
@@ -198,7 +198,7 @@ public abstract class InspectionProfileEntry implements BatchSuppressableTool, O
     return alternativeId != null && !alternativeId.equals(toolId) && suppressor.isSuppressedFor(element, alternativeId);
   }
 
-  public static @NotNull Collection<InspectionSuppressor> getSuppressors(@NotNull PsiElement element) {
+  public static @Unmodifiable @NotNull Collection<InspectionSuppressor> getSuppressors(@NotNull PsiElement element) {
     PsiFile file = element.getContainingFile();
     if (file == null) {
       PsiUtilCore.ensureValid(element);
@@ -234,8 +234,8 @@ public abstract class InspectionProfileEntry implements BatchSuppressableTool, O
     };
   }
 
-  private static @NotNull Collection<InspectionSuppressor> checkDumbMode(@NotNull PsiFile file,
-                                                                         @NotNull Collection<InspectionSuppressor> suppressors) {
+  private static @Unmodifiable @NotNull Collection<InspectionSuppressor> checkDumbMode(@NotNull PsiFile file,
+                                                                                       @NotNull Collection<InspectionSuppressor> suppressors) {
     DumbService dumbService = DumbService.getInstance(file.getProject());
     if (dumbService.isDumb()) {
       return ContainerUtil.filter(suppressors, suppressor -> DumbService.isDumbAware(suppressor));
@@ -251,8 +251,8 @@ public abstract class InspectionProfileEntry implements BatchSuppressableTool, O
   public void initialize(@NotNull GlobalInspectionContext context) {
   }
 
-  interface DefaultNameProvider {
-
+  @ApiStatus.Internal
+  public interface DefaultNameProvider {
     @NonNls
     @Nullable
     String getDefaultShortName();
@@ -273,7 +273,19 @@ public abstract class InspectionProfileEntry implements BatchSuppressableTool, O
     String getDefaultGroupDisplayName();
   }
 
-  volatile DefaultNameProvider myNameProvider;
+  private volatile DefaultNameProvider myNameProvider;
+
+  @ApiStatus.Internal
+  @Transient
+  public DefaultNameProvider getNameProvider() {
+    return myNameProvider;
+  }
+
+  @ApiStatus.Internal
+  @Transient
+  public void setNameProvider(DefaultNameProvider nameProvider) {
+    myNameProvider = nameProvider;
+  }
 
   /**
    * @see InspectionEP#groupDisplayName
@@ -399,13 +411,9 @@ public abstract class InspectionProfileEntry implements BatchSuppressableTool, O
    * @see OptionPaneRenderer#createOptionsPanel(InspectionProfileEntry, Disposable, Project)
    * @see #getOptionController() if you need custom logic to read/write options
    */
+  @Override
   public @NotNull OptPane getOptionsPane() {
     return OptPane.EMPTY;
-  }
-
-  @Override
-  public @NotNull OptionController getOptionController() {
-    return OptionController.fieldsOf(this).withRootPane(this::getOptionsPane);
   }
 
   /**
@@ -524,7 +532,7 @@ public abstract class InspectionProfileEntry implements BatchSuppressableTool, O
     return null;
   }
 
-  private @NotNull Class<? extends InspectionProfileEntry> getDescriptionContextClass() {
+  protected @NotNull Class<? extends InspectionProfileEntry> getDescriptionContextClass() {
     return getClass();
   }
 

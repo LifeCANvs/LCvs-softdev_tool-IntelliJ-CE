@@ -9,6 +9,7 @@ import com.intellij.find.FindManager;
 import com.intellij.find.findUsages.FindUsagesHandler;
 import com.intellij.find.findUsages.FindUsagesManager;
 import com.intellij.find.impl.FindManagerImpl;
+import com.intellij.inlinePrompt.InlinePrompt;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.model.Symbol;
 import com.intellij.openapi.application.ApplicationManager;
@@ -38,6 +39,7 @@ import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
 import com.intellij.psi.search.LocalSearchScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
 import com.intellij.util.AstLoadingFilter;
+import com.intellij.util.concurrency.annotations.RequiresEdt;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
@@ -73,6 +75,9 @@ public final class IdentifierHighlighterPass {
   }
 
   public void doCollectInformation(@NotNull HighlightingSession hostSession) {
+    if (InlinePrompt.isInlinePromptShown(myEditor)) {
+      return;
+    }
     ApplicationManager.getApplication().assertIsNonDispatchThread();
     ApplicationManager.getApplication().assertReadAccessAllowed();
     HighlightUsagesHandlerBase<PsiElement> highlightUsagesHandler = 
@@ -294,6 +299,7 @@ public final class IdentifierHighlighterPass {
    *
    * In brace matching case this is done from {@link BraceHighlightingHandler#highlightBraces(TextRange, TextRange, boolean, boolean, com.intellij.openapi.fileTypes.FileType)}
    */
+  @RequiresEdt
   public void doAdditionalCodeBlockHighlighting() {
     if (myCodeBlockMarkerRanges.size() < 2 || !(myEditor instanceof EditorEx editorEx)) {
       return;

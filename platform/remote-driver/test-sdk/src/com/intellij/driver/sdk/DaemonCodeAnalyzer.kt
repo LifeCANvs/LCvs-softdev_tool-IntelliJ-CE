@@ -22,12 +22,16 @@ interface DaemonCodeAnalyzer {
 interface HighlightInfo {
   fun getDescription(): String
   fun getSeverity(): HighlightSeverity
+  fun getText(): String
 }
 
 @Remote("com.intellij.lang.annotation.HighlightSeverity")
 interface HighlightSeverity {
   fun getName(): String
 }
+
+val HighlightInfo.isError: Boolean
+  get() = getSeverity().getName() == "ERROR"
 
 fun Driver.isCodeAnalysisRunning(project: Project? = null): Boolean {
   return withContext(OnDispatcher.EDT) {

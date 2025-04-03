@@ -7,11 +7,12 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.*;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NonNls;
 
+@ApiStatus.Internal
 public final class NamedLibraryUrl extends AbstractUrl {
-
-  private static final @NonNls String ELEMENT_TYPE = "namedLibrary";
+  private static final @NonNls String ELEMENT_TYPE = TYPE_NAMED_LIBRARY;
 
   public NamedLibraryUrl(String url, String moduleName) {
     super(url, moduleName, ELEMENT_TYPE);

@@ -66,6 +66,10 @@ class FE1UastApiFixtureTest : KotlinLightCodeInsightFixtureTestCase(), UastApiFi
         checkTypesOfDeprecatedHiddenProperty_accessors(myFixture)
     }
 
+    fun testTypeOfUnresolvedErrorInThrowExpression() {
+        checkTypeOfUnresolvedErrorInThrowExpression(myFixture)
+    }
+
     fun testReifiedTypeNullability() {
         checkReifiedTypeNullability(myFixture)
     }
@@ -122,12 +126,40 @@ class FE1UastApiFixtureTest : KotlinLightCodeInsightFixtureTestCase(), UastApiFi
         checkExpressionTypeForCallToInternalOperator(myFixture)
     }
 
+    fun testExpressionTypeForConstructorDelegationCall() {
+        checkExpressionTypeForConstructorDelegationCall(myFixture)
+    }
+
     fun testFlexibleFunctionalInterfaceType() {
         checkFlexibleFunctionalInterfaceType(myFixture)
     }
 
     fun testInvokedLambdaBody() {
         checkInvokedLambdaBody(myFixture)
+    }
+
+    fun testInvokedLambdaViaFunctionCall() {
+        checkInvokedLambdaViaFunctionCall(myFixture)
+    }
+
+    fun testImplicitReceiver() {
+        checkImplicitReceiver(myFixture)
+    }
+
+    fun testImplicitReceiver_extensionFunction() {
+        checkImplicitReceiver_extensionFunction(myFixture)
+    }
+
+    fun testImplicitReceiver_insideInterface() {
+        checkImplicitReceiver_insideInterface(myFixture)
+    }
+
+    fun testImplicitReceiver_interfaceHierarchy() {
+        checkImplicitReceiver_interfaceHierarchy(myFixture)
+    }
+
+    fun testImplicitReceiver_interfaceHierarchy_smartcast() {
+        checkImplicitReceiver_interfaceHierarchy_smartcast(myFixture)
     }
 
     fun testLambdaImplicitParameters() {
@@ -144,6 +176,10 @@ class FE1UastApiFixtureTest : KotlinLightCodeInsightFixtureTestCase(), UastApiFi
 
     fun testReceiverTypeOfExtensionFunction() {
         checkReceiverTypeOfExtensionFunction(myFixture)
+    }
+
+    fun testReceiverTypeOfExtensionFunction_superType() {
+        checkReceiverTypeOfExtensionFunction_superType(myFixture)
     }
 
     fun testSourcePsiOfLazyPropertyAccessor() {
@@ -180,5 +216,9 @@ class FE1UastApiFixtureTest : KotlinLightCodeInsightFixtureTestCase(), UastApiFi
 
     fun testEnumAsAnnotationAttributeValueEvaluation() {
         checkEnumAsAnnotationAttributeValueEvaluation(myFixture)
+    }
+
+    fun testJavaConstantEvaluation() {
+        checkJavaConstantEvaluation(myFixture)
     }
 }

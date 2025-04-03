@@ -1,7 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.vcs.log.statistics;
 
-import com.intellij.ide.impl.TrustedProjects;
+import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.internal.statistic.beans.MetricEvent;
 import com.intellij.internal.statistic.eventLog.EventLogGroup;
 import com.intellij.internal.statistic.eventLog.events.*;
@@ -27,6 +27,7 @@ import kotlin.jvm.functions.Function1;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 
@@ -81,7 +82,7 @@ public @NonNls class VcsLogFeaturesCollector extends ProjectUsagesCollector {
 
   @Override
   public @NotNull Set<MetricEvent> getMetrics(@NotNull Project project) {
-    if (!TrustedProjects.isTrusted(project)) return Collections.emptySet();
+    if (!TrustedProjects.isProjectTrusted(project)) return Collections.emptySet();
 
     VcsProjectLog projectLog = project.getServiceIfCreated(VcsProjectLog.class);
     if (projectLog == null) return Collections.emptySet();
@@ -179,8 +180,8 @@ public @NonNls class VcsLogFeaturesCollector extends ProjectUsagesCollector {
     }
   }
 
-  private static @NotNull List<? extends MainVcsLogUi> getAdditionalLogUis(@NotNull List<? extends VcsLogUi> uis,
-                                                                           @NotNull Set<String> additionalTabIds) {
+  private static @Unmodifiable @NotNull List<? extends MainVcsLogUi> getAdditionalLogUis(@NotNull List<? extends VcsLogUi> uis,
+                                                                                         @NotNull Set<String> additionalTabIds) {
     return ContainerUtil.filter(ContainerUtil.filterIsInstance(uis, MainVcsLogUi.class),
                                 ui -> additionalTabIds.contains(ui.getId()));
   }

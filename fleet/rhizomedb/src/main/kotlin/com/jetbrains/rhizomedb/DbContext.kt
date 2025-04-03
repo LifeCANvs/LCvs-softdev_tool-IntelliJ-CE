@@ -1,6 +1,11 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.rhizomedb
 
+import org.jetbrains.annotations.TestOnly
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.jvm.JvmStatic
+import fleet.multiplatform.shims.ThreadLocal
+
 //fun getStack(): Throwable = Throwable("dbcontext creation stack")
 
 /**
@@ -9,26 +14,30 @@ package com.jetbrains.rhizomedb
  * This is where all the db reads and writes are directed to.
  * */
 class DbContext<out QQ : Q>(
-  var _private_value: Any,
-  val dbSource: Any?
+  @PublishedApi
+  internal var privateValue: Any,
+  val dbSource: Any?,
   //var stack: Throwable? = getStack()
 ) {
   val impl: QQ
     get() {
-      val q = _private_value
-      return when {
-        q is Throwable -> throw q
+      return when (val q = privateValue) {
+        is CancellationException -> throw CancellationException("DBContext is poisoned", q)
+        is Throwable -> throw RuntimeException("DBContext is poisoned", q)
         else -> q as QQ
       }
     }
+  
+  val poison: Throwable?  
+    get() = privateValue as? Throwable
 
   fun set(q: Q) {
     //    stack = getStack()
-    _private_value = q
+    privateValue = q
   }
 
   fun setPoison(x: Throwable) {
-    _private_value = x
+    privateValue = x
   }
 
   companion object {
@@ -42,7 +51,18 @@ class DbContext<out QQ : Q>(
       get() =
         threadLocal.get() ?: throw OutOfDbContext()
 
-    fun isBound(): Boolean = threadLocal.get() != null
+    /**
+     * Current context, associated with the thread.
+     * */
+    val threadBoundOrNull: DbContext<Q>?
+      get() =
+        threadLocal.get()
+
+    @TestOnly
+    fun isBound(): Boolean =
+      threadLocal.get().let {
+        it != null && it.privateValue !is Throwable
+      }
 
     fun clearThreadBoundDbContext() {
       threadLocal.set(null)
@@ -61,18 +81,18 @@ class DbContext<out QQ : Q>(
   }
 
   inline fun <T, U : Q> alter(dbContextPrime: U, f: DbContext<U>.() -> T): T {
-    val oldContext = _private_value
-    _private_value = dbContextPrime
+    val oldContext = privateValue
+    privateValue = dbContextPrime
     return try {
       (this as DbContext<U>).f()
     }
     finally {
-      _private_value = oldContext
+      privateValue = oldContext
     }
   }
 
   inline fun <T> ensureMutable(f: DbContext<Mut>.() -> T): T {
-    return if (_private_value is Mut) {
+    return if (privateValue is Mut) {
       (this as DbContext<Mut>).f()
     }
     else {

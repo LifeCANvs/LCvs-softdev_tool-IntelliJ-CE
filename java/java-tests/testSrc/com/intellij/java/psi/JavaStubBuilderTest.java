@@ -1,9 +1,7 @@
-// Copyright 2000-2021 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.psi;
 
 import com.intellij.lang.FileASTNode;
-import com.intellij.openapi.application.ex.PathManagerEx;
-import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.PsiJavaFile;
 import com.intellij.psi.StubBuilder;
@@ -17,13 +15,10 @@ import com.intellij.psi.stubs.StubElement;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.testFramework.LightIdeaTestCase;
 import com.intellij.testFramework.LightProjectDescriptor;
-import com.intellij.tools.ide.metrics.benchmark.Benchmark;
 import com.intellij.util.containers.ContainerUtil;
 import org.intellij.lang.annotations.Language;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
-import java.io.IOException;
 import java.security.SecureRandom;
 import java.util.List;
 
@@ -410,7 +405,7 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
                  IMPLEMENTS_LIST:PsiRefListStub[IMPLEMENTS_LIST:]
              """);
   }
-  
+
   public void testNestedGenerics() {
     doTest("""
              class X {
@@ -568,7 +563,7 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
            """
              PsiJavaFileStub []
                IMPORT_LIST:PsiImportListStub
-               MODULE:PsiJavaModuleStub:M.N
+               MODULE:PsiJavaModuleStub[name=M.N, resolution=0]
                  MODIFIER_LIST:PsiModifierListStub[mask=8192]
                    ANNOTATION:PsiAnnotationStub[@Deprecated]
                      ANNOTATION_PARAMETER_LIST:PsiAnnotationParameterListStubImpl
@@ -758,7 +753,27 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
                      IMPLEMENTS_LIST:PsiRefListStub[IMPLEMENTS_LIST:]
              """);
   }
-  
+
+  public void testInvalidGenericEmptyBody() {
+    doTest("""
+             import java.util.*;
+             import java.util.function.*;
+             
+             private static class A implements BiConsumer<List<A>, List<A>n>> {}
+             """,
+           """
+             PsiJavaFileStub []
+               IMPORT_LIST:PsiImportListStub
+                 IMPORT_STATEMENT:PsiImportStatementStub[java.util.*]
+                 IMPORT_STATEMENT:PsiImportStatementStub[java.util.function.*]
+               CLASS:PsiClassStub[name=A fqn=A]
+                 MODIFIER_LIST:PsiModifierListStub[mask=10]
+                 TYPE_PARAMETER_LIST:PsiTypeParameterListStub
+                 EXTENDS_LIST:PsiRefListStub[EXTENDS_LIST:]
+                 IMPLEMENTS_LIST:PsiRefListStub[IMPLEMENTS_LIST:]
+             """);
+  }
+
   public void testCommentInType() {
     doTest("""
              class A {
@@ -784,7 +799,7 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
                   THROWS_LIST:PsiRefListStub[THROWS_LIST:]
             """);
   }
-  
+
   public void testInterfaceKeywordInBody() {
     String source = """
       class X {
@@ -800,7 +815,7 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
     PsiClassStub<?> classStub = (PsiClassStub<?>)stubs.get(1);
     assertFalse(classStub.isInterface());
   }
-  
+
   public void testTypeAnnotation() {
     String source = """
       import org.jetbrains.annotations.NotNull;
@@ -824,8 +839,34 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
     assertEquals("Container<Container<E>>", typeInfo.text());
     TypeAnnotationContainer annotations = typeInfo.getTypeAnnotations();
     assertEquals("""
-                   0;->@NotNull
-                   0;0;->@NotNull""", annotations.toString());
+                   /1->@NotNull
+                   /1/1->@NotNull""", annotations.toString());
+  }
+
+  public void testTypeAnnotationQualified() {
+    String source = """
+      import pkg.Anno1;
+      import pkg.Anno2;
+      
+      public final class Container {
+          public final native com.foo.@Anno1 Outer.@Anno2 Inner test();
+      }
+      """;
+    PsiJavaFile file = (PsiJavaFile)createLightFile("test.java", source);
+    FileASTNode fileNode = file.getNode();
+    assertNotNull(fileNode);
+    assertFalse(fileNode.isParsed());
+    StubElement<?> element = myBuilder.buildStubTree(file);
+    PsiClassStub<?> classStub = ContainerUtil.findInstance(element.getChildrenStubs(), PsiClassStub.class);
+    assertNotNull(classStub);
+    PsiMethodStub methodStub = ContainerUtil.findInstance(classStub.getChildrenStubs(), PsiMethodStub.class);
+    assertNotNull(methodStub);
+    TypeInfo typeInfo = methodStub.getReturnTypeText();
+    assertEquals("com.foo.Outer.Inner", typeInfo.text());
+    TypeAnnotationContainer annotations = typeInfo.getTypeAnnotations();
+    assertEquals("""
+                   /.->@Anno1
+                   ->@Anno2""", annotations.toString());
   }
 
   public void testSOEProof() {
@@ -855,14 +896,6 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
                    """,
                  DebugUtil.stubTreeToString(tree));
     LOG.debug("SOE depth=" + i + ", time=" + t + "ms");
-  }
-
-  public void testPerformance() throws IOException {
-    String path = PathManagerEx.getTestDataPath() + "/psi/stub/StubPerformanceTest.java";
-    String text = FileUtil.loadFile(new File(path));
-    PsiJavaFile file = (PsiJavaFile)createLightFile("test.java", text);
-    String message = "Source file size: " + text.length();
-    Benchmark.newBenchmark(message, () -> myBuilder.buildStubTree(file)).start();
   }
 
   private void doTest(/*@Language("JAVA")*/ String source, @Language("TEXT") String expected) {

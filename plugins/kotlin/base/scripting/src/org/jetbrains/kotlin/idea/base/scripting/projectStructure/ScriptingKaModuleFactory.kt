@@ -1,23 +1,26 @@
 // Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+@file:OptIn(K1ModeProjectStructureApi::class)
+
 package org.jetbrains.kotlin.idea.base.scripting.projectStructure
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.backend.workspace.workspaceModel
 import com.intellij.psi.PsiManager
 import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.workspaceModel.ide.legacyBridge.findLibraryEntity
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
+import org.jetbrains.kotlin.analysis.api.platform.projectStructure.KaContentScopeProvider
 import org.jetbrains.kotlin.analysis.api.projectStructure.*
 import org.jetbrains.kotlin.analyzer.ModuleInfo
 import org.jetbrains.kotlin.config.LanguageVersionSettings
 import org.jetbrains.kotlin.idea.base.projectStructure.*
 import org.jetbrains.kotlin.idea.base.projectStructure.moduleInfo.JvmLibraryInfo
 import org.jetbrains.kotlin.idea.base.projectStructure.moduleInfo.LibrarySourceInfo
-import org.jetbrains.kotlin.idea.core.script.KotlinScriptEntitySourceK2
+import org.jetbrains.kotlin.idea.base.util.K1ModeProjectStructureApi
+import org.jetbrains.kotlin.idea.core.script.KotlinScriptEntitySource
 import org.jetbrains.kotlin.idea.core.script.ScriptDependencyAware
 import org.jetbrains.kotlin.idea.core.script.dependencies.ScriptAdditionalIdeaDependenciesProvider
 import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 import java.nio.file.Path
 
 internal class ScriptingKaModuleFactory : KaModuleFactory {
@@ -26,23 +29,12 @@ internal class ScriptingKaModuleFactory : KaModuleFactory {
             is ScriptModuleInfo -> KtScriptModuleByModuleInfo(moduleInfo)
             is ScriptDependenciesInfo -> KtScriptDependencyModuleByModuleInfo(moduleInfo)
             is ScriptDependenciesSourceInfo -> KtScriptDependencySourceModuleByModuleInfo(moduleInfo)
-            is JvmLibraryInfo -> moduleInfo.librarySourceFile?.let { file ->
-                val entitySource = moduleInfo.library.findLibraryEntity(moduleInfo.project.workspaceModel.currentSnapshot)?.entitySource
-                if (entitySource is KotlinScriptEntitySourceK2) {
-                    KtScriptLibraryModuleByModuleInfo(moduleInfo, file)
-                } else null
+            is JvmLibraryInfo -> moduleInfo.source?.safeAs<KotlinScriptEntitySource>()?.let {
+                KtScriptLibraryModuleByModuleInfo(moduleInfo)
             }
-
-            is LibrarySourceInfo -> moduleInfo.librarySourceFile?.let { file ->
-                val entitySource = moduleInfo.library.findLibraryEntity(moduleInfo.project.workspaceModel.currentSnapshot)?.entitySource
-
-                if (entitySource is KotlinScriptEntitySourceK2) {
-                    KtScriptLibrarySourceModuleByModuleInfo(moduleInfo, file)
-                } else {
-                    null
-                }
+            is LibrarySourceInfo -> moduleInfo.source?.safeAs<KotlinScriptEntitySource>()?.let {
+                KtScriptLibrarySourceModuleByModuleInfo(moduleInfo)
             }
-
             else -> null
         }
     }
@@ -61,7 +53,7 @@ private class KtScriptModuleByModuleInfo(
     override val file: KtFile
         get() = getScriptFile(moduleInfo.scriptFile)
 
-    override val contentScope: GlobalSearchScope
+    override val baseContentScope: GlobalSearchScope
         get() = moduleInfo.moduleContentScope
 
     override val languageVersionSettings: LanguageVersionSettings
@@ -72,7 +64,7 @@ private class KtScriptModuleByModuleInfo(
             emptyList()
         } else {
             val ktModules = ScriptAdditionalIdeaDependenciesProvider.getRelatedModules(moduleInfo.scriptFile, moduleInfo.project)
-                .mapNotNull { it.productionSourceInfo?.toKaModule() }
+                .mapNotNull { it.toKaSourceModuleForProduction() }
             hasDirectFriendDependencies = ktModules.isNotEmpty()
             ktModules
         }
@@ -90,28 +82,31 @@ private class KtScriptDependencyModuleByModuleInfo(
     override val project: Project
         get() = moduleInfo.project
 
-    override val contentScope: GlobalSearchScope
+    override val baseContentScope: GlobalSearchScope
         get() = moduleInfo.contentScope
 
     override val libraryName: String
         get() = "Script dependencies"
 
+    @OptIn(K1ModeProjectStructureApi::class)
     override val librarySources: KaLibrarySourceModule?
         get() = moduleInfo.sourcesModuleInfo?.toKaModuleOfType<KaLibrarySourceModule>()
 
     override val isSdk: Boolean
         get() = false
 
+    @OptIn(KaExperimentalApi::class)
     override val binaryRoots: Collection<Path>
-        get() = when (moduleInfo) {
-            is ScriptDependenciesInfo.ForProject -> ScriptDependencyAware.getInstance(project).getAllScriptsDependenciesClassFiles().map { it.toNioPath() }
-
-            is ScriptDependenciesInfo.ForFile -> ScriptDependencyAware.getInstance(project)
-                .getScriptDependenciesClassFiles(moduleInfo.scriptFile).map { it.toNioPath() }
-        }
+        get() = binaryVirtualFiles.map { it.toNioPath() }
 
     @KaExperimentalApi
-    override val binaryVirtualFiles: Collection<VirtualFile> = emptyList()
+    override val binaryVirtualFiles: Collection<VirtualFile> =
+        when (moduleInfo) {
+            is ScriptDependenciesInfo.ForProject -> ScriptDependencyAware.getInstance(project).getAllScriptsDependenciesClassFiles()
+
+            is ScriptDependenciesInfo.ForFile -> ScriptDependencyAware.getInstance(project)
+                .getScriptDependenciesClassFiles(moduleInfo.scriptFile)
+        }
 
     override val file: KtFile?
         get() = optScriptFile((moduleInfo as? ScriptDependenciesInfo.ForFile)?.scriptFile)
@@ -143,7 +138,7 @@ private class KtScriptDependencySourceModuleByModuleInfo(
     override val project: Project
         get() = moduleInfo.project
 
-    override val contentScope: GlobalSearchScope
+    override val baseContentScope: GlobalSearchScope
         get() = moduleInfo.sourceScope()
 
     override val libraryName: String
@@ -172,6 +167,7 @@ private fun KtModuleByModuleInfoBase.optScriptFile(virtualFile: VirtualFile?): K
     return getScriptFile(virtualFile)
 }
 
+@OptIn(K1ModeProjectStructureApi::class)
 private fun KtModuleByModuleInfoBase.getScriptFile(virtualFile: VirtualFile): KtFile {
     val project = ideaModuleInfo.project
     return PsiManager.getInstance(project).findFile(virtualFile) as? KtFile

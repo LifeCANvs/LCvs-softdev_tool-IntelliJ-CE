@@ -37,10 +37,11 @@ import javax.swing.*;
 import java.util.*;
 import java.util.function.Consumer;
 
+import static com.intellij.codeInsight.completion.command.CommandCompletionFactoryKt.commandCompletionEnabled;
 import static com.intellij.patterns.PlatformPatterns.psiElement;
 
 public final class JavaGenerateMemberCompletionContributor {
-  static final Key<Boolean> GENERATE_ELEMENT = Key.create("GENERATE_ELEMENT");
+  public static final Key<Boolean> GENERATE_ELEMENT = Key.create("GENERATE_ELEMENT");
 
   public static void fillCompletionVariants(CompletionParameters parameters, CompletionResultSet result) {
     if (parameters.getCompletionType() != CompletionType.BASIC && parameters.getCompletionType() != CompletionType.SMART) {
@@ -176,7 +177,7 @@ public final class JavaGenerateMemberCompletionContributor {
       if (!baseMethod.isConstructor() && baseClass != null && addedSignatures.add(baseMethod.getSignature(substitutor))) {
         result.addElement(
           createOverridingLookupElement(implemented, baseMethod, baseClass, substitutor, generateDefaultMethods, parent, null));
-        if (GenerateEqualsHandler.hasNonStaticFields(parent)) {
+        if (GenerateEqualsHandler.hasNonStaticFields(parent) && !commandCompletionEnabled()) {
           if (MethodUtils.isEquals(baseMethod) || MethodUtils.isHashCode(baseMethod)) {
             result.addElement(
               createOverridingLookupElement(implemented, baseMethod, baseClass, substitutor, generateDefaultMethods, parent, context -> {
@@ -302,7 +303,8 @@ public final class JavaGenerateMemberCompletionContributor {
     if (prototype.isDeprecated()) {
       element = element.withStrikeoutness(true);
     }
-    element.putUserData(GENERATE_ELEMENT, true);
+    
+    element.putUserData(GENERATE_ELEMENT, generateByWizard);
     return PrioritizedLookupElement.withPriority(element, -1);
   }
 

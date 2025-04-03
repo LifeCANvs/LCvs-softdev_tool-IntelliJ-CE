@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.completion.test;
 
@@ -130,6 +130,11 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
         runTest("../testData/basic/multifile/ExcludedJavaClass/");
     }
 
+    @TestMetadata("ExpectedJavaEnumEntryCompletion")
+    public void testExpectedJavaEnumEntryCompletion() throws Exception {
+        runTest("../testData/basic/multifile/ExpectedJavaEnumEntryCompletion/");
+    }
+
     @TestMetadata("ExtensionFunction")
     public void testExtensionFunction() throws Exception {
         runTest("../testData/basic/multifile/ExtensionFunction/");
@@ -140,9 +145,24 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
         runTest("../testData/basic/multifile/ExtensionFunctionOnImportedFunction/");
     }
 
+    @TestMetadata("ExtensionOnIntersectionTypeReceiver")
+    public void testExtensionOnIntersectionTypeReceiver() throws Exception {
+        runTest("../testData/basic/multifile/ExtensionOnIntersectionTypeReceiver/");
+    }
+
     @TestMetadata("ExtensionOnNullable")
     public void testExtensionOnNullable() throws Exception {
         runTest("../testData/basic/multifile/ExtensionOnNullable/");
+    }
+
+    @TestMetadata("ExtensionOnTypeParameterReceiverType")
+    public void testExtensionOnTypeParameterReceiverType() throws Exception {
+        runTest("../testData/basic/multifile/ExtensionOnTypeParameterReceiverType/");
+    }
+
+    @TestMetadata("ExtensionOnTypeParameterReceiverTypeWithBounds")
+    public void testExtensionOnTypeParameterReceiverTypeWithBounds() throws Exception {
+        runTest("../testData/basic/multifile/ExtensionOnTypeParameterReceiverTypeWithBounds/");
     }
 
     @TestMetadata("ExtensionsAndGetPrefix")
@@ -250,6 +270,11 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
         runTest("../testData/basic/multifile/IncorrectGetters/");
     }
 
+    @TestMetadata("InvisibleEnumEntryCompletion")
+    public void testInvisibleEnumEntryCompletion() throws Exception {
+        runTest("../testData/basic/multifile/InvisibleEnumEntryCompletion/");
+    }
+
     @TestMetadata("JavaCallableReference")
     public void testJavaCallableReference() throws Exception {
         runTest("../testData/basic/multifile/JavaCallableReference/");
@@ -280,6 +305,26 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
         runTest("../testData/basic/multifile/KT9835/");
     }
 
+    @TestMetadata("KTIJ_27276")
+    public void testKTIJ_27276() throws Exception {
+        runTest("../testData/basic/multifile/KTIJ_27276/");
+    }
+
+    @TestMetadata("KTIJ_32378")
+    public void testKTIJ_32378() throws Exception {
+        runTest("../testData/basic/multifile/KTIJ_32378/");
+    }
+
+    @TestMetadata("KTIJ_32792")
+    public void testKTIJ_32792() throws Exception {
+        runTest("../testData/basic/multifile/KTIJ_32792/");
+    }
+
+    @TestMetadata("KTIJ_32930")
+    public void testKTIJ_32930() throws Exception {
+        runTest("../testData/basic/multifile/KTIJ_32930/");
+    }
+
     @TestMetadata("MoreSpecificExtensionGeneric")
     public void testMoreSpecificExtensionGeneric() throws Exception {
         runTest("../testData/basic/multifile/MoreSpecificExtensionGeneric/");
@@ -298,6 +343,11 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
     @TestMetadata("NoAutoInsertionOfNotImported")
     public void testNoAutoInsertionOfNotImported() throws Exception {
         runTest("../testData/basic/multifile/NoAutoInsertionOfNotImported/");
+    }
+
+    @TestMetadata("NoExpectedEnumEntryCompletion")
+    public void testNoExpectedEnumEntryCompletion() throws Exception {
+        runTest("../testData/basic/multifile/NoExpectedEnumEntryCompletion/");
     }
 
     @TestMetadata("NoExtForOuterFromNested")

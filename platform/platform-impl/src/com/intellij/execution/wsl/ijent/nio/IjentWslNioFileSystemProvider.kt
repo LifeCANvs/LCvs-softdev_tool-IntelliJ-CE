@@ -1,22 +1,17 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.wsl.ijent.nio
 
+import com.intellij.execution.ijent.nio.getCachedFileAttributesAndWrapToDosAttributesAdapter
+import com.intellij.execution.ijent.nio.readAttributesUsingDosAttributesAdapter
 import com.intellij.execution.wsl.WSLDistribution
+import com.intellij.execution.wsl.WslDistributionManager
 import com.intellij.execution.wsl.WslPath
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.util.io.CaseSensitivityAttribute
-import com.intellij.openapi.util.io.FileAttributes
-import com.intellij.platform.core.nio.fs.BasicFileAttributesHolder2
-import com.intellij.platform.core.nio.fs.BasicFileAttributesHolder2.FetchAttributesFilter
+import com.intellij.openapi.util.NlsSafe
 import com.intellij.platform.core.nio.fs.RoutingAwareFileSystemProvider
-import com.intellij.platform.ijent.IjentPosixInfo
+import com.intellij.platform.eel.provider.utils.EelPathUtils
 import com.intellij.platform.ijent.community.impl.nio.IjentNioPath
-import com.intellij.platform.ijent.community.impl.nio.IjentNioPosixFileAttributes
-import com.intellij.platform.ijent.community.impl.nio.IjentPosixGroupPrincipal
-import com.intellij.platform.ijent.community.impl.nio.IjentPosixUserPrincipal
-import com.intellij.util.io.createDirectories
 import com.intellij.util.io.sanitizeFileName
-import org.jetbrains.annotations.VisibleForTesting
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
@@ -24,16 +19,14 @@ import java.nio.channels.AsynchronousFileChannel
 import java.nio.channels.FileChannel
 import java.nio.channels.SeekableByteChannel
 import java.nio.file.*
-import java.nio.file.StandardOpenOption.*
-import java.nio.file.attribute.*
-import java.nio.file.attribute.PosixFilePermission.*
+import java.nio.file.attribute.BasicFileAttributes
+import java.nio.file.attribute.FileAttribute
+import java.nio.file.attribute.FileAttributeView
 import java.nio.file.spi.FileSystemProvider
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.ExperimentalPathApi
-import kotlin.io.path.name
-import kotlin.io.path.readAttributes
-import kotlin.io.path.relativeTo
 
 /**
  * A special wrapper for [com.intellij.platform.ijent.community.impl.nio.IjentNioFileSystemProvider]
@@ -50,35 +43,50 @@ import kotlin.io.path.relativeTo
  * an instance of [IjentWslNioFileSystem] can be obtained with a URL like "ijent://wsl/distribution-name".
  */
 class IjentWslNioFileSystemProvider(
-  wslDistribution: WSLDistribution,
+  private val wslDistribution: WSLDistribution,
   private val ijentFsProvider: FileSystemProvider,
   internal val originalFsProvider: FileSystemProvider,
 ) : FileSystemProvider(), RoutingAwareFileSystemProvider {
   private val ijentFsUri: URI = URI("ijent", "wsl", "/${wslDistribution.id}", null, null)
-  private val wslLocalRoot: Path = originalFsProvider.getFileSystem(URI("file:/")).getPath(wslDistribution.getWindowsPath("/"))
+  private val originalFs = originalFsProvider.getFileSystem(URI("file:/"))
+  private val wslId: @NlsSafe String = wslDistribution.id
   private val createdFileSystems: MutableMap<String, IjentWslNioFileSystem> = ConcurrentHashMap()
 
   internal fun removeFileSystem(wslId: String) {
     createdFileSystems.remove(wslId)
   }
 
-  override fun toString(): String = """${javaClass.simpleName}(${wslLocalRoot})"""
+  override fun toString(): String = """${javaClass.simpleName}(${wslId})"""
 
-  override fun canHandleRouting(): Boolean = true
+  override fun canHandleRouting(path: Path): Boolean = true
+
+  internal fun toIjentNioPath(path: Path): IjentNioPath = path.toIjentPath()
 
   private fun Path.toIjentPath(): IjentNioPath =
     when (this) {
       is IjentNioPath -> this
-      is IjentWslNioPath -> delegate.toIjentPath()
-      else -> fold(ijentFsProvider.getPath(ijentFsUri) as IjentNioPath, IjentNioPath::resolve)
+      is IjentWslNioPath -> presentablePath.toIjentPath()
+      else -> fold(ijentFsProvider.getPath(ijentFsUri) as IjentNioPath, { nioPath, newPart -> nioPath.resolve(newPart.toString()) })
     }
 
-  private fun Path.toOriginalPath(): Path =
-    when (this) {
-      is IjentNioPath -> FileSystems.getDefault().getPath(toAbsolutePath().toString())
-      is IjentWslNioPath -> delegate.toOriginalPath()
+  internal fun toOriginalPath(path: Path, notation: String): Path = path.toOriginalPath(notation)
+
+  private tailrec fun Path.toOriginalPath(notation: String): Path {
+    assert(notation == "wsl.localhost" || notation == "wsl$") { notation }
+    return when (this) {
+      is IjentNioPath -> fold(originalFs.getPath("\\\\$notation\\$wslId\\")) { parent, file -> parent.resolve(file.toString()) }
+      is IjentWslNioPath -> presentablePath.toOriginalPath(notation)
       else -> this
     }
+  }
+
+  private tailrec fun Path.toOriginalPathWithSameNotation(): Path {
+    return when (this) {
+      is IjentNioPath -> error(this)
+      is IjentWslNioPath -> presentablePath.toOriginalPathWithSameNotation()
+      else -> this
+    }
+  }
 
   override fun getScheme(): String =
     originalFsProvider.scheme
@@ -109,8 +117,8 @@ class IjentWslNioFileSystemProvider(
   private fun wslIdFromPath(path: Path): String {
     val root = path.toAbsolutePath().root.toString()
     require(root.startsWith("""\\wsl""")) { "`$path` doesn't look like a file on WSL" }
-    val wslId = root.removePrefix("""\\wsl""").substringAfter('\\').trimEnd('\\')
-    return wslId
+    val wslIdWithProbablyWrongCase = root.removePrefix("""\\wsl""").substringAfter('\\').trimEnd('\\')
+    return allWslDistributionIds.get().single { wslId -> wslId.equals(wslIdWithProbablyWrongCase, true) }
   }
 
   override fun checkAccess(path: Path, vararg modes: AccessMode): Unit =
@@ -131,14 +139,16 @@ class IjentWslNioFileSystemProvider(
     executor: ExecutorService?,
     vararg attrs: FileAttribute<*>?,
   ): AsynchronousFileChannel =
-    originalFsProvider.newAsynchronousFileChannel(path.toOriginalPath(), options, executor, *attrs)
+    // TODO Implement me.
+    originalFsProvider.newAsynchronousFileChannel(path.toOriginalPathWithSameNotation(), options, executor, *attrs)
 
   override fun createSymbolicLink(link: Path, target: Path, vararg attrs: FileAttribute<*>?) {
-    ijentFsProvider.createSymbolicLink(link.toIjentPath(), target.toIjentPath(), *attrs)
+    ijentFsProvider.createSymbolicLink(link.toOriginalPathWithSameNotation(), target.toOriginalPathWithSameNotation(), *attrs)
   }
 
   override fun createLink(link: Path, existing: Path) {
-    originalFsProvider.createLink(link.toOriginalPath(), existing.toOriginalPath())
+    // TODO It will fail anyway. Maybe throw an error right there?
+    originalFsProvider.createLink(link.toOriginalPathWithSameNotation(), existing.toOriginalPathWithSameNotation())
   }
 
   override fun deleteIfExists(path: Path): Boolean =
@@ -176,20 +186,9 @@ class IjentWslNioFileSystemProvider(
           override fun next(): Path {
             // resolve() can't be used there because WindowsPath.resolve() checks that the other path is WindowsPath.
             val ijentPath = delegateIterator.next().toIjentPath()
+            val originalPath = dir.resolve(sanitizeFileName(ijentPath.fileName.toString()))
 
-            val originalPath = ijentPath.asSequence().map(Path::name).map(::sanitizeFileName).fold(wslLocalRoot, Path::resolve)
-
-            val cachedAttrs = ijentPath.get() as IjentNioPosixFileAttributes?
-            val dosAttributes =
-              if (cachedAttrs != null)
-                IjentNioPosixFileAttributesWithDosAdapter(
-                  ijentPath.fileSystem.ijentFs.user as IjentPosixInfo.User,
-                  cachedAttrs,
-                  nameStartsWithDot = ijentPath.ijentPath.fileName.startsWith("."),
-                )
-              else null
-
-            return IjentWslNioPath(getFileSystem(wslId), originalPath, dosAttributes)
+            return IjentWslNioPath(getFileSystem(wslId), originalPath.toOriginalPathWithSameNotation(), ijentPath.getCachedFileAttributesAndWrapToDosAttributesAdapter())
           }
 
           override fun remove() {
@@ -211,7 +210,7 @@ class IjentWslNioFileSystemProvider(
   }
 
   @OptIn(ExperimentalPathApi::class)
-  override fun copy(source: Path, target: Path, vararg options: CopyOption?) {
+  override fun copy(source: Path, target: Path, vararg options: CopyOption) {
     val sourceWsl = WslPath.parseWindowsUncPath(source.root.toString())
     val targetWsl = WslPath.parseWindowsUncPath(target.root.toString())
     when {
@@ -221,16 +220,16 @@ class IjentWslNioFileSystemProvider(
 
       sourceWsl == null && targetWsl == null -> {
         LOG.warn("This branch is not supposed to execute. Copying ${source} => ${target} through inappropriate FileSystemProvider")
-        originalFsProvider.copy(source.toOriginalPath(), target.toOriginalPath(), *options)
+        originalFsProvider.copy(source.toOriginalPathWithSameNotation(), target.toOriginalPathWithSameNotation(), *options)
       }
 
       else -> {
-        walkingTransfer(source, target, removeSource = false)
+        EelPathUtils.walkingTransfer(source, target, removeSource = false, copyAttributes = StandardCopyOption.COPY_ATTRIBUTES in options)
       }
     }
   }
 
-  override fun move(source: Path, target: Path, vararg options: CopyOption?) {
+  override fun move(source: Path, target: Path, vararg options: CopyOption) {
     val sourceWsl = WslPath.parseWindowsUncPath(source.root.toString())
     val targetWsl = WslPath.parseWindowsUncPath(target.root.toString())
     when {
@@ -240,165 +239,79 @@ class IjentWslNioFileSystemProvider(
 
       sourceWsl == null && targetWsl == null -> {
         LOG.warn("This branch is not supposed to execute. Moving ${source} => ${target} through inappropriate FileSystemProvider")
-        originalFsProvider.move(source.toOriginalPath(), target.toOriginalPath(), *options)
+        originalFsProvider.move(source.toOriginalPathWithSameNotation(), target.toOriginalPathWithSameNotation(), *options)
       }
 
       else -> {
-        walkingTransfer(source, target, removeSource = true)
+        EelPathUtils.walkingTransfer(source, target, removeSource = true, copyAttributes = StandardCopyOption.COPY_ATTRIBUTES in options)
       }
     }
   }
 
-  override fun isSameFile(path: Path, path2: Path): Boolean =
-    originalFsProvider.isSameFile(path.toOriginalPath(), path2.toOriginalPath())
-
-  override fun isHidden(path: Path): Boolean =
-    originalFsProvider.isHidden(path.toOriginalPath())
-
-  override fun getFileStore(path: Path): FileStore =
-    originalFsProvider.getFileStore(path.toOriginalPath())
-
-  override fun <V : FileAttributeView?> getFileAttributeView(path: Path, type: Class<V>, vararg options: LinkOption): V =
-    originalFsProvider.getFileAttributeView(path.toOriginalPath(), type, *options)
-
-  override fun <A : BasicFileAttributes> readAttributes(path: Path, type: Class<A>, vararg options: LinkOption): A {
-    // There's some contract violation at least in com.intellij.openapi.util.io.FileAttributes.fromNio:
-    // the function always assumes that the returned object is DosFileAttributes on Windows,
-    // and that's always true with the default WindowsFileSystemProvider.
-
-    val actualType =
-      if (DosFileAttributes::class.java.isAssignableFrom(type)) PosixFileAttributes::class.java
-      else type
-
-    val ijentNioPath = path.toIjentPath()
-    val resultAttrs = when (val actualAttrs = ijentFsProvider.readAttributes(ijentNioPath, actualType, *options)) {
-      is DosFileAttributes -> actualAttrs  // TODO How can it be possible? It's certainly known that the remote OS is GNU/Linux.
-
-      is PosixFileAttributes ->
-        IjentNioPosixFileAttributesWithDosAdapter(
-          ijentNioPath.fileSystem.ijentFs.user as IjentPosixInfo.User,
-          actualAttrs, path.name.startsWith("."),
+  override fun isSameFile(path: Path, path2: Path): Boolean {
+    if (path !is IjentWslNioPath) {
+      if (path2 !is IjentWslNioPath) {
+        throw ProviderMismatchException(
+          "Neither $path (${path::class}) nor $path2 (${path2::class}) are ${IjentWslNioPath::class.java.name}"
         )
-
-      else -> actualAttrs
+      }
+      return isSameFile(path2, path)
     }
 
-    return type.cast(resultAttrs)
+    if (path2 !is IjentWslNioPath) {
+      return if (path.actualPath.fileSystem.provider() == path2.fileSystem.provider())
+        Files.isSameFile(path.actualPath, path2)
+      else
+        false
+    }
+
+    if (path.actualPath == path.presentablePath && path2.actualPath == path2.presentablePath) {
+      return Files.isSameFile(path.toIjentPath(), path2.toIjentPath())
+    }
+
+    if (path.actualPath.fileSystem.provider() == path2.actualPath.fileSystem.provider()) {
+      return Files.isSameFile(path.actualPath, path2.actualPath)
+    }
+
+    return false
+  }
+
+  override fun isHidden(path: Path): Boolean =
+    originalFsProvider.isHidden(path.toOriginalPathWithSameNotation())
+
+  override fun getFileStore(path: Path): FileStore =
+    ijentFsProvider.getFileStore(path.toIjentPath())
+
+  override fun <V : FileAttributeView?> getFileAttributeView(path: Path, type: Class<V>, vararg options: LinkOption): V =
+    ijentFsProvider.getFileAttributeView(path.toIjentPath(), type, *options)
+
+  override fun <A : BasicFileAttributes> readAttributes(path: Path, type: Class<A>, vararg options: LinkOption): A {
+    return ijentFsProvider.readAttributesUsingDosAttributesAdapter(path, path.toIjentPath(), type, *options)
   }
 
   override fun readAttributes(path: Path, attributes: String?, vararg options: LinkOption?): MutableMap<String, Any> =
     ijentFsProvider.readAttributes(path.toIjentPath(), attributes, *options)
 
   override fun setAttribute(path: Path, attribute: String?, value: Any?, vararg options: LinkOption?) {
-    originalFsProvider.setAttribute(path.toOriginalPath(), attribute, value, *options)
+    ijentFsProvider.setAttribute(path.toIjentPath(), attribute, value, *options)
   }
 
   companion object {
+    private val allWslDistributionIds: AtomicReference<Set<String>> by lazy {
+      val ref = AtomicReference(emptySet<String>())
+      val wslDistributionManager = WslDistributionManager.getInstance()
+      wslDistributionManager.addWslDistributionsChangeListener { old, new ->
+        ref.updateAndGet { oldFromRef ->
+          val result = HashSet(oldFromRef)
+          result.removeAll(old.map { it.id })
+          result.addAll(new.map { it.id })
+          result
+        }
+      }
+      ref.set(wslDistributionManager.installedDistributions.map { it.id }.toHashSet())
+      ref
+    }
+
     private val LOG = logger<IjentWslNioFileSystemProvider>()
-
-    @VisibleForTesting
-    fun walkingTransfer(sourceRoot: Path, targetRoot: Path, removeSource: Boolean) {
-      val sourceStack = ArrayDeque<Path>()
-      sourceStack.add(sourceRoot)
-
-      var lastDirectory: Path? = null
-
-      while (true) {
-        val source =
-          try {
-            sourceStack.removeLast()
-          }
-          catch (_: NoSuchElementException) {
-            break
-          }
-
-        while (removeSource && lastDirectory != null && lastDirectory != sourceRoot && source.parent != lastDirectory) {
-          Files.delete(lastDirectory)
-          lastDirectory = lastDirectory.parent
-        }
-
-        val stat =
-          BasicFileAttributesHolder2.getAttributesFromHolder(source)
-          ?: source.readAttributes(LinkOption.NOFOLLOW_LINKS)
-
-        // WindowsPath doesn't support resolve() from paths of different class.
-        val target = source.relativeTo(sourceRoot).fold(targetRoot) { parent, file ->
-          parent.resolve(file.toString())
-        }
-
-        when {
-          stat.isDirectory -> {
-            lastDirectory = source
-            try {
-              target.createDirectories()
-            }
-            catch (err: FileAlreadyExistsException) {
-              if (!Files.isDirectory(target)) {
-                throw err
-              }
-            }
-            source.fileSystem.provider().newDirectoryStream(source, FetchAttributesFilter.ACCEPT_ALL).use { children ->
-              sourceStack.addAll(children.toList().asReversed())
-            }
-          }
-
-          stat.isRegularFile -> {
-            Files.newInputStream(source, READ).use { reader ->
-              Files.newOutputStream(target, CREATE, TRUNCATE_EXISTING, WRITE).use { writer ->
-                reader.copyTo(writer)
-              }
-            }
-            if (removeSource) {
-              Files.delete(source)
-            }
-          }
-
-          else -> {
-            LOG.info("Not copying $source to $target because the source file is neither a regular file nor a directory")
-          }
-        }
-      }
-
-      while (removeSource && lastDirectory != null && lastDirectory != sourceRoot) {
-        Files.delete(lastDirectory)
-        lastDirectory = lastDirectory.parent
-      }
-    }
-  }
-}
-
-@VisibleForTesting
-class IjentNioPosixFileAttributesWithDosAdapter(
-  private val userInfo: IjentPosixInfo.User,
-  private val fileInfo: PosixFileAttributes,
-  private val nameStartsWithDot: Boolean,
-) : CaseSensitivityAttribute, PosixFileAttributes by fileInfo, DosFileAttributes {
-  /**
-   * Returns `false` if the corresponding file or directory can be modified.
-   * Note that returning `true` does not mean that the corresponding file can be read or the directory can be listed.
-   */
-  override fun isReadOnly(): Boolean = fileInfo.run {
-    val owner = owner()
-    val group = group()
-    return when {
-      owner is IjentPosixUserPrincipal && owner.uid == userInfo.uid ->
-        OWNER_WRITE !in permissions() || (isDirectory && OWNER_EXECUTE !in permissions())
-
-      group is IjentPosixGroupPrincipal && group.gid == userInfo.gid ->
-        GROUP_WRITE !in permissions() || (isDirectory && GROUP_EXECUTE !in permissions())
-
-      else ->
-        OTHERS_WRITE !in permissions() || (isDirectory && OTHERS_EXECUTE !in permissions())
-    }
-  }
-
-  override fun isHidden(): Boolean = nameStartsWithDot
-
-  override fun isArchive(): Boolean = false
-
-  override fun isSystem(): Boolean = false
-
-  override fun getCaseSensitivity(): FileAttributes.CaseSensitivity {
-    if (fileInfo is CaseSensitivityAttribute) return fileInfo.caseSensitivity else return FileAttributes.CaseSensitivity.UNKNOWN
   }
 }

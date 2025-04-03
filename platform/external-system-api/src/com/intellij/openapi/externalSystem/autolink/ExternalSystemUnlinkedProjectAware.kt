@@ -1,4 +1,4 @@
-// Copyright 2000-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.externalSystem.autolink
 
 import com.intellij.openapi.Disposable
@@ -14,11 +14,12 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus.Internal
 
 /**
- * Allows to show and hide notification about unlinked projects with [systemId].
+ * Allows showing and hiding notification about unlinked projects with [systemId].
  */
 interface ExternalSystemUnlinkedProjectAware {
-
   val systemId: ProjectSystemId
+
+  fun buildFileExtensions(): Array<String> = arrayOf()
 
   fun isBuildFile(project: Project, buildFile: VirtualFile): Boolean
 
@@ -32,25 +33,25 @@ interface ExternalSystemUnlinkedProjectAware {
   suspend fun linkAndLoadProjectAsync(project: Project, externalProjectPath: String) {
     withContext(Dispatchers.EDT) {
       blockingContext {
+        @Suppress("DEPRECATION")
         linkAndLoadProject(project, externalProjectPath)
       }
     }
   }
 
   suspend fun unlinkProject(project: Project, externalProjectPath: String) {
-    throw UnsupportedOperationException()
+    throw UnsupportedOperationException("'unlinkProject' method in ${this::class.qualifiedName} is not implemented")
   }
 
   fun subscribe(project: Project, listener: ExternalSystemProjectLinkListener, parentDisposable: Disposable)
 
   companion object {
-
-    val EP_NAME: ExtensionPointName<ExternalSystemUnlinkedProjectAware> = ExtensionPointName.create<ExternalSystemUnlinkedProjectAware>("com.intellij.externalSystemUnlinkedProjectAware")
+    val EP_NAME: ExtensionPointName<ExternalSystemUnlinkedProjectAware> =
+      ExtensionPointName.create<ExternalSystemUnlinkedProjectAware>("com.intellij.externalSystemUnlinkedProjectAware")
 
     @JvmStatic
-    fun getInstance(systemId: ProjectSystemId): ExternalSystemUnlinkedProjectAware? {
-      return EP_NAME.findFirstSafe { it.systemId == systemId }
-    }
+    fun getInstance(systemId: ProjectSystemId): ExternalSystemUnlinkedProjectAware? =
+      EP_NAME.findFirstSafe { it.systemId == systemId }
 
     @JvmStatic
     @Internal
@@ -62,7 +63,7 @@ interface ExternalSystemUnlinkedProjectAware {
         }
       }
     }
+
+    private val LOG = logger<ExternalSystemUnlinkedProjectAware>()
   }
 }
-
-private val LOG = logger<ExternalSystemUnlinkedProjectAware>()

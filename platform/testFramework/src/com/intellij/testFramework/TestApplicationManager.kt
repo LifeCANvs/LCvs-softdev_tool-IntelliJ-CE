@@ -15,11 +15,15 @@ import com.intellij.ide.structureView.StructureViewFactory
 import com.intellij.ide.structureView.impl.StructureViewFactoryImpl
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.DataProvider
-import com.intellij.openapi.application.*
+import com.intellij.openapi.application.Application
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.WriteAction
+import com.intellij.openapi.application.WriteIntentReadAction
 import com.intellij.openapi.application.impl.ApplicationImpl
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.impl.UndoManagerImpl
 import com.intellij.openapi.command.undo.UndoManager
+import com.intellij.openapi.components.ComponentManagerEx
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.impl.EditorHistoryManager
@@ -34,11 +38,11 @@ import com.intellij.openapi.util.ShutDownTracker
 import com.intellij.psi.PsiManager
 import com.intellij.psi.impl.PsiManagerImpl
 import com.intellij.psi.templateLanguages.TemplateDataLanguageMappings
-import com.intellij.serviceContainer.ComponentManagerImpl
 import com.intellij.testFramework.common.*
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.concurrency.AppScheduledExecutorService
 import com.intellij.util.ref.GCUtil
+import com.intellij.util.ref.IgnoredTraverseEntry
 import com.intellij.util.ui.EDT
 import com.intellij.util.ui.UIUtil
 import com.intellij.workspaceModel.ide.impl.legacyBridge.module.roots.ModuleRootComponentBridge
@@ -108,7 +112,11 @@ class TestApplicationManager private constructor() {
         {
           app.runWriteIntentReadAction<Unit, Nothing?> {
             WriteCommandAction.runWriteCommandAction(project) {
-              app.serviceIfCreated<FileDocumentManager, FileDocumentManagerImpl>()?.dropAllUnsavedDocuments()
+              val fileDocumentManager = app.serviceIfCreated<FileDocumentManager, FileDocumentManagerImpl>()
+              if (fileDocumentManager != null) {
+                fileDocumentManager.dropAllUnsavedDocuments()
+                fileDocumentManager.clearDocumentCache()
+              }
             }
           }
         },
@@ -179,6 +187,10 @@ class TestApplicationManager private constructor() {
      */
     @JvmStatic
     fun disposeApplicationAndCheckForLeaks() {
+      disposeApplicationAndCheckForLeaks(emptyList())
+    }
+    @JvmStatic
+    fun disposeApplicationAndCheckForLeaks(ignoredTraverseEntries : List<IgnoredTraverseEntry>) {
       val edtThrowable = runInEdtAndGet {
         runAllCatching(
           { PlatformTestUtil.cleanupAllProjects() },
@@ -194,7 +206,7 @@ class TestApplicationManager private constructor() {
           { UsefulTestCase.waitForAppLeakingThreads(10, TimeUnit.SECONDS) },
           {
             if (ApplicationManager.getApplication() != null) {
-              assertNonDefaultProjectsAreNotLeaked()
+              assertNonDefaultProjectsAreNotLeaked(ignoredTraverseEntries)
             }
           },
           {
@@ -217,7 +229,7 @@ class TestApplicationManager private constructor() {
     @ApiStatus.Internal
     @JvmStatic
     fun waitForProjectLeakingThreads(project: Project) {
-      if (project is ComponentManagerImpl) {
+      if (project is ComponentManagerEx) {
         project.stopServicePreloading()
       }
 

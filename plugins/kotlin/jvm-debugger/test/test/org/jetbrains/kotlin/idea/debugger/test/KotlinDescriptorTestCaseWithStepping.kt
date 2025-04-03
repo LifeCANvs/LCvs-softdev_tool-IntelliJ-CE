@@ -4,10 +4,7 @@ package org.jetbrains.kotlin.idea.debugger.test
 
 import com.intellij.debugger.actions.MethodSmartStepTarget
 import com.intellij.debugger.actions.SmartStepTarget
-import com.intellij.debugger.engine.BasicStepMethodFilter
-import com.intellij.debugger.engine.DebugProcessImpl
-import com.intellij.debugger.engine.MethodFilter
-import com.intellij.debugger.engine.SuspendContextImpl
+import com.intellij.debugger.engine.*
 import com.intellij.debugger.engine.evaluation.EvaluateException
 import com.intellij.debugger.engine.evaluation.EvaluationContextImpl
 import com.intellij.debugger.engine.events.SuspendContextCommandImpl
@@ -27,7 +24,6 @@ import com.intellij.openapi.roots.OrderRootType
 import com.intellij.openapi.roots.libraries.ui.OrderRoot
 import com.intellij.psi.PsiElement
 import com.intellij.testFramework.runInEdtAndWait
-import com.intellij.xdebugger.XDebuggerTestUtil
 import com.intellij.xdebugger.frame.XStackFrame
 import com.intellij.xdebugger.impl.XSourcePositionImpl
 import junit.framework.AssertionFailedError
@@ -42,16 +38,14 @@ import org.jetbrains.kotlin.idea.debugger.core.stepping.KotlinSteppingCommandPro
 import org.jetbrains.kotlin.idea.debugger.getContainingMethod
 import org.jetbrains.kotlin.idea.debugger.stepping.smartStepInto.KotlinSmartStepIntoHandler
 import org.jetbrains.kotlin.idea.debugger.stepping.smartStepInto.KotlinSmartStepTarget
-import org.jetbrains.kotlin.idea.debugger.test.util.KotlinOutputChecker
-import org.jetbrains.kotlin.idea.debugger.test.util.SteppingInstruction
-import org.jetbrains.kotlin.idea.debugger.test.util.SteppingInstructionKind
-import org.jetbrains.kotlin.idea.debugger.test.util.render
+import org.jetbrains.kotlin.idea.debugger.test.util.*
 import org.jetbrains.kotlin.idea.test.ConfigLibraryUtil
 import org.jetbrains.kotlin.idea.test.KotlinBaseTest
 import org.jetbrains.kotlin.idea.test.allKotlinFiles
 import org.jetbrains.kotlin.psi.KtTreeVisitorVoid
 import org.jetbrains.kotlin.psi.psiUtil.getElementTextWithContext
 import org.jetbrains.kotlin.test.InTextDirectivesUtils
+import org.jetbrains.kotlin.test.TargetBackend
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstance
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -120,7 +114,7 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
         instructions.forEach(this::process)
     }
 
-    protected fun doOnBreakpoint(action: SuspendContextImpl.() -> Unit) {
+    protected open fun doOnBreakpoint(action: SuspendContextImpl.() -> Unit) {
         super.onBreakpoint {
             try {
                 initContexts(it)
@@ -146,14 +140,14 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
             runReadAction { commandProvider.getStepIntoCommand(this, ignoreFilters, smartStepFilter) }
                 ?: dp.createStepIntoCommand(this, ignoreFilters, smartStepFilter)
 
-        dp.managerThread.schedule(stepIntoCommand)
+        managerThread.schedule(stepIntoCommand)
     }
 
     private fun SuspendContextImpl.doStepOut() {
         val stepOutCommand = runReadAction { commandProvider.getStepOutCommand(this, debuggerContext) }
             ?: dp.createStepOutCommand(this)
 
-        dp.managerThread.schedule(stepOutCommand)
+        managerThread.schedule(stepOutCommand)
     }
 
     private fun SuspendContextImpl.doRunToCursor(lineIndex: Int, fileName: String) {
@@ -165,7 +159,7 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
             commandProvider.getRunToCursorCommand(this, xSourcePosition, false) ?: dp.createRunToCursorCommand(this, xSourcePosition, false)
         }
 
-        dp.managerThread.schedule(runToCursorCommand)
+        managerThread.schedule(runToCursorCommand)
     }
 
     override fun setUp() {
@@ -179,7 +173,7 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
             commandProvider.getStepOverCommand(this, ignoreBreakpoints, sourcePosition)
         } ?: dp.createStepOverCommand(this, ignoreBreakpoints)
 
-        dp.managerThread.schedule(stepOverCommand)
+        managerThread.schedule(stepOverCommand)
     }
 
     private fun process(instruction: SteppingInstruction) {
@@ -210,8 +204,12 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
     private fun checkNumberOfSmartStepTargets(expectedNumber: Int) {
         val smartStepFilters = createSmartStepIntoFilters()
         try {
+            val actualTargets = smartStepFilters.joinToString(prefix = "[", postfix = "]") {
+                if (it is NamedMethodFilter) it.methodName else it.toString()
+            }
+            val location = debuggerContext.suspendContext?.location
             assertEquals(
-                "Actual and expected numbers of smart step targets do not match",
+                "Actual and expected numbers of smart step targets do not match, targets: $actualTargets location: $location",
                 expectedNumber,
                 smartStepFilters.size
             )
@@ -248,7 +246,7 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
 
     fun isTestIgnored(): Boolean {
         val outputFile = getExpectedOutputFile()
-        return outputFile.exists() && isIgnoredTarget(targetBackend(), outputFile)
+        return outputFile.exists() && isIgnoredTarget(TargetBackend.JVM_IR_WITH_IR_EVALUATOR, outputFile)
     }
 
     override fun areLogErrorsIgnored(): Boolean {
@@ -292,11 +290,8 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
     }
 
     private fun createSmartStepIntoFilters(): List<MethodFilter> {
-        val position = debuggerContext.sourcePosition
         val stepTargets = KotlinSmartStepIntoHandler()
-            .findStepIntoTargets(position, debuggerSession)
-            .blockingGet(XDebuggerTestUtil.TIMEOUT_MS)
-            ?: error("Couldn't calculate smart step targets")
+            .findSmartStepTargetsSync(debuggerContext.sourcePosition, debuggerSession)
 
         // the resulting order is different from the order in code when stepping some methods are filtered
         // due to de-prioritisation in JvmSmartStepIntoHandler.reorderWithSteppingFilters
@@ -351,7 +346,7 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
             }
 
             // Try to execute the action inside a command if we aren't already inside it.
-            debuggerSession.process.managerThread.invoke(command)
+            managerThread.invoke(command)
         }
     }
 
@@ -402,7 +397,9 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
         for (agent in agentList) {
             val dependencies = loadDependencies(agent)
             for (dependency in dependencies) {
-                params.vmParametersList.add("-javaagent:${dependency.file.presentableUrl}")
+                if (dependency.type == OrderRootType.CLASSES) {
+                    params.vmParametersList.add("-javaagent:${dependency.file.presentableUrl}")
+                }
             }
         }
         return params
@@ -454,8 +451,32 @@ abstract class KotlinDescriptorTestCaseWithStepping : KotlinDescriptorTestCase()
     ): MutableList<OrderRoot> {
 
         return JarRepositoryManager.loadDependenciesSync(
-            project, description, setOf(ArtifactKind.ARTIFACT),
+            project, description, setOf(ArtifactKind.ARTIFACT, ArtifactKind.SOURCES),
             jarRepositories(), null
         ) ?: throw AssertionError("Maven Dependency not found: $description")
+    }
+
+    /*
+     * Prints stack traces with variables on a current breakpoint.
+     *
+     * Internally the function computes children of `com.intellij.debugger.engine.JavaStackFrame`,
+     * which is a non-blocking operation that is scheduled as a separate action on the debugger thread.
+     * If a debug process is resumed before the children of a stack frame are computed, an exception will
+     * occur and nothing will be printed.
+     */
+    protected fun printFrame(suspendContext: SuspendContextImpl, completion: SuspendContextImpl.() -> Unit) {
+        processStackFramesOnPooledThread {
+            for (stackFrame in this) {
+                val result = FramePrinter(suspendContext).print(stackFrame)
+                print(result, ProcessOutputTypes.SYSTEM)
+            }
+            assert(debugProcess.isAttached)
+            suspendContext.managerThread.schedule(object : SuspendContextCommandImpl(suspendContext) {
+                override fun contextAction(suspendContext: SuspendContextImpl) {
+                    completion(suspendContext)
+                }
+                override fun commandCancelled() = error(message = "Test was cancelled")
+            })
+        }
     }
 }

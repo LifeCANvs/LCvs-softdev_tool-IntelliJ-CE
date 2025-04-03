@@ -1,17 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
-@file:Suppress("LiftReturnOrAssignment")
-
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.impl.projectStructureMapping
 
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator
-import org.apache.commons.io.output.ByteArrayOutputStream
 import org.jetbrains.intellij.build.*
 import org.jetbrains.intellij.build.impl.ProjectLibraryData
 import org.jetbrains.intellij.build.io.ZipFileWriter
+import java.io.ByteArrayOutputStream
 import java.io.File
-import java.nio.ByteBuffer
 import java.nio.file.Path
 import java.util.*
 
@@ -20,9 +17,9 @@ internal fun getIncludedModules(entries: Sequence<DistributionFileEntry>): Seque
 }
 
 internal fun buildJarContentReport(contentReport: ContentReport, zipFileWriter: ZipFileWriter, buildPaths: BuildPaths, context: BuildContext) {
-  zipFileWriter.uncompressedData("platform.yaml", ByteBuffer.wrap(buildPlatformContentReport(contentReport, buildPaths, context.getDistFiles(os = null, arch = null))), null)
-  zipFileWriter.uncompressedData("bundled-plugins.yaml", ByteBuffer.wrap(buildPluginContentReport(contentReport.bundledPlugins, buildPaths)), null)
-  zipFileWriter.uncompressedData("non-bundled-plugins.yaml", ByteBuffer.wrap(buildPluginContentReport(contentReport.nonBundledPlugins, buildPaths)), null)
+  zipFileWriter.uncompressedData("platform.yaml", buildPlatformContentReport(contentReport, buildPaths, context.getDistFiles(os = null, arch = null)))
+  zipFileWriter.uncompressedData("bundled-plugins.yaml", buildPluginContentReport(contentReport.bundledPlugins, buildPaths))
+  zipFileWriter.uncompressedData("non-bundled-plugins.yaml", buildPluginContentReport(contentReport.nonBundledPlugins, buildPaths))
 }
 
 private fun buildPluginContentReport(pluginToEntries: List<Pair<PluginBuildDescriptor, List<DistributionFileEntry>>>, buildPaths: BuildPaths): ByteArray {

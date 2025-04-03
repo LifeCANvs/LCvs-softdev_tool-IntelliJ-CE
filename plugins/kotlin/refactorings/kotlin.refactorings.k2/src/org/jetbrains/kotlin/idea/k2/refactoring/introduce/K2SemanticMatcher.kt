@@ -7,6 +7,7 @@ import com.intellij.psi.util.elementType
 import com.intellij.psi.util.startOffset
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.base.KaConstantValue
 import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
 import org.jetbrains.kotlin.analysis.api.resolution.*
 import org.jetbrains.kotlin.analysis.api.symbols.*
@@ -227,8 +228,20 @@ object K2SemanticMatcher {
                     return oldElement !is KtElement || oldElement.text == expression.text
                 }
             }
-
+            if (targetSymbol is KaSyntheticJavaPropertySymbol && patternSymbol is KaSyntheticJavaPropertySymbol &&
+                areSyntheticPropertiesEqual(targetSymbol, patternSymbol)
+            ) {
+                return true
+            }
             return targetSymbol == patternSymbol || symbols[targetSymbol] == patternSymbol
+        }
+
+        private fun areSyntheticPropertiesEqual(
+            targetSyntheticProperty: KaSyntheticJavaPropertySymbol,
+            patternSyntheticProperty: KaSyntheticJavaPropertySymbol,
+        ): Boolean {
+            return targetSyntheticProperty.javaGetterSymbol == patternSyntheticProperty.javaGetterSymbol &&
+                    targetSyntheticProperty.javaSetterSymbol == patternSyntheticProperty.javaSetterSymbol
         }
 
         context(KaSession)
@@ -448,8 +461,15 @@ object K2SemanticMatcher {
 
         override fun visitConstantExpression(expression: KtConstantExpression, data: KtElement): Boolean {
             val patternExpression = data.deparenthesized() as? KtConstantExpression ?: return false
-
-            return expression.text == patternExpression.text
+            with(analysisSession) {
+                val evaluatedExpression = expression.evaluate() ?: return false
+                val evaluatedPatternExpression = patternExpression.evaluate() ?: return false
+                if (evaluatedExpression.value is KaConstantValue.ErrorValue ||
+                    evaluatedPatternExpression.value is KaConstantValue.ErrorValue ||
+                    evaluatedExpression.render() != evaluatedPatternExpression.render()
+                ) return false
+            }
+            return true
         }
 
         override fun visitLabeledExpression(expression: KtLabeledExpression, data: KtElement): Boolean = false // TODO()
@@ -681,8 +701,14 @@ object K2SemanticMatcher {
     ): Boolean {
         if (areNonCallsMatchingByResolve(targetExpression, patternExpression, context)) return true
 
-        val targetCallInfo = targetExpression.resolveToCall() ?: return false
-        val patternCallInfo = patternExpression.resolveToCall() ?: return false
+        val targetCallInfo = targetExpression.resolveToCall()
+        val patternCallInfo = patternExpression.resolveToCall()
+
+        if (targetCallInfo == null && patternCallInfo == null) {
+            return areUnresolvedCallsMatchingByResolve(targetExpression, patternExpression, context)
+        } else if (targetCallInfo == null || patternCallInfo == null) {
+            return false
+        }
 
         if (targetCallInfo is KaErrorCallInfo && patternCallInfo is KaErrorCallInfo) {
             if (targetCallInfo.isUnresolvedCall() != patternCallInfo.isUnresolvedCall()) return false

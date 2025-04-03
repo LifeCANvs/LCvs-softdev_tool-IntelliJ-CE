@@ -1,16 +1,16 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide
 
 import com.intellij.codeWithMe.ClientId.Companion.withClientId
 import com.intellij.ide.ui.ShowingContainer
 import com.intellij.idea.AppMode
 import com.intellij.openapi.application.AccessToken
-import com.intellij.openapi.application.isCoroutineWILEnabled
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.impl.getGlobalThreadingSupport
 import com.intellij.openapi.client.ClientKind
 import com.intellij.openapi.client.ClientSessionsManager
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.diagnostic.trace
 import java.awt.*
 import java.awt.event.FocusEvent
 import java.awt.event.HierarchyEvent
@@ -48,7 +48,15 @@ internal class IdeKeyboardFocusManager(internal val original: KeyboardFocusManag
     val dispatch = { getAssociatedClientId(e).use { super.dispatchEvent(e) } }
     if (EventQueue.isDispatchThread()) {
       var result = false
-      performActivity(e, isCoroutineWILEnabled) { result = dispatch() }
+      val app = ApplicationManager.getApplication()
+      // Don't try to get WIRA if we are in read action or there is no application at all
+      if (app == null || app.isReadAccessAllowed) {
+        performActivity(e, false) { result = dispatch() }
+      }
+      else {
+        //todo fix all clients and remove WIRA here, but for now it is like keyboard or mouse event
+        performActivity(e, false) { getGlobalThreadingSupport().runPreventiveWriteIntentReadAction { result = dispatch() } }
+      }
       return result
     }
     else {

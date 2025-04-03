@@ -1,26 +1,10 @@
-/*
- * Copyright 2000-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.target.*
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.PathManager
-import com.intellij.openapi.application.WriteAction
-import com.intellij.openapi.application.runInEdt
+import com.intellij.openapi.application.*
 import com.intellij.openapi.diagnostic.getOrLogException
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.module.Module
@@ -28,7 +12,6 @@ import com.intellij.openapi.module.ModuleUtil
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.projectRoots.impl.SdkConfigurationUtil
 import com.intellij.openapi.roots.ModuleRootManager
@@ -43,28 +26,33 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.StandardFileSystems
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.platform.ide.progress.ModalTaskOwner
+import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.util.PathUtil
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import com.intellij.webcore.packaging.PackagesNotificationPanel
-import com.jetbrains.extensions.failure
 import com.jetbrains.python.PyBundle
+import com.jetbrains.python.failure
 import com.jetbrains.python.packaging.ui.PyPackageManagementService
 import com.jetbrains.python.psi.LanguageLevel
 import com.jetbrains.python.remote.PyRemoteSdkAdditionalData
 import com.jetbrains.python.remote.PyRemoteSdkAdditionalDataBase
 import com.jetbrains.python.run.PythonInterpreterTargetEnvironmentFactory
-import com.jetbrains.python.sdk.add.target.createDetectedSdk
+import com.jetbrains.python.sdk.add.v1.createDetectedSdk
 import com.jetbrains.python.sdk.flavors.PyFlavorAndData
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
 import com.jetbrains.python.sdk.flavors.VirtualEnvSdkFlavor
 import com.jetbrains.python.sdk.flavors.conda.CondaEnvSdkFlavor
 import com.jetbrains.python.target.PyTargetAwareAdditionalData
-import com.jetbrains.python.ui.PyUiUtil
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
-import java.io.File
-import java.io.IOException
+import org.jetbrains.annotations.ApiStatus.Internal
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import javax.swing.SwingUtilities
+import kotlin.Result
 import kotlin.io.path.div
 import kotlin.io.path.pathString
 
@@ -109,7 +97,7 @@ fun configurePythonSdk(project: Project, module: Module, sdk: Sdk) {
   module.pythonSdk = sdk
   module.excludeInnerVirtualEnv(sdk)
 }
-
+// TODO: PythonInterpreterService: get system pythons
 /**
  * @param context used to get [BASE_DIR] in [com.jetbrains.python.sdk.flavors.VirtualEnvSdkFlavor.suggestLocalHomePaths]
  */
@@ -138,7 +126,7 @@ private fun PythonSdkFlavor<*>.detectSdks(
     .map { createDetectedSdk(it, targetModuleSitsOn?.asTargetConfig, this) }
 
 
-internal fun PythonSdkFlavor<*>.detectSdkPaths(
+private fun PythonSdkFlavor<*>.detectSdkPaths(
   module: Module?,
   context: UserDataHolder,
   targetModuleSitsOn: TargetConfigurationWithLocalFsAccess?,
@@ -169,12 +157,22 @@ fun filterAssociatedSdks(module: Module, existingSdks: List<Sdk>): List<Sdk> {
 fun detectAssociatedEnvironments(module: Module, existingSdks: List<Sdk>, context: UserDataHolder): List<PyDetectedSdk> =
   detectVirtualEnvs(module, existingSdks, context).filter { it.isAssociatedWithModule(module) }
 
+@Deprecated("Please use version with sdkAdditionalData parameter")
 fun createSdkByGenerateTask(
   generateSdkHomePath: Task.WithResult<String, ExecutionException>,
   existingSdks: List<Sdk>,
   baseSdk: Sdk?,
   associatedProjectPath: String?,
   suggestedSdkName: String?,
+): Sdk = createSdkByGenerateTask(generateSdkHomePath, existingSdks, baseSdk, associatedProjectPath, suggestedSdkName, null)
+
+fun createSdkByGenerateTask(
+  generateSdkHomePath: Task.WithResult<String, ExecutionException>,
+  existingSdks: List<Sdk>,
+  baseSdk: Sdk?,
+  associatedProjectPath: String?,
+  suggestedSdkName: String?,
+  sdkAdditionalData: PythonSdkAdditionalData? = null,
 ): Sdk {
   val homeFile = try {
     val homePath = ProgressManager.getInstance().run(generateSdkHomePath)
@@ -187,13 +185,52 @@ fun createSdkByGenerateTask(
     throw e
   }
 
-  val suggestedName = suggestedSdkName ?: suggestAssociatedSdkName(homeFile.path, associatedProjectPath)
+  val sdkName = suggestedSdkName ?: if (SwingUtilities.isEventDispatchThread()) {
+    runWithModalProgressBlocking(ModalTaskOwner.guess(), "...") {
+      withContext(Dispatchers.IO) {
+        suggestAssociatedSdkName(homeFile.path, associatedProjectPath)
+      }
+    }
+  }
+  else {
+    suggestAssociatedSdkName(homeFile.path, associatedProjectPath)
+  }
   return SdkConfigurationUtil.setupSdk(
     existingSdks.toTypedArray(),
     homeFile,
     PythonSdkType.getInstance(),
-    null,
-    suggestedName)
+    sdkAdditionalData,
+    sdkName)
+}
+
+@Internal
+suspend fun createSdk(
+  sdkHomePath: Path,
+  existingSdks: List<Sdk>,
+  associatedProjectPath: String?,
+  suggestedSdkName: String?,
+  sdkAdditionalData: PythonSdkAdditionalData? = null,
+): Result<Sdk> {
+  val homeFile = withContext(Dispatchers.IO) { StandardFileSystems.local().refreshAndFindFileByPath(sdkHomePath.pathString) }
+                 ?: return Result.failure(ExecutionException(
+                   PyBundle.message("python.sdk.directory.not.found", sdkHomePath.pathString)
+                 ))
+
+  val sdkName = suggestedSdkName ?: withContext(Dispatchers.IO) {
+    suggestAssociatedSdkName(homeFile.path, associatedProjectPath)
+  }
+
+  val sdk = SdkConfigurationUtil.setupSdk(
+    existingSdks.toTypedArray(),
+    homeFile,
+    PythonSdkType.getInstance(),
+    false,
+    sdkAdditionalData,
+    sdkName)
+
+  return sdk?.let { Result.success(it) } ?: Result.failure(ExecutionException(
+    PyBundle.message("python.sdk.failed.to.create.interpreter.title")
+  ))
 }
 
 fun showSdkExecutionException(sdk: Sdk?, e: ExecutionException, @NlsContexts.DialogTitle title: String) {
@@ -318,8 +355,9 @@ var Module.pythonSdk: Sdk?
     thisLogger().info("Setting PythonSDK $value to module $this")
     ModuleRootModificationUtil.setModuleSdk(this, value)
     runInEdt {
-      PyUiUtil.clearFileLevelInspectionResults(project)
+      DaemonCodeAnalyzer.getInstance(project).restart()
     }
+    ApplicationManager.getApplication().messageBus.syncPublisher(PySdkListener.TOPIC).moduleSdkUpdated(this, value)
   }
 
 var Project.pythonSdk: Sdk?
@@ -348,17 +386,18 @@ fun Module.excludeInnerVirtualEnv(sdk: Sdk) {
     val contentFile = it.file
     contentFile != null && VfsUtil.isAncestor(contentFile, root, true)
   } ?: return
-  contentEntry.addExcludeFolder(root)
 
-  WriteAction.run<Throwable> {
-    model.commit()
+  contentEntry.addExcludeFolder(root)
+  invokeAndWaitIfNeeded {
+    WriteAction.run<Throwable> {
+      model.commit()
+    }
   }
 }
 
-fun Project?.excludeInnerVirtualEnv(sdk: Sdk) {
+fun Project.excludeInnerVirtualEnv(sdk: Sdk) {
   val binary = sdk.homeDirectory ?: return
-  val possibleProjects = if (this != null) listOf(this) else ProjectManager.getInstance().openProjects.asList()
-  possibleProjects.firstNotNullOfOrNull { ModuleUtil.findModuleForFile(binary, it) }?.excludeInnerVirtualEnv(sdk)
+  ModuleUtil.findModuleForFile(binary, this)?.excludeInnerVirtualEnv(sdk)
 }
 
 fun getInnerVirtualEnvRoot(sdk: Sdk): VirtualFile? {
@@ -377,6 +416,7 @@ fun getInnerVirtualEnvRoot(sdk: Sdk): VirtualFile? {
   }
 }
 
+@RequiresBackgroundThread
 internal fun suggestAssociatedSdkName(sdkHome: String, associatedPath: String?): String? {
   // please don't forget to update com.jetbrains.python.inspections.PyInterpreterInspection.Visitor#getSuitableSdkFix
   // after changing this method
@@ -401,19 +441,6 @@ internal val Sdk.isSystemWide: Boolean
   get() = !PythonSdkUtil.isRemote(this) && !PythonSdkUtil.isVirtualEnv(
     this) && !PythonSdkUtil.isCondaVirtualEnv(this)
 
-@Suppress("unused")
-private val Sdk.associatedPathFromDotProject: String?
-  get() {
-    val binaryPath = homePath ?: return null
-    val virtualEnvRoot = PythonSdkUtil.getVirtualEnvRoot(binaryPath) ?: return null
-    val projectFile = File(virtualEnvRoot, ".project")
-    return try {
-      projectFile.readText().trim()
-    }
-    catch (e: IOException) {
-      null
-    }
-  }
 
 private val Sdk.associatedPathFromAdditionalData: String?
   get() = (sdkAdditionalData as? PythonSdkAdditionalData)?.associatedModulePath
@@ -452,32 +479,9 @@ private fun Sdk.containsModuleName(module: Module?): Boolean {
   return path.contains(name, true)
 }
 
-/**
- * Each [Sdk] has [PythonSdkAdditionalData]. Use this method to get it.
- * Although each SDK should already have one, some old may lack it.
- *
- * This method creates new in this case, but only if an SDK flavor doesn't require special additional data.
- */
-fun Sdk.getOrCreateAdditionalData(): PythonSdkAdditionalData {
-  val existingData = sdkAdditionalData as? PythonSdkAdditionalData
-  if (existingData != null) return existingData
-  val homePath = Path.of(homePath ?: error("homePath is null for $this"))
-  val flavor = PythonSdkFlavor.tryDetectFlavorByLocalPath(homePath) ?: error("No flavor detected for $homePath sdk")
-  val newData = PythonSdkAdditionalData(if (flavor.supportsEmptyData()) flavor else null)
-  val modificator = sdkModificator
-  modificator.sdkAdditionalData = newData
-  val application = ApplicationManager.getApplication()
-  if (application.isDispatchThread) {
-    application.runWriteAction { modificator.commitChanges() }
-  }
-  else {
-    application.invokeLater {
-      application.runWriteAction { modificator.commitChanges() }
-    }
-  }
-  return newData
-}
 
+@JvmName("getOrCreateAdditionalData")
+fun getOrCreateAdditionalDataOld(sdk: Sdk): PythonSdkAdditionalData = sdk.getOrCreateAdditionalData()
 
 private fun filterSuggestedPaths(
   flavor: PythonSdkFlavor<*>,
@@ -561,22 +565,3 @@ val Sdk.sdkSeemsValid: Boolean
     if (pythonSdkAdditionalData is PyRemoteSdkAdditionalData) return true
     return pythonSdkAdditionalData.flavorAndData.sdkSeemsValid(this, targetEnvConfiguration)
   }
-
-inline fun <reified T : PythonSdkAdditionalData> setCorrectTypeSdk(sdk: Sdk, additionalDataClass: Class<T>, value: Boolean) {
-  val oldData = sdk.sdkAdditionalData
-  val newData = if (value) {
-    when (oldData) {
-      is PythonSdkAdditionalData -> additionalDataClass.getDeclaredConstructors().first { it.parameterCount == 1 }.newInstance(oldData) as T
-      else -> additionalDataClass.getDeclaredConstructor().newInstance()
-    }
-  }
-  else {
-    when (oldData) {
-      is T -> PythonSdkAdditionalData(PythonSdkFlavor.getFlavor(sdk))
-      else -> oldData
-    }
-  }
-  val modificator = sdk.sdkModificator
-  modificator.sdkAdditionalData = newData
-  ApplicationManager.getApplication().runWriteAction { modificator.commitChanges() }
-}

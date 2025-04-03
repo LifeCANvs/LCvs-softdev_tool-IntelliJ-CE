@@ -34,10 +34,25 @@ import javax.swing.text.BadLocationException
 import javax.swing.text.JTextComponent
 import javax.swing.text.Segment
 
-fun Label(@Label text: String, style: UIUtil.ComponentStyle? = null, fontColor: UIUtil.FontColor? = null, bold: Boolean = false): JLabel =
-  Label(text, style, fontColor, bold, null)
+@ApiStatus.ScheduledForRemoval
+@Deprecated("Use correspondent constructors JLabel/JBLabel/MultiLineLabel, depends on situation")
+fun Label(@Label text: String, style: UIUtil.ComponentStyle? = null, fontColor: UIUtil.FontColor? = null, bold: Boolean = false): JLabel {
+  return Label(text = text, style = style, fontColor = fontColor, bold = bold, font = null)
+}
 
-fun Label(@Label text: String, style: UIUtil.ComponentStyle? = null, fontColor: UIUtil.FontColor? = null, bold: Boolean = false, font: Font? = null): JLabel {
+/**
+ * Always calls [BundleBase.replaceMnemonicAmpersand] inside and therefore can log the text in case of several mnemonics.
+ * That's unexpected behavior
+ */
+@ApiStatus.ScheduledForRemoval
+@Deprecated("Use correspondent constructors JLabel/JBLabel/MultiLineLabel, depends on situation")
+fun Label(
+  @Label text: String,
+  style: UIUtil.ComponentStyle? = null,
+  fontColor: UIUtil.FontColor? = null,
+  bold: Boolean = false,
+  font: Font? = null,
+): JLabel {
   val finalText = BundleBase.replaceMnemonicAmpersand(text)!!
   val label: JLabel
   if (fontColor == null) {
@@ -58,13 +73,14 @@ fun Label(@Label text: String, style: UIUtil.ComponentStyle? = null, fontColor: 
 
   // surrounded by space to avoid false match
   if (text.contains(" -> ")) {
+    @Suppress("HardCodedStringLiteral")
     label.text = text.replace(" -> ", " ${FontUtil.rightArrow(label.font)} ")
   }
   return label
 }
 
 @ApiStatus.ScheduledForRemoval
-@Deprecated("Use Kotlin UI DSL, method Row.link")
+@Deprecated("Use Kotlin UI DSL, method Row.link", level = DeprecationLevel.ERROR)
 fun Link(@Label text: String, style: UIUtil.ComponentStyle? = null, action: () -> Unit): JComponent {
   val result = ActionLink(text) { action() }
   style?.let { UIUtil.applyStyle(it, result) }
@@ -84,6 +100,7 @@ fun noteComponent(@Label note: String, linkHandler: ((url: String) -> Unit)? = n
   var prev = 0
   do {
     if (matcher.start() != prev) {
+      @Suppress("HardCodedStringLiteral")
       noteComponent.append(note.substring(prev, matcher.start()))
     }
 
@@ -97,6 +114,7 @@ fun noteComponent(@Label note: String, linkHandler: ((url: String) -> Unit)? = n
   LinkMouseListenerBase.installSingleTagOn(noteComponent)
 
   if (prev < note.length) {
+    @Suppress("HardCodedStringLiteral")
     noteComponent.append(note.substring(prev))
   }
 
@@ -134,11 +152,16 @@ fun CheckBox(@Checkbox text: String, selected: Boolean = false, toolTip: @Toolti
 @Deprecated("Use Kotlin UI DSL, method Panel.group")
 @JvmOverloads
 fun Panel(@BorderTitle title: String? = null, layout: LayoutManager2? = BorderLayout()): JPanel {
-  return Panel(title, false, layout)
+  val panel = JPanel(layout)
+  title?.let {
+    @Suppress("HardCodedStringLiteral")
+    setTitledBorder(title = it, panel = panel, hasSeparator = false)
+  }
+  return panel
 }
 
 @ApiStatus.ScheduledForRemoval
-@Deprecated("Use Kotlin UI DSL, method Panel.group")
+@Deprecated("Use Kotlin UI DSL, method Panel.group", level = DeprecationLevel.ERROR)
 fun Panel(title: @BorderTitle String? = null, hasSeparator: Boolean = true, layout: LayoutManager2? = BorderLayout()): JPanel {
   val panel = JPanel(layout)
   title?.let { setTitledBorder(it, panel, hasSeparator) }
@@ -209,9 +232,11 @@ interface DialogManager {
   fun performAction(action: (() -> List<ValidationInfo>?)? = null)
 }
 
-private abstract class MyDialogWrapper(project: Project?,
-                                       parent: Component?,
-                                       modality: IdeModalityType) : DialogWrapper(project, parent, true, modality), DialogManager {
+private abstract class MyDialogWrapper(
+  project: Project?,
+  parent: Component?,
+  modality: IdeModalityType,
+) : DialogWrapper(project, parent, true, modality), DialogManager {
   override fun performAction(action: (() -> List<ValidationInfo>?)?) {
     val validationInfoList = action?.invoke()
     if (validationInfoList.isNullOrEmpty()) {
@@ -348,7 +373,7 @@ val JPasswordField.chars: CharSequence?
     else try {
       return Segment().also { doc.getText(0, doc.length, it) }
     }
-    catch (e: BadLocationException) {
+    catch (_: BadLocationException) {
       return null
     }
   }

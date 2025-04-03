@@ -24,11 +24,13 @@ import com.intellij.psi.stub.JavaStubImplUtil;
 import com.intellij.psi.stubs.IStubElementType;
 import com.intellij.psi.stubs.PsiFileStub;
 import com.intellij.psi.stubs.StubElement;
+import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.*;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import javax.swing.*;
 import java.util.*;
@@ -41,7 +43,7 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
     this(stub, JavaStubElementTypes.CLASS);
   }
 
-  protected PsiClassImpl(PsiClassStub<?> stub, IStubElementType<?,?> type) {
+  protected PsiClassImpl(PsiClassStub<?> stub, IElementType type) {
     super(stub, type);
     addTrace(null);
   }
@@ -167,7 +169,7 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
 
   @Override
   public PsiModifierList getModifierList() {
-    return getRequiredStubOrPsiChild(JavaStubElementTypes.MODIFIER_LIST);
+    return (PsiModifierList)getStubOrPsiChild(JavaStubElementTypes.MODIFIER_LIST);
   }
 
   @Override
@@ -178,12 +180,12 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
 
   @Override
   public PsiReferenceList getExtendsList() {
-    return getStubOrPsiChild(JavaStubElementTypes.EXTENDS_LIST);
+    return (PsiReferenceList)getStubOrPsiChild(JavaStubElementTypes.EXTENDS_LIST);
   }
 
   @Override
   public PsiReferenceList getImplementsList() {
-    return getStubOrPsiChild(JavaStubElementTypes.IMPLEMENTS_LIST);
+    return (PsiReferenceList)getStubOrPsiChild(JavaStubElementTypes.IMPLEMENTS_LIST);
   }
 
   @Override
@@ -198,7 +200,7 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
 
   @Override
   public @Nullable PsiReferenceList getPermitsList() {
-    return getStubOrPsiChild(JavaStubElementTypes.PERMITS_LIST);
+    return (PsiReferenceList)getStubOrPsiChild(JavaStubElementTypes.PERMITS_LIST);
   }
 
   @Override
@@ -297,7 +299,7 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
 
   @Override
   public @Nullable PsiRecordHeader getRecordHeader() {
-    return getStubOrPsiChild(JavaStubElementTypes.RECORD_HEADER);
+    return (PsiRecordHeader)getStubOrPsiChild(JavaStubElementTypes.RECORD_HEADER);
   }
 
   @Override
@@ -361,12 +363,12 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
   }
 
   @Override
-  public @NotNull List<Pair<PsiMethod, PsiSubstitutor>> findMethodsAndTheirSubstitutorsByName(@NotNull String name, boolean checkBases) {
+  public @Unmodifiable @NotNull List<Pair<PsiMethod, PsiSubstitutor>> findMethodsAndTheirSubstitutorsByName(@NotNull String name, boolean checkBases) {
     return PsiClassImplUtil.findMethodsAndTheirSubstitutorsByName(this, name, checkBases);
   }
 
   @Override
-  public @NotNull List<Pair<PsiMethod, PsiSubstitutor>> getAllMethodsAndTheirSubstitutors() {
+  public @Unmodifiable @NotNull List<Pair<PsiMethod, PsiSubstitutor>> getAllMethodsAndTheirSubstitutors() {
     return PsiClassImplUtil.getAllWithSubstitutorsByMap(this, PsiClassImplUtil.MemberType.METHOD);
   }
 
@@ -377,7 +379,7 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
 
   @Override
   public PsiTypeParameterList getTypeParameterList() {
-    return getRequiredStubOrPsiChild(JavaStubElementTypes.TYPE_PARAMETER_LIST);
+    return (PsiTypeParameterList)getStubOrPsiChild(JavaStubElementTypes.TYPE_PARAMETER_LIST);
   }
 
   @Override
@@ -449,6 +451,16 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
 
     ASTNode keyword = getNode().findChildByRole(ChildRole.CLASS_OR_INTERFACE_KEYWORD);
     return keyword != null && keyword.getElementType() == JavaTokenType.RECORD_KEYWORD;
+  }
+
+  @Override
+  public boolean isValueClass() {
+    PsiClassStub<?> stub = getGreenStub();
+    if (stub != null) {
+      return stub.isValueClass();
+    }
+
+    return hasModifierProperty(PsiKeyword.VALUE);
   }
 
   @Override

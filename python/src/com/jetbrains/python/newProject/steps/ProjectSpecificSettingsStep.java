@@ -3,18 +3,15 @@ package com.jetbrains.python.newProject.steps;
 
 import com.intellij.execution.target.TargetEnvironmentConfiguration;
 import com.intellij.facet.ui.ValidationResult;
-import com.intellij.ide.impl.ProjectUtil;
 import com.intellij.ide.util.projectWizard.AbstractNewProjectStep;
 import com.intellij.ide.util.projectWizard.ProjectSettingsStepBase;
 import com.intellij.ide.util.projectWizard.WebProjectTemplate;
-import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.ui.LabeledComponent;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.ui.VerticalFlowLayout;
 import com.intellij.openapi.util.Pair;
-import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.HtmlChunk;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.util.text.TextWithMnemonic;
@@ -22,8 +19,6 @@ import com.intellij.platform.DirectoryProjectGenerator;
 import com.intellij.ui.HideableDecorator;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.PathUtil;
-import com.intellij.util.PlatformUtils;
-import com.intellij.util.concurrency.annotations.RequiresEdt;
 import com.jetbrains.python.PyBundle;
 import com.jetbrains.python.configuration.PyConfigurableInterpreterList;
 import com.jetbrains.python.newProject.PyFrameworkProjectGenerator;
@@ -32,7 +27,6 @@ import com.jetbrains.python.newProject.PythonProjectGenerator;
 import com.jetbrains.python.newProject.collector.InterpreterStatisticsInfo;
 import com.jetbrains.python.packaging.PyPackage;
 import com.jetbrains.python.packaging.PyPackageUtil;
-import com.jetbrains.python.psi.PyUtil;
 import com.jetbrains.python.run.PythonInterpreterTargetEnvironmentFactory;
 import com.jetbrains.python.sdk.*;
 import com.jetbrains.python.sdk.add.PyAddSdkGroupPanel;
@@ -45,15 +39,14 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.awt.*;
 import java.io.File;
-import java.nio.file.Path;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 import java.util.stream.Collectors;
 
 /**
  * @deprecated Use {@link com.jetbrains.python.newProjectWizard}
  */
-@Deprecated
+@Deprecated(forRemoval = true)
 public class ProjectSpecificSettingsStep<T extends PyNewProjectSettings> extends ProjectSettingsStepBase<T> implements DumbAware {
   private boolean myInstallFramework;
   private @Nullable PyAddSdkGroupPanel myInterpreterPanel;
@@ -61,7 +54,9 @@ public class ProjectSpecificSettingsStep<T extends PyNewProjectSettings> extends
 
   public ProjectSpecificSettingsStep(final @NotNull DirectoryProjectGenerator<T> projectGenerator,
                                      final @NotNull AbstractNewProjectStep.AbstractCallback<T> callback) {
-    super(projectGenerator, callback);
+    super(projectGenerator, callback, (projectGenerator instanceof PythonProjectGenerator<T> pyProjectGenerator)
+                                      ? pyProjectGenerator.getNewProjectPrefix()
+                                      : null);
   }
 
   @Override
@@ -76,19 +71,12 @@ public class ProjectSpecificSettingsStep<T extends PyNewProjectSettings> extends
   @Override
   protected @Nullable JPanel createAdvancedSettings() {
     JComponent advancedSettings = null;
-    if (myProjectGenerator instanceof PythonProjectGenerator) {
-      advancedSettings = ((PythonProjectGenerator<?>)myProjectGenerator).getSettingsPanel(myProjectDirectory.get());
-    }
-    else if (myProjectGenerator instanceof WebProjectTemplate) {
-      advancedSettings = getPeer().getComponent();
+    if (myProjectGenerator instanceof WebProjectTemplate) {
+      advancedSettings = getPeer().getComponent(myLocationField, () -> checkValid());
     }
     if (advancedSettings != null) {
       final JPanel jPanel = new JPanel(new VerticalFlowLayout());
       final HideableDecorator deco = new HideableDecorator(jPanel, PyBundle.message("python.new.project.more.settings"), false);
-      if (myProjectGenerator instanceof PythonProjectGenerator) {
-        final ValidationResult result = ((PythonProjectGenerator<?>)myProjectGenerator).warningValidation(getInterpreterPanelSdk());
-        deco.setOn(!result.isOk());
-      }
       deco.setContentComponent(advancedSettings);
       return jPanel;
     }
@@ -121,10 +109,6 @@ public class ProjectSpecificSettingsStep<T extends PyNewProjectSettings> extends
     final PyAddSdkGroupPanel interpreterPanel = myInterpreterPanel;
     if (interpreterPanel == null) return null;
     return interpreterPanel.getSdk();
-  }
-
-  public boolean installFramework() {
-    return myInstallFramework;
   }
 
   @Override
@@ -292,18 +276,13 @@ public class ProjectSpecificSettingsStep<T extends PyNewProjectSettings> extends
       panel.add(locationPanel);
       panel.add(createInterpretersPanel(((PythonProjectGenerator<?>)myProjectGenerator).getPreferredEnvironmentType()));
 
-      final JPanel basePanelExtension = ((PythonProjectGenerator<?>)myProjectGenerator).extendBasePanel();
-      if (basePanelExtension != null) {
-        panel.add(basePanelExtension);
-      }
       return panel;
     }
 
     return super.createBasePanel();
   }
 
-  @NotNull
-  private JPanel createInterpretersPanel(final @Nullable PythonInterpreterSelectionMode preferredEnvironment) {
+  private @NotNull JPanel createInterpretersPanel(final @Nullable PythonInterpreterSelectionMode preferredEnvironment) {
     final JPanel container = new JPanel(new BorderLayout());
     final JPanel decoratorPanel = new JPanel(new VerticalFlowLayout());
 
@@ -359,30 +338,5 @@ public class ProjectSpecificSettingsStep<T extends PyNewProjectSettings> extends
       .filter(sdk -> sdk != null && sdk.getSdkType() instanceof PythonSdkType && PySdkExtKt.getSdkSeemsValid(sdk))
       .sorted(new PreferredSdkComparator())
       .toList();
-  }
-
-  @Override
-  protected @NotNull File findSequentNonExistingUntitled() {
-    return Optional
-      .ofNullable(PyUtil.as(myProjectGenerator, PythonProjectGenerator.class))
-      .map(PythonProjectGenerator::getNewProjectPrefix)
-      .map(it -> FileUtil.findSequentNonexistentFile(getBaseDir(), it, ""))
-      .orElseGet(() -> super.findSequentNonExistingUntitled());
-  }
-
-  /**
-   * If {@link PythonProjectGenerator} {@link PythonProjectGenerator#supportsWelcomeScript()},
-   * {@link ProjectSpecificSettingsStep} and inheritors should ask use if one should be created, and return true if so.
-   */
-  @RequiresEdt
-  public boolean createWelcomeScript() {
-    return false;
-  }
-
-  private static @NotNull File getBaseDir() {
-    if (PlatformUtils.isDataSpell() && Path.of(ProjectUtil.getBaseDir()).startsWith(PathManager.getConfigDir())) {
-      return new File(ProjectUtil.getUserHomeProjectDir());
-    }
-    return new File(ProjectUtil.getBaseDir());
   }
 }

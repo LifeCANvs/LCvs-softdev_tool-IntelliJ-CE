@@ -1,7 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package fleet.util.async
 
-import fleet.util.AtomicRef
+import fleet.multiplatform.shims.AtomicRef
 import fleet.util.channels.channels
 import fleet.util.channels.use
 import kotlinx.coroutines.*
@@ -12,6 +12,22 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.selects.select
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.nanoseconds
+
+fun <T, U> StateFlow<T>.view(f: (T) -> U): StateFlow<U> {
+  val self = this
+  return object : StateFlow<U> {
+    override val replayCache: List<U>
+      get() = self.replayCache.map(f)
+    override val value: U
+      get() = f(self.value)
+
+    override suspend fun collect(collector: FlowCollector<U>): Nothing {
+      self.collect { t ->
+        collector.emit(f(t))
+      }
+    }
+  }
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 fun <T> Flow<T>.conflateReduce(f: (T, T) -> T): Flow<T> {
@@ -157,6 +173,7 @@ fun <T> Flow<T>.takeUntilInclusive(predicate: (T) -> Boolean): Flow<T> {
   }
 }
 
+//TODO how is it different from produceIn?
 @OptIn(ExperimentalCoroutinesApi::class)
 fun <T> Flow<T>.consumeToChannelIn(scope: CoroutineScope): ReceiveChannel<T> {
   val flow = this

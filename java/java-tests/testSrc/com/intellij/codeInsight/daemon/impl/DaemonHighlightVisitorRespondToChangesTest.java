@@ -4,7 +4,9 @@ package com.intellij.codeInsight.daemon.impl;
 import com.intellij.codeHighlighting.RainbowHighlighter;
 import com.intellij.codeInsight.daemon.DaemonAnalyzerTestCase;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
+import com.intellij.codeInsight.daemon.impl.analysis.FileHighlightingSetting;
 import com.intellij.codeInsight.daemon.impl.analysis.HighlightInfoHolder;
+import com.intellij.codeInsight.daemon.impl.analysis.HighlightingSettingsPerFile;
 import com.intellij.diagnostic.ThreadDumper;
 import com.intellij.ide.highlighter.JavaFileType;
 import com.intellij.lang.annotation.HighlightSeverity;
@@ -33,11 +35,13 @@ import com.intellij.testFramework.SkipSlowTestLocally;
 import com.intellij.testFramework.fixtures.impl.CodeInsightTestFixtureImpl;
 import com.intellij.util.ArrayUtilRt;
 import com.intellij.util.TestTimeOut;
+import com.intellij.util.ThrowableRunnable;
 import com.intellij.util.TimeoutUtil;
 import com.intellij.util.containers.ContainerUtil;
 import org.intellij.lang.annotations.Language;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.io.File;
 import java.io.IOException;
@@ -61,7 +65,6 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     myDaemonCodeAnalyzer = (DaemonCodeAnalyzerImpl)DaemonCodeAnalyzer.getInstance(getProject());
     UndoManager.getInstance(myProject);
     myDaemonCodeAnalyzer.setUpdateByTimerEnabled(true);
-    DaemonProgressIndicator.setDebug(true);
     PlatformTestUtil.assumeEnoughParallelism();
   }
 
@@ -84,6 +87,11 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
       myDaemonCodeAnalyzer = null;
       super.tearDown();
     }
+  }
+
+  @Override
+  protected void runTestRunnable(@NotNull ThrowableRunnable<Throwable> testRunnable) throws Throwable {
+    DaemonProgressIndicator.runInDebugMode(() -> super.runTestRunnable(testRunnable));
   }
 
   @Override
@@ -151,6 +159,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
   }
 
   @NotNull
+  @Unmodifiable
   private static List<HighlightInfo> filterMy(@NotNull List<? extends HighlightInfo> infos) {
     return ContainerUtil.filter(infos, h -> MyHighlightCommentsSubstringVisitor.isMy(h));
   }
@@ -310,7 +319,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     PsiDocumentManager.getInstance(myProject).commitAllDocuments();
     CodeInsightTestFixtureImpl.ensureIndexesUpToDate(getProject());
 
-    myDaemonCodeAnalyzer.restart();
+    myDaemonCodeAnalyzer.restart(getTestName(false));
     myDaemonCodeAnalyzer.setUpdateByTimerEnabled(false);
     try {
       myDaemonCodeAnalyzer.runPasses(getFile(), getEditor().getDocument(), TextEditorProvider.getInstance().getTextEditor(getEditor()), ArrayUtilRt.EMPTY_INT_ARRAY, true, () -> {});
@@ -398,7 +407,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
 
     STATE.put("MSG1", new State(new AtomicBoolean(), new AtomicBoolean(true), new AtomicBoolean()));
     STATE.put("MSG2", new State(new AtomicBoolean(), new AtomicBoolean(true), new AtomicBoolean()));
-    myDaemonCodeAnalyzer.restart();
+    myDaemonCodeAnalyzer.restart(getTestName(false));
     myDaemonCodeAnalyzer.setUpdateByTimerEnabled(false);
     TestTimeOut timeOut = TestTimeOut.setTimeout(1, TimeUnit.MINUTES);
     myDaemonCodeAnalyzer.runPasses(getFile(), getEditor().getDocument(), TextEditorProvider.getInstance().getTextEditor(getEditor()), ArrayUtilRt.EMPTY_INT_ARRAY, true, () -> {
@@ -593,10 +602,66 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     configureByText(JavaFileType.INSTANCE, text);
     assertEmpty(ContainerUtil.filter(doHighlighting(), info -> info.type == RainbowHighlighter.RAINBOW_ELEMENT));
     CodeInsightTestFixtureImpl.runWithRainbowEnabled(true, () -> {
-      myDaemonCodeAnalyzer.restart();
+      myDaemonCodeAnalyzer.restart(getTestName(false));
       assertNotEmpty(ContainerUtil.filter(doHighlighting(), info -> info.type == RainbowHighlighter.RAINBOW_ELEMENT));
     });
-    myDaemonCodeAnalyzer.restart();
+    myDaemonCodeAnalyzer.restart(getTestName(false));
     assertEmpty(ContainerUtil.filter(doHighlighting(), info -> info.type == RainbowHighlighter.RAINBOW_ELEMENT));
+  }
+
+
+  private static class MyCheckingCallsVisitor implements HighlightVisitor {
+    private static volatile boolean ANALYZE_CALLED;
+    private static volatile boolean VISIT_CALLED;
+
+    @Override
+    public boolean suitableForFile(@NotNull PsiFile file) {
+      return true;
+    }
+
+    @Override
+    public void visit(@NotNull PsiElement element) {
+      VISIT_CALLED = true;
+    }
+
+    @Override
+    public boolean analyze(@NotNull PsiFile file,
+                           boolean updateWholeFile,
+                           @NotNull HighlightInfoHolder holder,
+                           @NotNull Runnable action) {
+      ANALYZE_CALLED = true;
+      action.run();
+      return true;
+    }
+
+    @Override
+    public @NotNull HighlightVisitor clone() {
+      return new MyCheckingCallsVisitor();
+    }
+  }
+  public void testHighlightingVisitorAnalyzeMethodMustNotBeCalledIfTheHighlightingIsDisabledForThisFile() {
+    @Language("JAVA")
+    String text = """
+      class X {
+        void foo(int wwwwwwwwwwwwwwwww) {
+        }
+      }
+      """;
+    HighlightVisitor visitor = new MyCheckingCallsVisitor();
+    myProject.getExtensionArea().getExtensionPoint(HighlightVisitor.EP_HIGHLIGHT_VISITOR).registerExtension(visitor, getTestRootDisposable());
+    configureByText(JavaFileType.INSTANCE, text);
+    MyCheckingCallsVisitor.VISIT_CALLED = false;
+    MyCheckingCallsVisitor.ANALYZE_CALLED = false;
+    doHighlighting();
+    assertTrue(MyCheckingCallsVisitor.ANALYZE_CALLED);
+    assertTrue(MyCheckingCallsVisitor.VISIT_CALLED);
+
+    HighlightingSettingsPerFile.getInstance(myProject).setHighlightingSettingForRoot(myFile, FileHighlightingSetting.SKIP_HIGHLIGHTING);
+    MyCheckingCallsVisitor.VISIT_CALLED = false;
+    MyCheckingCallsVisitor.ANALYZE_CALLED = false;
+    myDaemonCodeAnalyzer.restart();
+    doHighlighting();
+    assertFalse(MyCheckingCallsVisitor.VISIT_CALLED);
+    assertFalse(MyCheckingCallsVisitor.ANALYZE_CALLED);
   }
 }

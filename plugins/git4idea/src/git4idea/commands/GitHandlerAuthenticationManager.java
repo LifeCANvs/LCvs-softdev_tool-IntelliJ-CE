@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.commands;
 
 import com.intellij.externalProcessAuthHelper.*;
@@ -181,31 +181,35 @@ public final class GitHandlerAuthenticationManager implements AutoCloseable {
     }
   }
 
-  private void prepareGpgAgentAuth() throws IOException {
-    if (!GpgAgentConfigurator.isEnabled(myHandler.myExecutable)) {
-      return;
-    }
-    Project project = myHandler.project();
+  private void prepareGpgAgentAuth() {
     VirtualFile root = myHandler.getExecutableContext().getRoot();
-    if (project == null || root == null) {
+    if (root == null) {
       return;
     }
 
     GitCommand command = myHandler.getCommand();
-    boolean needGpgSigning =
-      (command == GitCommand.COMMIT || command == GitCommand.TAG || command == GitCommand.MERGE) &&
-      GitGpgConfigUtilsKt.isGpgSignEnabled(project, root);
+    boolean isCommandSupported = command == GitCommand.COMMIT
+                                 || command == GitCommand.TAG
+                                 || command == GitCommand.MERGE
+                                 || command == GitCommand.CHERRY_PICK
+                                 || command == GitCommand.REBASE;
+    if (!isCommandSupported) {
+      return;
+    }
 
-    if (needGpgSigning) {
-      PinentryService.PinentryData pinentryData = PinentryService.getInstance(project).startSession();
+    if (!GpgAgentConfigurator.isEnabled(myProject, myHandler.myExecutable)
+        || !GpgAgentConfigurator.getInstance(myProject).isConfigured()) {
+      return;
+    }
+
+    GitRepository repo = GitRepositoryManager.getInstance(myProject).getRepositoryForRoot(root);
+    if (repo == null) return;
+
+    if (GitGpgConfigUtilsKt.isGpgSignEnabledCached(repo)) {
+      PinentryService.PinentryData pinentryData = PinentryService.getInstance(myProject).startSession();
       if (pinentryData != null) {
-        myHandler.addCustomEnvironmentVariable(PinentryService.PINENTRY_USER_DATA_ENV, pinentryData.toString());
-        myHandler.addListener(new GitHandlerListener() {
-          @Override
-          public void processTerminated(int exitCode) {
-            PinentryService.getInstance(project).stopSession();
-          }
-        });
+        myHandler.addCustomEnvironmentVariable(PinentryService.PINENTRY_USER_DATA_ENV, pinentryData.toEnv());
+        Disposer.register(myDisposable, () -> PinentryService.getInstance(myProject).stopSession());
       }
     }
   }
@@ -241,8 +245,7 @@ public final class GitHandlerAuthenticationManager implements AutoCloseable {
     return !command.isEmpty() && !command.startsWith("ssh ");
   }
 
-  @Nullable
-  private String readSshCommand() {
+  private @Nullable String readSshCommand() {
     String sshCommand = EnvironmentUtil.getValue(GitCommand.GIT_SSH_COMMAND_ENV);
     if (sshCommand != null) return sshCommand;
 

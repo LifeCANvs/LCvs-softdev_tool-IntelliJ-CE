@@ -2,6 +2,7 @@
 
 package org.jetbrains.kotlin.idea.configuration
 
+import com.intellij.openapi.extensions.InternalIgnoreDependencyViolation
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskNotificationListener
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskType
@@ -13,8 +14,9 @@ import org.jetbrains.kotlin.idea.configuration.ui.KotlinConfigurationCheckerServ
 import org.jetbrains.kotlin.idea.core.KotlinPluginDisposable
 import org.jetbrains.kotlin.idea.statistics.KotlinJ2KOnboardingFUSCollector
 
+@InternalIgnoreDependencyViolation
 class KotlinExternalSystemSyncListener : ExternalSystemTaskNotificationListener {
-    override fun onStart(id: ExternalSystemTaskId, workingDir: String) {
+    override fun onStart(projectPath: String, id: ExternalSystemTaskId) {
         val project = id.findResolvedProject() ?: return
         // If the SDK is null, then the module was not loaded yet
         val allModulesLoaded = project.modules.all { it.sdk != null }
@@ -24,7 +26,7 @@ class KotlinExternalSystemSyncListener : ExternalSystemTaskNotificationListener 
         }
     }
 
-    override fun onEnd(id: ExternalSystemTaskId) {
+    override fun onEnd(projectPath: String, id: ExternalSystemTaskId) {
         // At this point changes might be still not applied to project structure yet.
         val project = id.findResolvedProject() ?: return
         runUnderDisposeAwareIndicator(KotlinPluginDisposable.getInstance(project)) {
